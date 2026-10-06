@@ -237,7 +237,7 @@ input:focus-visible {
 
 .world {
   position:relative;
-  min-height:650px;
+  min-height:720px;
   overflow:hidden;
   border:1px solid var(--line);
   border-radius:10px;
@@ -321,9 +321,26 @@ input:focus-visible {
   text-transform:uppercase;
 }
 
-.districtA { left:48%; top:28%; width:17%; height:16%; }
-.districtB { left:77%; top:56%; width:17%; height:24%; }
-.districtC { left:54%; top:68%; width:14%; height:17%; }
+.districtA { left:10%; top:7%; width:28%; height:27%; }
+.districtB { left:70%; top:69%; width:24%; height:24%; }
+.districtC { left:52%; top:54%; width:24%; height:22%; }
+
+.cityLabel {
+  position:absolute;
+  transform:translate(-50%,-50%);
+  z-index:2;
+  pointer-events:none;
+}
+
+.cityLabel span {
+  color:rgba(220,231,236,.10);
+  font-size:clamp(2rem,5vw,4.6rem);
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  white-space:nowrap;
+}
+
 
 .railPlatform {
   position:absolute;
@@ -1015,11 +1032,13 @@ footer {
 }
 
 @media (max-width:1160px) {
+  .cityLabel span { font-size:3rem; }
+
   .operationsDeck {
     grid-template-columns:1fr 1fr;
   }
 
-  .world { min-height:590px; }
+  .world { min-height:640px; }
 }
 
 @media (max-width:820px) {
@@ -1040,7 +1059,7 @@ footer {
     grid-template-columns:repeat(4,1fr);
   }
 
-  .world { min-height:500px; }
+  .world { min-height:560px; }
 
   .operationsDeck {
     grid-template-columns:1fr;
@@ -1059,7 +1078,7 @@ footer {
   }
 
   .world {
-    min-height:450px;
+    min-height:500px;
     overflow:hidden;
   }
 
