@@ -1,22 +1,16 @@
 import { copyFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import path from "node:path";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const frontendRoot = join(here, "..");
-const distRoot = join(frontendRoot, "node_modules", "maplibre-gl", "dist");
-const publicRoot = join(frontendRoot, "public");
+const require = createRequire(import.meta.url);
+const packageJson = require.resolve("maplibre-gl/package.json");
+const dist = path.join(path.dirname(packageJson), "dist");
+const dest = path.join(process.cwd(), "public", "maplibre");
 
-mkdirSync(publicRoot, { recursive: true });
+mkdirSync(dest, { recursive: true });
 
-copyFileSync(
-  join(distRoot, "maplibre-gl-worker.mjs"),
-  join(publicRoot, "maplibre-gl-worker.mjs")
-);
+for (const file of ["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"]) {
+  copyFileSync(path.join(dist, file), path.join(dest, file));
+}
 
-copyFileSync(
-  join(distRoot, "maplibre-gl-shared.mjs"),
-  join(publicRoot, "maplibre-gl-shared.mjs")
-);
-
-console.log("Copied MapLibre worker assets to frontend/public");
+console.log("MapLibre worker assets copied to public/maplibre");
