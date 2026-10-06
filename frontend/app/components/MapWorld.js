@@ -26,7 +26,7 @@ export default function MapWorld({ network, snapshot, selected, onSelect }) {
     let cancelled = false;
 
     async function initialize() {
-      const [{ default: maplibregl }, { MapLibreOverlay }, layers] = await Promise.all([
+      const [maplibregl, { MapLibreOverlay }, layers] = await Promise.all([
         import("maplibre-gl"),
         import("@deck.gl/maplibre"),
         import("@deck.gl/layers"),
