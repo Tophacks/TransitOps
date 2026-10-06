@@ -1,0 +1,12 @@
+services:
+  sumo:
+    build:
+      context: .
+      dockerfile: simulation/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      SUMO_HOME: /usr/share/sumo
+      SUMO_BINARY: sumo
+    volumes:
+      - ./simulation/sumo:/app/simulation/sumo
