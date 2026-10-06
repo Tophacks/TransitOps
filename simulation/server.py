@@ -9,7 +9,7 @@ from traci_controller.runner import SumoSession
 
 app = FastAPI(
     title="TransitOps SUMO Service",
-    version="0.2.0",
+    version="0.3.0",
     description="Cloud-hosted SUMO + TraCI simulation service for TransitOps.",
 )
 
@@ -45,13 +45,13 @@ def health():
 @app.get("/scenario")
 def scenario():
     return {
-        "id": "waterloo-kitchener",
-        "name": "Waterloo–Kitchener regional traffic sandbox",
-        "network_source": "OpenStreetMap imported through SUMO netconvert",
+        "id": "waterloo-corridor",
+        "name": "Waterloo Corridor Test Scenario",
+        "network_source": "Locally generated SUMO test corridor",
         "network_ready": network_ready(),
         "network_asset": str(network_file()),
         "route_asset": str(route_file()),
-        "storage": "gzip-compressed generated assets",
+        "storage": "small deterministic generated assets",
     }
 
 
@@ -72,7 +72,7 @@ async def simulation_socket(websocket: WebSocket):
                 {
                     "type": "status",
                     "status": "building_network",
-                    "message": "SUMO network asset is missing; rebuilding Waterloo–Kitchener from OpenStreetMap.",
+                    "message": "SUMO corridor asset is missing; rebuilding the local test network.",
                 }
             )
             await asyncio.to_thread(ensure_network)
