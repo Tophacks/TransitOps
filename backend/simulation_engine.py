@@ -4,20 +4,45 @@ import random
 from models import BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
-ROUTE = ["CENTRAL", "KING", "MARKET", "UNIVERSITY"]
+ROUTE = [
+    "CONESTOGA",
+    "NORTHFIELD",
+    "RESEARCH_TECH",
+    "UW",
+    "LAURIER",
+    "WATERLOO_SQUARE",
+    "GRAND_RIVER_HOSPITAL",
+    "CENTRAL",
+    "CITY_HALL",
+    "KITCHENER_MARKET",
+    "FAIRWAY",
+]
 
 STOP_LAYOUT = {
-    "CENTRAL": ("Central Terminal", 24.0, 45.0),
-    "KING": ("King", 46.0, 67.0),
-    "MARKET": ("Market", 67.0, 58.0),
-    "UNIVERSITY": ("University", 82.0, 74.0),
+    "CONESTOGA": ("Conestoga", 17.0, 12.0),
+    "NORTHFIELD": ("Northfield", 24.0, 20.0),
+    "RESEARCH_TECH": ("Research & Technology", 30.0, 29.0),
+    "UW": ("University of Waterloo", 35.5, 38.0),
+    "LAURIER": ("Laurier-Waterloo Park", 41.0, 44.0),
+    "WATERLOO_SQUARE": ("Waterloo Public Square", 47.0, 50.0),
+    "GRAND_RIVER_HOSPITAL": ("Grand River Hospital", 54.0, 57.0),
+    "CENTRAL": ("Central Station", 60.0, 63.0),
+    "CITY_HALL": ("Kitchener City Hall", 65.0, 68.0),
+    "KITCHENER_MARKET": ("Kitchener Market", 72.0, 73.0),
+    "FAIRWAY": ("Fairway", 84.0, 86.0),
 }
 
 INTERSECTION_LAYOUT = {
-    "I1": ("Central / King", 36.0, 56.0, 0),
-    "I2": ("King / Market", 57.0, 63.0, 1),
-    "I3": ("Market / University", 75.0, 66.0, 2),
+    "I1": ("King / Northfield", 22.0, 17.0, 0),
+    "I2": ("University corridor", 34.0, 35.0, 1),
+    "I3": ("Uptown Waterloo", 45.0, 48.0, 2),
+    "I4": ("King / Victoria", 59.0, 62.0, 1),
+    "I5": ("Downtown Kitchener", 67.5, 70.0, 3),
+    "I6": ("Fairway corridor", 80.0, 82.0, 0),
 }
+
+SEGMENT_BASE_MINUTES = [4, 4, 5, 4, 4, 5, 5, 4, 5, 8, 9]
+SEGMENT_INTERSECTIONS = ["I1", "I1", "I2", "I2", "I3", "I3", "I4", "I4", "I5", "I6", "I6"]
 
 
 class TransitSimulation:
@@ -26,9 +51,9 @@ class TransitSimulation:
         buses,
         trains,
         intelligent=True,
-        duration=60,
+        duration=90,
         traffic_multiplier=1.0,
-        initial_queue=15,
+        initial_queue=20,
         seed=17,
     ):
         self.buses = buses
@@ -53,17 +78,22 @@ class TransitSimulation:
         }
 
         self._spawn_passengers("CENTRAL", initial_queue, initial=True)
+        self._spawn_passengers("UW", 12, initial=True)
+        self._spawn_passengers("WATERLOO_SQUARE", 8, initial=True)
 
     def log(self, message, kind="info"):
         self.events.append({"minute": self.time, "message": message, "kind": kind})
 
     def _destination_for(self, origin):
         origin_index = ROUTE.index(origin)
-        choices = [s for s in ROUTE if s != origin]
-        forward = [s for s in ROUTE[origin_index + 1:]]
-        if forward and self._rng.random() < 0.8:
+        forward = ROUTE[origin_index + 1:]
+        backward = ROUTE[:origin_index]
+
+        if forward and self._rng.random() < 0.72:
             return self._rng.choice(forward)
-        return self._rng.choice(choices)
+        if backward:
+            return self._rng.choice(backward)
+        return ROUTE[-1]
 
     def _spawn_passengers(self, stop_id, count, initial=False):
         stop = self.stops[stop_id]
@@ -80,13 +110,20 @@ class TransitSimulation:
 
     def _spawn_background_demand(self):
         rates = {
-            "CENTRAL": 0.7,
-            "KING": 1.0,
-            "MARKET": 0.8,
-            "UNIVERSITY": 1.2,
+            "CONESTOGA": 0.8,
+            "NORTHFIELD": 0.35,
+            "RESEARCH_TECH": 0.55,
+            "UW": 1.35,
+            "LAURIER": 0.95,
+            "WATERLOO_SQUARE": 1.0,
+            "GRAND_RIVER_HOSPITAL": 0.9,
+            "CENTRAL": 1.15,
+            "CITY_HALL": 0.7,
+            "KITCHENER_MARKET": 0.75,
+            "FAIRWAY": 1.05,
         }
         for stop_id, rate in rates.items():
-            expected = rate * (0.8 + 0.35 * self.traffic_multiplier)
+            expected = rate * (0.8 + 0.3 * self.traffic_multiplier)
             base = int(expected)
             extra = 1 if self._rng.random() < (expected - base) else 0
             count = base + extra
@@ -98,12 +135,16 @@ class TransitSimulation:
             if train.actual_arrival == self.time:
                 self._spawn_passengers("CENTRAL", train.passengers_for_bus)
                 self.log(
-                    f"{train.train_id} arrived +{train.passengers_for_bus} transfer passengers",
+                    f"{train.train_id} arrived at Kitchener regional rail +{train.passengers_for_bus} transfers",
                     "train",
                 )
 
-    def _near_term_central_demand(self, lookahead=8):
-        demand = len(self.stops["CENTRAL"].queue)
+    def _near_term_hub_demand(self, lookahead=10):
+        demand = (
+            len(self.stops["CENTRAL"].queue)
+            + len(self.stops["UW"].queue)
+            + len(self.stops["WATERLOO_SQUARE"].queue)
+        )
         for train in self.trains:
             until = train.actual_arrival - self.time
             if 0 < until <= lookahead:
@@ -112,24 +153,13 @@ class TransitSimulation:
 
     def _segment_base_minutes(self, from_index, to_index):
         if from_index == -1:
-            return 5
-        segment_times = {
-            (0, 1): 5,
-            (1, 2): 4,
-            (2, 3): 5,
-            (3, 0): 7,
-        }
-        return segment_times.get((from_index, to_index), 5)
+            return 6
+        return SEGMENT_BASE_MINUTES[from_index % len(SEGMENT_BASE_MINUTES)]
 
     def _intersection_for_segment(self, from_index, to_index):
-        mapping = {
-            (-1, 0): "I1",
-            (0, 1): "I1",
-            (1, 2): "I2",
-            (2, 3): "I3",
-            (3, 0): "I2",
-        }
-        return mapping.get((from_index, to_index))
+        if from_index == -1:
+            return "I4"
+        return SEGMENT_INTERSECTIONS[from_index % len(SEGMENT_INTERSECTIONS)]
 
     def _travel_minutes(self, bus):
         base = self._segment_base_minutes(bus.current_stop_index, bus.target_stop_index)
@@ -153,7 +183,7 @@ class TransitSimulation:
                     signal_delay = 0
                     self.metrics.signal_priority_requests += 1
                     self.log(
-                        f"{bus.bus_id} signal priority approved at {intersection_id}",
+                        f"{bus.bus_id} signal priority approved at {intersection.name}",
                         "priority",
                     )
 
@@ -162,33 +192,33 @@ class TransitSimulation:
     def _dispatch_bus(self, bus, staged=False):
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = -1
-        bus.target_stop_index = 0
+        bus.target_stop_index = 7
         bus.segment_elapsed = 0
-        bus.segment_minutes = max(2, round(5 * self.traffic_multiplier))
+        bus.segment_minutes = max(3, round(6 * self.traffic_multiplier))
         bus.segment_progress = 0.0
         bus.schedule_deviation = 1 if staged else 0
 
         if staged:
             self.metrics.buses_staged += 1
-            self.log(f"{bus.bus_id} pre-staged toward Central Terminal", "decision")
+            self.log(f"{bus.bus_id} pre-staged toward Central Station", "decision")
         else:
-            self.log(f"{bus.bus_id} dispatched from yard", "dispatch")
+            self.log(f"{bus.bus_id} dispatched from regional staging yard", "dispatch")
 
     def _dispatch_logic(self):
         active = [b for b in self.buses if b.state != BusState.YARD]
         yard = [b for b in self.buses if b.state == BusState.YARD]
 
-        if self.time % 12 == 0 and yard:
+        if self.time % 10 == 0 and yard:
             self._dispatch_bus(yard[0])
 
         if self.intelligent and yard:
-            demand = self._near_term_central_demand()
+            demand = self._near_term_hub_demand()
             arriving_capacity = sum(
                 max(0, bus.capacity - bus.occupancy)
                 for bus in active
-                if bus.target_stop_index == 0
+                if bus.target_stop_index in (3, 5, 7)
             )
-            if demand > max(55, arriving_capacity + 20):
+            if demand > max(70, arriving_capacity + 25):
                 self._dispatch_bus(yard[0], staged=True)
 
     def _alight_and_board(self, bus, stop_id):
@@ -251,13 +281,15 @@ class TransitSimulation:
                 bus.dwell_minutes = 1
                 bus.segment_progress = 1.0
                 bus.schedule_deviation = max(
-                    0, bus.segment_minutes - self._segment_base_minutes(
+                    0,
+                    bus.segment_minutes
+                    - self._segment_base_minutes(
                         bus.current_stop_index, bus.target_stop_index
-                    )
+                    ),
                 )
 
     def _bus_xy(self, bus):
-        yard = (8.0, 83.0)
+        yard = (10.0, 69.0)
         if bus.state == BusState.YARD:
             return yard
 
@@ -292,7 +324,7 @@ class TransitSimulation:
                     "x": stop.x,
                     "y": stop.y,
                     "queue": len(stop.queue),
-                    "sprites": min(18, math.ceil(len(stop.queue) / 5)),
+                    "sprites": min(16, math.ceil(len(stop.queue) / 6)),
                 }
                 for stop in self.stops.values()
             ],
@@ -314,7 +346,7 @@ class TransitSimulation:
             target_name = (
                 self.stops[ROUTE[bus.target_stop_index]].name
                 if bus.state != BusState.YARD
-                else "Central Terminal"
+                else "Central Station"
             )
             snapshot["buses"].append(
                 {
@@ -333,7 +365,7 @@ class TransitSimulation:
         self.timeline.append(snapshot)
 
     def run(self):
-        self.log("Simulation started", "system")
+        self.log("Waterloo-Kitchener regional simulation started", "system")
 
         for minute in range(self.duration + 1):
             self.time = minute
@@ -347,5 +379,5 @@ class TransitSimulation:
         self.metrics.passengers_left_waiting = sum(
             len(stop.queue) for stop in self.stops.values()
         )
-        self.log("Simulation complete", "system")
+        self.log("Regional simulation complete", "system")
         return self.metrics
