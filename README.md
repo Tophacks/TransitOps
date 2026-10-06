@@ -75,3 +75,21 @@ vercel dev -L
 ```
 
 Then open the local URL printed by Vercel.
+
+
+## Live 2D operations simulator
+
+The Vercel demo now includes a game-like schematic operations view backed by the Python simulation engine.
+
+- Passenger agents with origin, destination, arrival, boarding, and completion state
+- Passenger queues visualized as pixel-style crowd sprites
+- Moving buses with occupancy, target stop, progress, and schedule deviation
+- Four-stop demo corridor plus a staging yard
+- Signalized intersections with live red/green state
+- Transit signal-priority decisions for delayed occupied buses
+- Background passenger demand plus rail-transfer demand spikes
+- Play, pause, timeline scrubbing, and 1x / 2x / 5x / 10x playback
+- Clickable buses, stations, intersections, and yard
+- Baseline-versus-TransitOps operational metrics
+
+The 2D world is deliberately schematic and not to scale. It is an operations proof-of-concept, not a vehicle-dynamics or autonomous-driving perception model. SUMO/TraCI and 3D vehicle simulation remain later roadmap stages.
