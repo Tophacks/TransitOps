@@ -42,7 +42,7 @@ export default function MapWorld({ network, snapshot, selected, onSelect }) {
         TextLayer: layers.TextLayer,
       };
 
-      maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
+      maplibregl.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
 
       const map = new maplibregl.Map({
         container: containerRef.current,
