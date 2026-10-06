@@ -44,6 +44,31 @@ INTERSECTION_LAYOUT = {
 SEGMENT_BASE_MINUTES = [4, 4, 5, 4, 4, 5, 5, 4, 5, 8, 9]
 SEGMENT_INTERSECTIONS = ["I1", "I1", "I2", "I2", "I3", "I3", "I4", "I4", "I5", "I6", "I6"]
 
+GEO_LAYOUT = {
+    "CONESTOGA": (-80.52954, 43.49834),
+    "NORTHFIELD": (-80.54321, 43.49722),
+    "RESEARCH_TECH": (-80.54514, 43.48144),
+    "UW": (-80.54128, 43.47336),
+    "LAURIER": (-80.53000, 43.47083),
+    "WATERLOO_SQUARE": (-80.52280, 43.46419),
+    "GRAND_RIVER_HOSPITAL": (-80.51185, 43.45723),
+    "CENTRAL": (-80.49944, 43.45333),
+    "CITY_HALL": (-80.49108, 43.45203),
+    "KITCHENER_MARKET": (-80.48374, 43.44636),
+    "FAIRWAY": (-80.44186, 43.42231),
+}
+
+INTERSECTION_GEO = {
+    "I1": (-80.5364, 43.4978),
+    "I2": (-80.5432, 43.4772),
+    "I3": (-80.5264, 43.4675),
+    "I4": (-80.5056, 43.4553),
+    "I5": (-80.4874, 43.4492),
+    "I6": (-80.4535, 43.4289),
+}
+
+YARD_GEO = (-80.5150, 43.4430)
+
 
 class TransitSimulation:
     def __init__(
@@ -307,6 +332,23 @@ class TransitSimulation:
         y = start[1] + (target[1] - start[1]) * p
         return round(x, 2), round(y, 2)
 
+
+    def _bus_geo(self, bus):
+        if bus.state == BusState.YARD:
+            return YARD_GEO
+
+        target = GEO_LAYOUT[ROUTE[bus.target_stop_index]]
+
+        if bus.current_stop_index == -1:
+            start = YARD_GEO
+        else:
+            start = GEO_LAYOUT[ROUTE[bus.current_stop_index]]
+
+        p = bus.segment_progress if bus.state == BusState.EN_ROUTE else 1.0
+        lon = start[0] + (target[0] - start[0]) * p
+        lat = start[1] + (target[1] - start[1]) * p
+        return round(lon, 6), round(lat, 6)
+
     def _capture_snapshot(self):
         total_waiting = sum(len(stop.queue) for stop in self.stops.values())
         self.metrics.max_queue = max(
@@ -323,6 +365,8 @@ class TransitSimulation:
                     "name": stop.name,
                     "x": stop.x,
                     "y": stop.y,
+                    "lon": GEO_LAYOUT[stop.stop_id][0],
+                    "lat": GEO_LAYOUT[stop.stop_id][1],
                     "queue": len(stop.queue),
                     "sprites": min(16, math.ceil(len(stop.queue) / 6)),
                 }
@@ -334,6 +378,8 @@ class TransitSimulation:
                     "name": intersection.name,
                     "x": intersection.x,
                     "y": intersection.y,
+                    "lon": INTERSECTION_GEO[intersection.intersection_id][0],
+                    "lat": INTERSECTION_GEO[intersection.intersection_id][1],
                     "phase": intersection.phase(self.time),
                 }
                 for intersection in self.intersections.values()
@@ -343,6 +389,7 @@ class TransitSimulation:
 
         for bus in self.buses:
             x, y = self._bus_xy(bus)
+            lon, lat = self._bus_geo(bus)
             target_name = (
                 self.stops[ROUTE[bus.target_stop_index]].name
                 if bus.state != BusState.YARD
@@ -353,6 +400,8 @@ class TransitSimulation:
                     "id": bus.bus_id,
                     "x": x,
                     "y": y,
+                    "lon": lon,
+                    "lat": lat,
                     "state": bus.state.name,
                     "occupancy": bus.occupancy,
                     "capacity": bus.capacity,
