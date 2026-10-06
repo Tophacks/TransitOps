@@ -12,6 +12,7 @@ mkdir -p "$OUT_NETWORK_DIR" "$OUT_ROUTE_DIR"
 BBOX="-80.60,43.39,-80.40,43.54"
 PREFIX="waterloo_kitchener"
 TILES="${SUMO_OSM_TILES:-4}"
+ROAD_TYPES='{"highway":["motorway","motorway_link","trunk","trunk_link","primary","primary_link","secondary","secondary_link","tertiary","tertiary_link","residential","unclassified","living_street","service"],"railway":["rail","light_rail","tram"]}'
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -22,6 +23,7 @@ python3 "$SUMO_HOME/tools/osmGet.py" \
   --bbox="$BBOX" \
   --prefix="$PREFIX" \
   --tiles="$TILES" \
+  --road-types="$ROAD_TYPES" \
   --gzip
 
 if [[ "$TILES" -eq 1 ]]; then
