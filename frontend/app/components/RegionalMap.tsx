@@ -113,7 +113,7 @@ export default function RegionalMap({
         zoom: 11.35,
         pitch: 24,
         bearing: -8,
-        attributionControl: true,
+        attributionControl: { compact: true },
       });
 
       map.addControl(
