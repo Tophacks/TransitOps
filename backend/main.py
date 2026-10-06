@@ -5,8 +5,11 @@ from pydantic import BaseModel, Field
 
 from models import Bus, Train
 from simulation_engine import (
+    GEO_LAYOUT,
+    INTERSECTION_GEO,
     INTERSECTION_LAYOUT,
     STOP_LAYOUT,
+    YARD_GEO,
     TransitSimulation,
 )
 
@@ -36,15 +39,36 @@ def metrics_to_dict(metrics):
 
 def network_definition():
     stops = [
-        {"id": stop_id, "name": name, "x": x, "y": y}
+        {
+            "id": stop_id,
+            "name": name,
+            "x": x,
+            "y": y,
+            "lon": GEO_LAYOUT[stop_id][0],
+            "lat": GEO_LAYOUT[stop_id][1],
+        }
         for stop_id, (name, x, y) in STOP_LAYOUT.items()
     ]
     intersections = [
-        {"id": iid, "name": name, "x": x, "y": y}
+        {
+            "id": iid,
+            "name": name,
+            "x": x,
+            "y": y,
+            "lon": INTERSECTION_GEO[iid][0],
+            "lat": INTERSECTION_GEO[iid][1],
+        }
         for iid, (name, x, y, _offset) in INTERSECTION_LAYOUT.items()
     ]
     return {
-        "yard": {"id": "YARD", "name": "Regional Staging Yard", "x": 10.0, "y": 69.0},
+        "yard": {
+            "id": "YARD",
+            "name": "Regional Staging Yard",
+            "x": 10.0,
+            "y": 69.0,
+            "lon": YARD_GEO[0],
+            "lat": YARD_GEO[1],
+        },
         "stops": stops,
         "intersections": intersections,
         "route_order": [
