@@ -107,7 +107,7 @@ export default function NetworkMap({
       pitch: 28,
       bearing: -9,
       antialias: true,
-      attributionControl: true,
+      attributionControl: { compact: true },
     });
 
     map.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
