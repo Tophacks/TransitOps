@@ -10,22 +10,40 @@ const defaults = {
 };
 
 const fallbackNetwork = {
-  yard: { id: "YARD", name: "North Yard", x: 8, y: 83 },
+  yard: { id: "YARD", name: "Regional Staging Yard", x: 10, y: 69 },
   stops: [
-    { id: "CENTRAL", name: "Central Terminal", x: 24, y: 45 },
-    { id: "KING", name: "King", x: 46, y: 67 },
-    { id: "MARKET", name: "Market", x: 67, y: 58 },
-    { id: "UNIVERSITY", name: "University", x: 82, y: 74 },
+    { id: "CONESTOGA", name: "Conestoga", x: 17, y: 12 },
+    { id: "NORTHFIELD", name: "Northfield", x: 24, y: 20 },
+    { id: "RESEARCH_TECH", name: "Research & Technology", x: 30, y: 29 },
+    { id: "UW", name: "University of Waterloo", x: 35.5, y: 38 },
+    { id: "LAURIER", name: "Laurier-Waterloo Park", x: 41, y: 44 },
+    { id: "WATERLOO_SQUARE", name: "Waterloo Public Square", x: 47, y: 50 },
+    { id: "GRAND_RIVER_HOSPITAL", name: "Grand River Hospital", x: 54, y: 57 },
+    { id: "CENTRAL", name: "Central Station", x: 60, y: 63 },
+    { id: "CITY_HALL", name: "Kitchener City Hall", x: 65, y: 68 },
+    { id: "KITCHENER_MARKET", name: "Kitchener Market", x: 72, y: 73 },
+    { id: "FAIRWAY", name: "Fairway", x: 84, y: 86 },
   ],
   intersections: [
-    { id: "I1", name: "Central / King", x: 36, y: 56 },
-    { id: "I2", name: "King / Market", x: 57, y: 63 },
-    { id: "I3", name: "Market / University", x: 75, y: 66 },
+    { id: "I1", name: "King / Northfield", x: 22, y: 17 },
+    { id: "I2", name: "University corridor", x: 34, y: 35 },
+    { id: "I3", name: "Uptown Waterloo", x: 45, y: 48 },
+    { id: "I4", name: "King / Victoria", x: 59, y: 62 },
+    { id: "I5", name: "Downtown Kitchener", x: 67.5, y: 70 },
+    { id: "I6", name: "Fairway corridor", x: 80, y: 82 },
   ],
-  passengers_per_sprite: 5,
+  route_order: [
+    "CONESTOGA", "NORTHFIELD", "RESEARCH_TECH", "UW", "LAURIER",
+    "WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", "CENTRAL",
+    "CITY_HALL", "KITCHENER_MARKET", "FAIRWAY"
+  ],
+  cities: [
+    { name: "Waterloo", x: 29, y: 18 },
+    { name: "Kitchener", x: 69, y: 59 },
+  ],
+  passengers_per_sprite: 6,
+  corridor_name: "Waterloo-Kitchener regional sandbox",
 };
-
-const routeOrder = ["CENTRAL", "KING", "MARKET", "UNIVERSITY"];
 
 function Metric({ label, value, accent = false }) {
   return (
@@ -118,6 +136,7 @@ function TopDownBus({ bus, selected, onSelect }) {
 
 function NetworkWorld({ network, snapshot, events, selected, onSelect, traffic }) {
   const stopById = Object.fromEntries(network.stops.map((stop) => [stop.id, stop]));
+  const routeOrder = network.route_order || [];
   const points = [network.yard, ...routeOrder.map((id) => stopById[id])];
   const recentTrain = events?.some(
     (event) => event.kind === "train" && snapshot && snapshot.minute - event.minute >= 0 && snapshot.minute - event.minute <= 4
@@ -125,9 +144,18 @@ function NetworkWorld({ network, snapshot, events, selected, onSelect, traffic }
 
   return (
     <div className="world" aria-label="Schematic real-time transit simulation">
-      <div className="district districtA"><span>Employment District</span></div>
-      <div className="district districtB"><span>University District</span></div>
-      <div className="district districtC"><span>Market District</span></div>
+      {(network.cities || []).map((city) => (
+        <div
+          className="cityLabel"
+          key={city.name}
+          style={{ left: `${city.x}%`, top: `${city.y}%` }}
+        >
+          <span>{city.name}</span>
+        </div>
+      ))}
+      <div className="district districtA"><span>North Waterloo</span></div>
+      <div className="district districtB"><span>South Kitchener</span></div>
+      <div className="district districtC"><span>Downtown / Innovation</span></div>
 
       <svg className="worldRoads" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <polyline className="arterialEdge" points={points.map((p) => `${p.x},${p.y}`).join(" ")} />
@@ -164,8 +192,8 @@ function NetworkWorld({ network, snapshot, events, selected, onSelect, traffic }
 
       <div className="hubComplex">
         <div className="hubHeader">
-          <span>CENTRAL INTERMODAL</span>
-          <strong>4 bays · rail transfer</strong>
+          <span>CENTRAL STATION / REGIONAL RAIL</span>
+          <strong>regional transfer node</strong>
         </div>
         <div className="hubBays">
           {["A", "B", "C", "D"].map((bay, index) => (
@@ -417,7 +445,7 @@ export default function Home() {
           <div><strong>TransitOps</strong><span>Network Intelligence</span></div>
         </div>
         <div className="topStatus">
-          <span className="scenarioName">Scenario 01 · Rail transfer disruption</span>
+          <span className="scenarioName">Scenario 01 · Waterloo–Kitchener regional disruption</span>
           <span className="status"><i className={`statusDot ${playing ? "pulse" : ""}`} />{data ? (playing ? "Running" : "Paused") : "Ready"}</span>
         </div>
       </header>
@@ -427,7 +455,7 @@ export default function Home() {
           <p className="eyebrow">OPERATIONAL DIGITAL TWIN</p>
           <h1>Watch the system respond.</h1>
           <p className="heroCopy">
-            Passenger demand, road traffic, station queues and signal state all evolve together while the controller stages and dispatches the fleet.
+            A larger Waterloo–Kitchener sandbox using the real ION station spine as geographic context. The controller still runs an experimental simulated fleet, not live GRT operations.
           </p>
         </div>
         <div className="clockCard">
@@ -478,7 +506,7 @@ export default function Home() {
             onChange={(e) => { setFrame(Number(e.target.value)); setPlaying(false); }}
             disabled={!data}
           />
-          <span>60:00</span>
+          <span>90:00</span>
         </div>
       </section>
 
@@ -542,7 +570,7 @@ export default function Home() {
       </div>
 
       <footer>
-        <span>TransitOps concept simulator · operational model, schematic geometry</span>
+        <span>TransitOps concept simulator · Waterloo–Kitchener geography, experimental operations</span>
         <span>Python DES · FastAPI · Next.js · Vercel</span>
       </footer>
     </main>
