@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
+import { useSumoStream } from "../lib/useSumoStream";
 import type {
   Controls,
   Network,
@@ -159,6 +160,7 @@ export default function Home() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
   const [selected, setSelected] = useState<Selection>(null);
+  const sumo = useSumoStream();
 
   const timeline = data?.smart.timeline ?? [];
   const snapshot = timeline[frame] ?? null;
@@ -255,8 +257,14 @@ export default function Home() {
         <div className="topStatus">
           <span className="scenarioName">Waterloo–Kitchener regional sandbox</span>
           <span className="status">
-            <i className={`statusDot ${playing ? "pulse" : ""}`} />
-            {data ? (playing ? "Running" : "Paused") : "Ready"}
+            <i className={`statusDot ${playing || sumo.state === "running" ? "pulse" : ""}`} />
+            {sumo.state === "running"
+              ? "SUMO live"
+              : sumo.state === "building_network"
+                ? "Building SUMO network"
+                : data
+                  ? (playing ? "Prototype running" : "Prototype paused")
+                  : "Ready"}
           </span>
         </div>
       </header>
@@ -279,6 +287,21 @@ export default function Home() {
       <section className="simulatorShell">
         <div className="simTopbar">
           <div className="playback">
+            <button
+              type="button"
+              className={sumo.state === "running" ? "activeSpeed" : ""}
+              onClick={sumo.state === "running" ? sumo.stop : sumo.start}
+              disabled={!sumo.available && sumo.state !== "running"}
+              title={sumo.available ? "Start the cloud SUMO digital twin" : "Set NEXT_PUBLIC_SUMO_WS_URL to your SUMO service"}
+            >
+              {sumo.state === "running"
+                ? "■ Stop SUMO"
+                : sumo.state === "building_network"
+                  ? "Building network…"
+                  : sumo.state === "connecting"
+                    ? "Connecting SUMO…"
+                    : "◆ Run SUMO twin"}
+            </button>
             <button
               type="button"
               className="primaryPlayback"
@@ -313,6 +336,7 @@ export default function Home() {
           selected={selected}
           onSelect={setSelected}
           traffic={controls.traffic_multiplier}
+          sumoSnapshot={sumo.snapshot}
         />
 
         <div className="timelineControl">
@@ -365,6 +389,10 @@ export default function Home() {
           </button>
 
           {error && <p className="error">{error}</p>}
+          {sumo.error && <p className="error">{sumo.error}</p>}
+          {sumo.message && sumo.state !== "error" && (
+            <p className="inspectorCopy">{sumo.message}</p>
+          )}
         </form>
 
         <section className="inspector">
@@ -411,8 +439,8 @@ export default function Home() {
       </div>
 
       <footer>
-        <span>TransitOps · Python simulation backend + TypeScript visualization client</span>
-        <span>FastAPI · MapLibre · deck.gl · Next.js</span>
+        <span>TransitOps · Python control + SUMO/TraCI + TypeScript visualization</span>
+        <span>FastAPI · SUMO · TraCI · MapLibre · deck.gl · Next.js</span>
       </footer>
     </main>
   );
