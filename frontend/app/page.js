@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import MapWorld from "./components/MapWorld";
 import RegionalMap from "./components/RegionalMap";
 
 const defaults = {
