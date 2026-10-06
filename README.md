@@ -168,3 +168,28 @@ The web visualization layer now uses a real Waterloo-Kitchener street map instea
 - Simulation snapshots now include geographic longitude/latitude so the browser can render system state in real map space.
 
 The current transit path is still a simplified station-to-station operational corridor. A later GTFS/SUMO integration should replace that simplified geometry with route shapes and microscopic traffic movement.
+
+
+## SUMO cloud simulation service
+
+TransitOps now includes the first implementation of the same architectural pattern used by browser-based SUMO digital twins:
+
+```text
+OpenStreetMap
+      ↓
+SUMO
+      ↕ TraCI
+Python TransitOps controller
+      ↓
+FastAPI WebSocket
+      ↓
+browser visualization
+      ↓
+optional Unity WebGL digital twin
+```
+
+The new `simulation/` service is containerized separately from Vercel because SUMO is a long-running native process. The public web application can remain on Vercel and connect to the simulation service over WebSocket.
+
+See `simulation/README.md` for network generation and local/cloud run instructions.
+
+This milestone establishes the infrastructure rather than claiming a calibrated reproduction of GRT. The Waterloo–Kitchener road network is generated from OpenStreetMap; GRT GTFS, transit routes, passenger demand, and TransitOps control policies are the next integration steps.
