@@ -18,4 +18,4 @@ COPY simulation /app/simulation
 
 WORKDIR /app/simulation\n\nRUN mkdir -p /data/network /data/routes\nVOLUME ["/data"]\n\nEXPOSE 8001
 
-CMD ["python3", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["sh", "-c", "exec python3 -m uvicorn server:app --host 0.0.0.0 --port ${PORT:-8001}"]
