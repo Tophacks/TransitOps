@@ -28,7 +28,23 @@ def network_ready():
     return network_file().exists() and route_file().exists()
 
 
+def _ensure_sumo_home():
+    if os.getenv("SUMO_HOME"):
+        return
+
+    try:
+        import sumo
+
+        os.environ["SUMO_HOME"] = sumo.SUMO_HOME
+    except ImportError as exc:
+        raise RuntimeError(
+            "SUMO_HOME is unset and the eclipse-sumo package is unavailable."
+        ) from exc
+
+
 def ensure_network():
+    _ensure_sumo_home()
+
     if network_ready():
         return {
             "network": str(network_file()),
