@@ -146,3 +146,12 @@ The important architectural boundary is that SUMO is responsible for the traffic
 The project is not primarily a traffic-visualization exercise. The core research and engineering question is whether network-wide operational decisions can improve service outcomes under changing demand, congestion, delays, and transfer conditions.
 
 The visualization exists to make those decisions observable and explainable.
+
+
+## Waterloo–Kitchener regional sandbox
+
+The browser demo now uses the Waterloo–Kitchener ION corridor as a larger geographic frame for the simulator. The current prototype includes major stations from Conestoga through the University of Waterloo, Uptown Waterloo, Grand River Hospital, Central Station, downtown Kitchener, Kitchener Market, and Fairway.
+
+This is intentionally **not** presented as a reproduction of live GRT operations. Real station names and corridor geography provide recognizable context, while vehicle dispatch, passenger demand, staging decisions, and signal-priority behaviour remain experimental TransitOps scenarios.
+
+The next data-integration step is to replace hand-authored network geometry and demand assumptions with GRT open data / GTFS and, later, SUMO/TraCI.
