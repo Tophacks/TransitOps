@@ -1,50 +1,54 @@
 # TransitOps SUMO Service
 
-This directory contains the microscopic traffic layer for the TransitOps digital twin.
+TransitOps now uses a deliberately small **Waterloo Corridor Test Scenario** for the first working SUMO/TraCI demo.
+
+## Scenario
+
+```text
+University of Waterloo
+        │
+     Signal 1
+        │
+Waterloo Public Square
+        │
+     Signal 2
+        │
+Grand River Hospital
+        │
+     Signal 3
+        │
+   Central Station
+```
+
+The SUMO network also includes three east/west cross streets, background car flows, and three simulated transit buses.
+
+The corridor is Waterloo-inspired and is **not** a calibrated reproduction of GRT operations.
 
 ## Architecture
 
 ```text
-OpenStreetMap
-      ↓
-netconvert
-      ↓
-SUMO
-      ↕ TraCI
+Small deterministic corridor
+        ↓
+       SUMO
+        ↕ TraCI
 Python TransitOps controller
-      ↓
-FastAPI WebSocket
-      ↓
-MapLibre/deck.gl browser client
-      ↓
-optional Unity WebGL renderer later
+        ↓
+ FastAPI WebSocket
+        ↓
+MapLibre + deck.gl
 ```
 
-The browser does not need SUMO installed.
+The Python controller watches approaching buses. If a bus is within 70 m of a red signal, TransitOps selects a compatible green phase and grants a short transit-priority window.
 
-## Large Waterloo–Kitchener network
+## Why the smaller network
 
-The full road network is **not committed to Git**. During the production Docker build, TransitOps:
+The earlier city-scale OSM build required large Overpass downloads and made cloud builds slow and fragile. The current corridor is generated locally from a few node/edge definitions, so:
 
-1. downloads the Waterloo–Kitchener OpenStreetMap extract,
-2. converts it with SUMO `netconvert`,
-3. generates background traffic with `randomTrips.py`,
-4. stores the runtime assets as compressed XML:
-
-```text
-simulation/sumo/network/waterloo_kitchener.net.xml.gz
-simulation/sumo/routes/background.rou.xml.gz
-```
-
-SUMO reads the compressed files directly. This keeps Git history small while ensuring every deployed image already contains the network before it starts.
-
-The network builder is:
-
-```text
-simulation/sumo/network/build_network.sh
-```
-
-Generated `.osm.xml`, `.net.xml(.gz)`, and `.rou.xml(.gz)` files remain gitignored.
+- no external map download is required,
+- Docker builds are deterministic,
+- CI can smoke-test the simulator quickly,
+- control decisions are easier to inspect,
+- the architecture still scales to GTFS/OSM later.
 
 ## Local Docker run
 
@@ -55,7 +59,7 @@ docker compose build
 docker compose up sumo
 ```
 
-The Docker build generates the Waterloo–Kitchener SUMO network. When the service starts:
+Then use:
 
 ```text
 http://localhost:8001/
@@ -63,48 +67,32 @@ http://localhost:8001/health
 ws://localhost:8001/ws/simulation
 ```
 
-## Automated validation
-
-`.github/workflows/sumo-integration.yml` builds the production Docker image and runs `simulation/smoke_test.py`.
-
-The smoke test starts SUMO with the generated Waterloo–Kitchener assets, advances 180 seconds of simulated traffic, and fails if no vehicles enter the network. The workflow also uploads the compressed SUMO assets as a short-lived GitHub Actions artifact for inspection.
-
 ## Web deployment
 
-The public Next.js frontend remains on Vercel. The SUMO service must run on a container host that supports a long-running process and WebSockets.
+The Next.js frontend remains on Vercel. The SUMO service is packaged as a long-running Docker web service.
 
-A Render Blueprint is included at:
+A Render blueprint is included in `render.yaml`.
 
-```text
-render.yaml
-```
-
-After the SUMO service has a public HTTPS address, set this on the Vercel frontend:
+After deployment, configure the Vercel frontend:
 
 ```text
 NEXT_PUBLIC_SUMO_WS_URL=wss://YOUR-SUMO-HOST/ws/simulation
 ```
 
-The dashboard then exposes **Run SUMO twin** and overlays live SUMO traffic on the Waterloo–Kitchener map.
+The dashboard's **Run SUMO twin** button will then stream the microscopic traffic simulation into the browser.
 
-## Current simulation scope
+## Automated validation
 
-Implemented:
-- real OSM street-network import
-- SUMO microscopic road traffic
-- geographic vehicle telemetry through TraCI
-- traffic-light telemetry
-- controller hooks for vehicle holding, rerouting, and signal phases
-- FastAPI WebSocket streaming
-- live browser rendering of SUMO vehicles
-- production Docker packaging
-- automated network/simulation smoke testing
+`.github/workflows/sumo-integration.yml`:
 
-Still intentionally future work:
-- GRT GTFS schedule/shape import
-- calibrated GRT buses and ION service
-- passenger assignment into SUMO
-- production TransitOps control policies against TraCI
-- Unity/WebGL high-fidelity 3D rendering
+1. builds the production Docker image,
+2. builds the compact SUMO corridor,
+3. starts SUMO,
+4. advances 180 simulated seconds,
+5. verifies road traffic appears,
+6. verifies transit buses appear,
+7. verifies all three traffic lights exist.
 
-The current Waterloo–Kitchener model is therefore a real microscopic road-traffic sandbox, not yet a calibrated reproduction of GRT service.
+## Next iterations
+
+Once this demo is stable, larger geography can be added without changing the overall architecture. Useful next steps are GTFS transit routes, passenger assignment, richer dispatch policies, and eventually a Unity/WebGL renderer.
