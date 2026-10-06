@@ -105,3 +105,22 @@ export type Selection =
   | { type: "intersection"; data: IntersectionState }
   | { type: "yard"; data: Yard }
   | null;
+
+export type LiveSumoVehicle = {
+  id: string;
+  type: string;
+  speed_mps: number;
+  road_id: string;
+  lane_id: string;
+  lon: number | null;
+  lat: number | null;
+};
+
+export type LiveSumoSnapshot = {
+  step: number;
+  sim_time: number;
+  vehicles: LiveSumoVehicle[];
+  signals: { id: string; phase: number; state: string }[];
+  arrived: string[];
+  departed: string[];
+};
