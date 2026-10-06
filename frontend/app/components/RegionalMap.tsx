@@ -13,6 +13,8 @@ import type {
   Selection,
   Snapshot,
   StopState,
+  LiveSumoSnapshot,
+  LiveSumoVehicle,
 } from "../../lib/types";
 
 type Props = {
@@ -21,6 +23,7 @@ type Props = {
   selected: Selection;
   onSelect: (selection: Selection) => void;
   traffic: number;
+  sumoSnapshot?: LiveSumoSnapshot | null;
 };
 
 type PassengerDot = {
@@ -73,6 +76,7 @@ export default function RegionalMap({
   selected,
   onSelect,
   traffic,
+  sumoSnapshot = null,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -83,6 +87,10 @@ export default function RegionalMap({
   const stops = snapshot?.stops ?? network.stops;
   const intersections = snapshot?.intersections ?? network.intersections;
   const buses = snapshot?.buses ?? [];
+  const sumoVehicles = (sumoSnapshot?.vehicles ?? []).filter(
+    (vehicle): vehicle is LiveSumoVehicle & { lon: number; lat: number } =>
+      Number.isFinite(vehicle.lon) && Number.isFinite(vehicle.lat)
+  );
 
   const routePath = useMemo<[number, number][]>(() => {
     const byId = new Map(network.stops.map((stop) => [stop.id, stop]));
@@ -284,6 +292,25 @@ export default function RegionalMap({
         },
       }),
 
+      new ScatterplotLayer({
+        id: "sumo-road-traffic",
+        data: sumoVehicles,
+        getPosition: (vehicle: LiveSumoVehicle & { lon: number; lat: number }) => [
+          vehicle.lon,
+          vehicle.lat,
+        ],
+        getRadius: 3.6,
+        radiusUnits: "pixels",
+        getFillColor: (vehicle: LiveSumoVehicle) =>
+          vehicle.type.toLowerCase().includes("bus")
+            ? [117, 224, 189, 255]
+            : [186, 198, 205, 205],
+        getLineColor: [5, 14, 19, 220],
+        lineWidthMinPixels: 1,
+        stroked: true,
+        pickable: false,
+      }),
+
       new TextLayer({
         id: "buses",
         data: buses,
@@ -324,6 +351,7 @@ export default function RegionalMap({
     stops,
     intersections,
     buses,
+    sumoVehicles,
     selected,
     network.yard,
     onSelect,
@@ -359,13 +387,13 @@ export default function RegionalMap({
           </strong>
         </div>
         <div>
-          <span>RENDERER</span>
-          <strong>MapLibre + deck.gl</strong>
+          <span>TRAFFIC SOURCE</span>
+          <strong>{sumoSnapshot ? `SUMO · ${sumoVehicles.length} vehicles` : "Python DES"}</strong>
         </div>
       </div>
 
       <div className="mapLegend">
-        Real OSM-based streets · TypeScript visualization · Python simulation
+        Real OSM-based streets · {sumoSnapshot ? "live SUMO + TraCI traffic" : "Python prototype traffic"}
       </div>
     </div>
   );
