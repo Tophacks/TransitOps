@@ -1,0 +1,3 @@
+fastapi[standard]>=0.141.1
+traci
+sumolib
