@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
+    <!--
+      Reference config for local SUMO GUI use after generating assets.
+      The cloud runner supplies -n/-r directly so persistent /data paths
+      do not need to be hard-coded here.
+    -->
     <input>
-        <net-file value="../network/waterloo_kitchener.net.xml"/>
-        <route-files value="../routes/background.rou.xml"/>
+        <net-file value="../network/waterloo_kitchener.net.xml.gz"/>
+        <route-files value="../routes/background.rou.xml.gz"/>
     </input>
 
     <time>
