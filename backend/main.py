@@ -63,25 +63,22 @@ def network_definition():
     return {
         "yard": {
             "id": "YARD",
-            "name": "Regional Staging Yard",
-            "x": 10.0,
-            "y": 69.0,
+            "name": "Corridor Staging Yard",
+            "x": 88.0,
+            "y": 88.0,
             "lon": YARD_GEO[0],
             "lat": YARD_GEO[1],
         },
         "stops": stops,
         "intersections": intersections,
         "route_order": [
-            "CONESTOGA", "NORTHFIELD", "RESEARCH_TECH", "UW", "LAURIER",
-            "WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", "CENTRAL",
-            "CITY_HALL", "KITCHENER_MARKET", "FAIRWAY"
+            "UW",
+            "WATERLOO_SQUARE",
+            "GRAND_RIVER_HOSPITAL",
+            "CENTRAL",
         ],
         "passengers_per_sprite": 6,
-        "cities": [
-            {"name": "Waterloo", "x": 31.0, "y": 23.0},
-            {"name": "Kitchener", "x": 68.0, "y": 60.0},
-        ],
-        "corridor_name": "Waterloo-Kitchener regional sandbox",
+        "corridor_name": "Waterloo Corridor Test Scenario",
     }
 
 
@@ -94,13 +91,13 @@ def run_case(payload: SimulationRequest, intelligent: bool):
     trains = [
         Train(
             train_id="TRAIN-A",
-            scheduled_arrival=15,
+            scheduled_arrival=12,
             delay_minutes=payload.train_delay,
             passengers_for_bus=first_wave,
         ),
         Train(
             train_id="TRAIN-B",
-            scheduled_arrival=38,
+            scheduled_arrival=32,
             delay_minutes=max(0, payload.train_delay // 2),
             passengers_for_bus=second_wave,
         ),
@@ -110,7 +107,7 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         buses=deepcopy(buses),
         trains=trains,
         intelligent=intelligent,
-        duration=90,
+        duration=60,
         traffic_multiplier=payload.traffic_multiplier,
         seed=17,
     )
