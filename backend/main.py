@@ -44,11 +44,20 @@ def network_definition():
         for iid, (name, x, y, _offset) in INTERSECTION_LAYOUT.items()
     ]
     return {
-        "yard": {"id": "YARD", "name": "North Yard", "x": 8.0, "y": 83.0},
+        "yard": {"id": "YARD", "name": "Regional Staging Yard", "x": 10.0, "y": 69.0},
         "stops": stops,
         "intersections": intersections,
-        "route_order": ["CENTRAL", "KING", "MARKET", "UNIVERSITY"],
-        "passengers_per_sprite": 5,
+        "route_order": [
+            "CONESTOGA", "NORTHFIELD", "RESEARCH_TECH", "UW", "LAURIER",
+            "WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", "CENTRAL",
+            "CITY_HALL", "KITCHENER_MARKET", "FAIRWAY"
+        ],
+        "passengers_per_sprite": 6,
+        "cities": [
+            {"name": "Waterloo", "x": 31.0, "y": 23.0},
+            {"name": "Kitchener", "x": 68.0, "y": 60.0},
+        ],
+        "corridor_name": "Waterloo-Kitchener regional sandbox",
     }
 
 
@@ -77,7 +86,7 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         buses=deepcopy(buses),
         trains=trains,
         intelligent=intelligent,
-        duration=60,
+        duration=90,
         traffic_multiplier=payload.traffic_multiplier,
         seed=17,
     )
