@@ -47,7 +47,7 @@ NET_FILE="$OUT_NETWORK_DIR/${PREFIX}.net.xml.gz"
 ROUTE_FILE="$OUT_ROUTE_DIR/background.rou.xml.gz"
 
 echo "Converting OSM tiles to compressed SUMO network..."
-netconvert \
+"$SUMO_HOME/bin/netconvert" \
   --osm-files "$OSM_FILES" \
   --output-file "$NET_FILE" \
   --geometry.remove \
