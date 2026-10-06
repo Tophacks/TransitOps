@@ -10,7 +10,7 @@ from .telemetry import network_snapshot
 
 
 class SumoSession:
-    def __init__(self, step_delay=0.05):
+    def __init__(self, step_delay=0.04):
         self.step_delay = step_delay
         self.connection = None
         self.controller = None
@@ -33,7 +33,7 @@ class SumoSession:
                 "--begin",
                 "0",
                 "--end",
-                os.getenv("SUMO_END", "5400"),
+                os.getenv("SUMO_END", "900"),
                 "--step-length",
                 "1",
                 "--time-to-teleport",
