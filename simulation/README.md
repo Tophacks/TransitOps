@@ -1,6 +1,6 @@
 # TransitOps SUMO Service
 
-TransitOps now uses a deliberately small **Waterloo Corridor Test Scenario** for the first working SUMO/TraCI demo.
+The SUMO service powers the microscopic traffic portion of the **Waterloo Corridor Test Scenario**.
 
 ## Scenario
 
@@ -20,79 +20,96 @@ Grand River Hospital
    Central Station
 ```
 
-The SUMO network also includes three east/west cross streets, background car flows, and three simulated transit buses.
+Three east/west cross streets create competing road traffic. The route file generates background cars and three transit buses.
 
-The corridor is Waterloo-inspired and is **not** a calibrated reproduction of GRT operations.
+The corridor is Waterloo-inspired and is not a calibrated GRT model.
 
-## Architecture
+## How it works
 
 ```text
-Small deterministic corridor
-        ↓
-       SUMO
-        ↕ TraCI
-Python TransitOps controller
-        ↓
- FastAPI WebSocket
-        ↓
-MapLibre + deck.gl
+Local node/edge definitions
+          ↓
+      netconvert
+          ↓
+         SUMO
+          ↕
+        TraCI
+          ↓
+TransitOps Python controller
+          ↓
+ FastAPI WebSocket :8001
+          ↓
+ browser visualization
 ```
 
-The Python controller watches approaching buses. If a bus is within 70 m of a red signal, TransitOps selects a compatible green phase and grants a short transit-priority window.
+There is no OpenStreetMap download during startup or Docker build. The compact SUMO network is generated locally and deterministically.
 
-## Why the smaller network
+## Transit-priority behavior
 
-The earlier city-scale OSM build required large Overpass downloads and made cloud builds slow and fragile. The current corridor is generated locally from a few node/edge definitions, so:
+The controller inspects each simulated bus using TraCI. When a bus approaches a red traffic light within the configured distance, TransitOps finds a compatible green phase and requests a short priority window.
 
-- no external map download is required,
-- Docker builds are deterministic,
-- CI can smoke-test the simulator quickly,
-- control decisions are easier to inspect,
-- the architecture still scales to GTFS/OSM later.
+The WebSocket snapshot includes:
 
-## Local Docker run
+- vehicle ID and type
+- speed
+- road and lane IDs
+- browser-mapped longitude/latitude
+- traffic-light phases and states
+- arrivals and departures
+- TransitOps priority actions
+
+## Run locally
 
 From the repository root:
 
 ```bash
-docker compose build
-docker compose up sumo
+docker compose up --build
 ```
 
-Then use:
+Available endpoints:
 
 ```text
 http://localhost:8001/
 http://localhost:8001/health
+http://localhost:8001/scenario
 ws://localhost:8001/ws/simulation
 ```
 
-## Web deployment
+The frontend automatically connects to the local WebSocket when served from `localhost`.
 
-The Next.js frontend remains on Vercel. The SUMO service is packaged as a long-running Docker web service.
+## Validation
 
-A Render blueprint is included in `render.yaml`.
+GitHub Actions runs `.github/workflows/sumo-integration.yml`.
 
-After deployment, configure the Vercel frontend:
+The workflow:
 
-```text
-NEXT_PUBLIC_SUMO_WS_URL=wss://YOUR-SUMO-HOST/ws/simulation
-```
-
-The dashboard's **Run SUMO twin** button will then stream the microscopic traffic simulation into the browser.
-
-## Automated validation
-
-`.github/workflows/sumo-integration.yml`:
-
-1. builds the production Docker image,
-2. builds the compact SUMO corridor,
+1. builds the simulation Docker image,
+2. generates the corridor network,
 3. starts SUMO,
 4. advances 180 simulated seconds,
-5. verifies road traffic appears,
-6. verifies transit buses appear,
-7. verifies all three traffic lights exist.
+5. confirms road traffic is present,
+6. confirms transit buses are present,
+7. confirms all three signalized intersections are present.
 
-## Next iterations
+The validated corridor assets are only a few kilobytes, so the old giant Waterloo–Kitchener `.net.xml` approach is no longer needed for the MVP.
 
-Once this demo is stable, larger geography can be added without changing the overall architecture. Useful next steps are GTFS transit routes, passenger assignment, richer dispatch policies, and eventually a Unity/WebGL renderer.
+## Cloud deployment
+
+Cloud hosting is optional. Local execution is the recommended workflow while the simulator is being developed.
+
+If a public SUMO server is later deployed, the browser can connect through:
+
+```text
+NEXT_PUBLIC_SUMO_WS_URL=wss://<simulation-host>/ws/simulation
+```
+
+The included `render.yaml` is retained only as an optional deployment path.
+
+## Next simulator work
+
+- add SUMO bus stops and dwell behavior
+- add passenger demand to the microscopic model
+- measure travel-time effects of signal priority
+- compare fixed-control and TransitOps scenarios
+- add dispatch/staging commands through TraCI
+- later import selected GTFS/OSM data after the controller is stable
