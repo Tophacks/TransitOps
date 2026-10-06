@@ -1,41 +1,23 @@
 import asyncio
 import os
-from pathlib import Path
 
 import traci
 
+from network_manager import ensure_network, network_file, route_file
 from .control import TransitOpsController
 from .telemetry import network_snapshot
 
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = ROOT / "sumo" / "scenarios" / "waterloo_kitchener.sumocfg"
-
-
 class SumoSession:
-    def __init__(self, config_path=None, step_delay=0.05):
-        self.config_path = Path(config_path or DEFAULT_CONFIG)
+    def __init__(self, step_delay=0.05):
         self.step_delay = step_delay
         self.connection = None
         self.controller = None
         self.running = False
         self.step_count = 0
 
-    def _validate(self):
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"SUMO configuration not found: {self.config_path}")
-
-        network_path = ROOT / "sumo" / "network" / "waterloo_kitchener.net.xml"
-        route_path = ROOT / "sumo" / "routes" / "background.rou.xml"
-
-        missing = [str(path) for path in (network_path, route_path) if not path.exists()]
-        if missing:
-            raise FileNotFoundError(
-                "SUMO network has not been generated yet. Missing: " + ", ".join(missing)
-            )
-
     def start(self):
-        self._validate()
+        ensure_network()
 
         sumo_binary = os.getenv("SUMO_BINARY", "sumo")
         label = f"transitops-{id(self)}"
@@ -43,9 +25,20 @@ class SumoSession:
         traci.start(
             [
                 sumo_binary,
-                "-c",
-                str(self.config_path),
-                "--start",
+                "-n",
+                str(network_file()),
+                "-r",
+                str(route_file()),
+                "--begin",
+                "0",
+                "--end",
+                os.getenv("SUMO_END", "5400"),
+                "--step-length",
+                "1",
+                "--time-to-teleport",
+                "-1",
+                "--no-step-log",
+                "true",
                 "--quit-on-end",
             ],
             label=label,
@@ -58,7 +51,7 @@ class SumoSession:
 
     async def stream(self):
         if not self.running:
-            self.start()
+            await asyncio.to_thread(self.start)
 
         try:
             while (
