@@ -3,12 +3,15 @@ from copy import deepcopy
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from controller import TransitController
 from models import Bus, Train
-from simulation_engine import TransitSimulation
+from simulation_engine import (
+    INTERSECTION_LAYOUT,
+    STOP_LAYOUT,
+    TransitSimulation,
+)
 
 
-app = FastAPI(title="TransitOps API", version="0.1.0")
+app = FastAPI(title="TransitOps API", version="0.2.0")
 
 
 class SimulationRequest(BaseModel):
@@ -22,16 +25,35 @@ def metrics_to_dict(metrics):
     return {
         "passengers_arrived": metrics.total_passengers_arrived,
         "passengers_boarded": metrics.total_passengers_boarded,
-        "left_waiting": metrics.missed_connections,
+        "completed_trips": metrics.completed_trips,
+        "left_waiting": metrics.passengers_left_waiting,
         "average_wait": round(metrics.average_wait_minutes, 2),
         "max_queue": metrics.max_queue,
         "buses_staged": metrics.buses_staged,
-        "holds_issued": metrics.holds_issued,
+        "signal_priority_requests": metrics.signal_priority_requests,
+    }
+
+
+def network_definition():
+    stops = [
+        {"id": stop_id, "name": name, "x": x, "y": y}
+        for stop_id, (name, x, y) in STOP_LAYOUT.items()
+    ]
+    intersections = [
+        {"id": iid, "name": name, "x": x, "y": y}
+        for iid, (name, x, y, _offset) in INTERSECTION_LAYOUT.items()
+    ]
+    return {
+        "yard": {"id": "YARD", "name": "North Yard", "x": 8.0, "y": 83.0},
+        "stops": stops,
+        "intersections": intersections,
+        "route_order": ["CENTRAL", "KING", "MARKET", "UNIVERSITY"],
+        "passengers_per_sprite": 5,
     }
 
 
 def run_case(payload: SimulationRequest, intelligent: bool):
-    buses = [Bus(f"BUS-{101 + i}") for i in range(payload.fleet_size)]
+    buses = [Bus(f"B{101 + i}") for i in range(payload.fleet_size)]
 
     first_wave = round(payload.passenger_demand * 0.56)
     second_wave = payload.passenger_demand - first_wave
@@ -51,27 +73,26 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         ),
     ]
 
-    controller = TransitController(enabled=intelligent)
-
     sim = TransitSimulation(
         buses=deepcopy(buses),
         trains=trains,
-        controller=controller,
+        intelligent=intelligent,
         duration=60,
         traffic_multiplier=payload.traffic_multiplier,
+        seed=17,
     )
-
     metrics = sim.run()
 
     return {
         "metrics": metrics_to_dict(metrics),
         "events": sim.events,
+        "timeline": sim.timeline,
     }
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "TransitOps"}
+    return {"status": "ok", "service": "TransitOps", "version": "0.2.0"}
 
 
 @app.post("/api/simulate")
@@ -83,12 +104,17 @@ def simulate(payload: SimulationRequest):
         "average_wait_reduction": round(
             baseline["metrics"]["average_wait"] - smart["metrics"]["average_wait"], 2
         ),
-        "max_queue_reduction": baseline["metrics"]["max_queue"] - smart["metrics"]["max_queue"],
-        "fewer_left_waiting": baseline["metrics"]["left_waiting"] - smart["metrics"]["left_waiting"],
+        "max_queue_reduction": (
+            baseline["metrics"]["max_queue"] - smart["metrics"]["max_queue"]
+        ),
+        "fewer_left_waiting": (
+            baseline["metrics"]["left_waiting"] - smart["metrics"]["left_waiting"]
+        ),
     }
 
     return {
         "scenario": payload.model_dump(),
+        "network": network_definition(),
         "baseline": baseline,
         "smart": smart,
         "impact": impact,
