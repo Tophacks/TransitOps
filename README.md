@@ -193,3 +193,16 @@ The new `simulation/` service is containerized separately from Vercel because SU
 See `simulation/README.md` for network generation and local/cloud run instructions.
 
 This milestone establishes the infrastructure rather than claiming a calibrated reproduction of GRT. The Waterloo–Kitchener road network is generated from OpenStreetMap; GRT GTFS, transit routes, passenger demand, and TransitOps control policies are the next integration steps.
+
+
+## Production SUMO asset handling
+
+The full Waterloo–Kitchener SUMO network is generated from OpenStreetMap and stored as `waterloo_kitchener.net.xml.gz` on the simulation service's persistent volume rather than committed as a giant raw XML file.
+
+The web application can connect to the SUMO service by setting:
+
+```text
+NEXT_PUBLIC_SUMO_WS_URL=wss://<simulation-host>/ws/simulation
+```
+
+When connected, the MapLibre/deck.gl view renders live road vehicles from SUMO while the existing Python prototype remains available for baseline and control experiments.
