@@ -29,7 +29,7 @@ jobs:
         run: docker build -f simulation/Dockerfile -t transitops-sumo .
 
       - name: Validate baked network and traffic
-        run: docker run --rm transitops-sumo python smoke_test.py
+        run: docker run --rm transitops-sumo python3 smoke_test.py
 
       - name: Inspect generated asset sizes
         run: |
