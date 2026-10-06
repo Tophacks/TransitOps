@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { type Map as MapLibreMap } from "maplibre-gl";
+import { LngLatBounds, Map as MapLibreMap, NavigationControl, setWorkerUrl } from "maplibre-gl";
 import { MapLibreOverlay } from "@deck.gl/maplibre";
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import type { Layer } from "@deck.gl/core";
@@ -104,9 +104,9 @@ export default function RegionalMap({
     if (!containerRef.current || mapRef.current) return;
 
     try {
-      maplibregl.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
+      setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
 
-      const map = new maplibregl.Map({
+      const map = new MapLibreMap({
         container: containerRef.current,
         style: MAP_STYLE,
         center: DEFAULT_CENTER,
@@ -117,7 +117,7 @@ export default function RegionalMap({
       });
 
       map.addControl(
-        new maplibregl.NavigationControl({ visualizePitch: true }),
+        new NavigationControl({ visualizePitch: true }),
         "top-right"
       );
 
@@ -132,7 +132,7 @@ export default function RegionalMap({
 
       map.once("load", () => {
         if (network.stops.length > 0) {
-          const bounds = new maplibregl.LngLatBounds(
+          const bounds = new LngLatBounds(
             stopPosition(network.stops[0]),
             stopPosition(network.stops[0])
           );
