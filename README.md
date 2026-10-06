@@ -196,14 +196,18 @@ See `simulation/README.md` for network generation and local/cloud run instructio
 This milestone establishes the infrastructure rather than claiming a calibrated reproduction of GRT. The Waterloo–Kitchener road network is generated from OpenStreetMap; GRT GTFS, transit routes, passenger demand, and TransitOps control policies are the next integration steps.
 
 
-## Production SUMO asset handling
+## SUMO corridor demo
 
-The full Waterloo–Kitchener SUMO network is generated from OpenStreetMap **during the simulation Docker build** and baked into the image as `waterloo_kitchener.net.xml.gz`. The giant raw XML network is never committed to Git and users never download it manually.
+TransitOps currently uses a compact Waterloo-inspired SUMO scenario instead of importing the whole Waterloo–Kitchener road network.
 
-The web application can connect to the SUMO service by setting:
+The demo includes University of Waterloo, Waterloo Public Square, Grand River Hospital, Central Station, three signalized intersections, cross traffic, three transit buses, and TraCI-based signal priority.
+
+The network is generated entirely from local node/edge definitions during the Docker build, so there is no giant `.net.xml` in Git and no dependency on live OpenStreetMap/Overpass downloads.
+
+The public web app stays on Vercel. Connect it to the deployed SUMO service with:
 
 ```text
 NEXT_PUBLIC_SUMO_WS_URL=wss://<simulation-host>/ws/simulation
 ```
 
-When connected, the MapLibre/deck.gl view renders live road vehicles from SUMO while the existing Python prototype remains available for baseline and control experiments.
+This smaller scenario is intended to prove TransitOps control behavior first. City-scale OSM/GTFS integration can be added later without changing the SUMO → TraCI → Python → WebSocket architecture.
