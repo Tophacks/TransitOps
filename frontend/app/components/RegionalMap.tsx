@@ -313,7 +313,7 @@ export default function RegionalMap({
 
       new TextLayer({
         id: "buses",
-        data: buses,
+        data: sumoSnapshot ? [] : buses,
         getPosition: busPosition,
         getText: () => "🚌",
         getSize: 26,
@@ -327,7 +327,7 @@ export default function RegionalMap({
 
       new TextLayer({
         id: "bus-labels",
-        data: buses,
+        data: sumoSnapshot ? [] : buses,
         getPosition: busPosition,
         getText: (bus: BusState) =>
           `${bus.id}  ${bus.occupancy}/${bus.capacity}`,
@@ -363,7 +363,7 @@ export default function RegionalMap({
 
       {!ready && !mapError && (
         <div className="mapLoading">
-          Loading Waterloo–Kitchener street network…
+          Loading Waterloo corridor map…
         </div>
       )}
 
@@ -393,7 +393,7 @@ export default function RegionalMap({
       </div>
 
       <div className="mapLegend">
-        Real OSM-based streets · {sumoSnapshot ? "live SUMO + TraCI traffic" : "Python prototype traffic"}
+        Waterloo map context · {sumoSnapshot ? "live compact SUMO + TraCI traffic" : "Python corridor prototype"}
       </div>
     </div>
   );
