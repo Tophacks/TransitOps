@@ -291,7 +291,11 @@ export default function Home() {
               type="button"
               className={sumo.state === "running" ? "activeSpeed" : ""}
               onClick={sumo.state === "running" ? sumo.stop : sumo.start}
-              disabled={!sumo.available && sumo.state !== "running"}
+              disabled={
+                (!sumo.available && sumo.state !== "running") ||
+                sumo.state === "connecting" ||
+                sumo.state === "building_network"
+              }
               title={sumo.available ? "Start the cloud SUMO digital twin" : "Set NEXT_PUBLIC_SUMO_WS_URL to your SUMO service"}
             >
               {sumo.state === "running"
