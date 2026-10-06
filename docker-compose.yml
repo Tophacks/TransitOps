@@ -6,13 +6,5 @@ services:
     ports:
       - "8001:8001"
     environment:
-      SUMO_HOME: /usr/share/sumo
       SUMO_BINARY: sumo
-      SUMO_NETWORK_DIR: /data/network
-      SUMO_ROUTE_DIR: /data/routes
       SUMO_END: "5400"
-    volumes:
-      - sumo-data:/data
-
-volumes:
-  sumo-data:
