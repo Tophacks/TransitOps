@@ -17,11 +17,11 @@ def route_dir():
 
 
 def network_file():
-    return network_dir() / "waterloo_kitchener.net.xml.gz"
+    return network_dir() / "waterloo_corridor.net.xml.gz"
 
 
 def route_file():
-    return route_dir() / "background.rou.xml.gz"
+    return route_dir() / "waterloo_corridor.rou.xml"
 
 
 def network_ready():
@@ -64,7 +64,7 @@ def ensure_network():
 
     if not network_ready():
         raise FileNotFoundError(
-            "SUMO network build completed without producing the expected compressed assets."
+            "SUMO corridor build completed without producing the expected assets."
         )
 
     return {
