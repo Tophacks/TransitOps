@@ -39,3 +39,39 @@ Next steps include:
 - SUMO + TraCI integration
 
 This version intentionally starts with deterministic control logic before adding machine learning, so the operational behavior can be validated independently of the prediction model.
+
+
+## Live web app (Vercel)
+
+The repository is structured as a Vercel multi-service project:
+
+```text
+TransitOps/
+├── vercel.json
+├── frontend/        # Next.js operations dashboard
+│   └── app/
+└── backend/         # FastAPI + Python simulation engine
+    ├── main.py
+    ├── controller.py
+    ├── models.py
+    └── simulation_engine.py
+```
+
+### Deploy
+
+1. Import `Tophacks/TransitOps` into Vercel.
+2. Keep the project root at the repository root.
+3. Vercel reads `vercel.json` and deploys the Next.js frontend and FastAPI backend together.
+4. The simulator API is exposed at `/api/simulate`.
+5. Pushes to `main` can automatically create new deployments once the GitHub repository is connected.
+
+### Local connected development
+
+Install the current Vercel CLI and run from the repository root:
+
+```bash
+npm install -g vercel@latest
+vercel dev -L
+```
+
+Then open the local URL printed by Vercel.
