@@ -1,5 +1,8 @@
 name: SUMO integration
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
