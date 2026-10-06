@@ -19,7 +19,7 @@ on:
 jobs:
   build-and-smoke-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -34,16 +34,16 @@ jobs:
       - name: Inspect generated asset sizes
         run: |
           docker create --name transitops-assets transitops-sumo
-          docker cp transitops-assets:/app/simulation/sumo/network/waterloo_kitchener.net.xml.gz ./waterloo_kitchener.net.xml.gz
-          docker cp transitops-assets:/app/simulation/sumo/routes/background.rou.xml.gz ./background.rou.xml.gz
+          docker cp transitops-assets:/app/simulation/sumo/network/waterloo_corridor.net.xml.gz ./waterloo_corridor.net.xml.gz
+          docker cp transitops-assets:/app/simulation/sumo/routes/waterloo_corridor.rou.xml ./waterloo_corridor.rou.xml
           docker rm transitops-assets
-          ls -lh waterloo_kitchener.net.xml.gz background.rou.xml.gz
+          ls -lh waterloo_corridor.net.xml.gz waterloo_corridor.rou.xml
 
       - name: Upload SUMO assets
         uses: actions/upload-artifact@v4
         with:
-          name: waterloo-kitchener-sumo-assets
+          name: waterloo-corridor-sumo-assets
           path: |
-            waterloo_kitchener.net.xml.gz
-            background.rou.xml.gz
+            waterloo_corridor.net.xml.gz
+            waterloo_corridor.rou.xml
           retention-days: 7
