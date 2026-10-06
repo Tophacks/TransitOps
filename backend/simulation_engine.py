@@ -5,69 +5,42 @@ from models import BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
 ROUTE = [
-    "CONESTOGA",
-    "NORTHFIELD",
-    "RESEARCH_TECH",
     "UW",
-    "LAURIER",
     "WATERLOO_SQUARE",
     "GRAND_RIVER_HOSPITAL",
     "CENTRAL",
-    "CITY_HALL",
-    "KITCHENER_MARKET",
-    "FAIRWAY",
 ]
 
 STOP_LAYOUT = {
-    "CONESTOGA": ("Conestoga", 17.0, 12.0),
-    "NORTHFIELD": ("Northfield", 24.0, 20.0),
-    "RESEARCH_TECH": ("Research & Technology", 30.0, 29.0),
-    "UW": ("University of Waterloo", 35.5, 38.0),
-    "LAURIER": ("Laurier-Waterloo Park", 41.0, 44.0),
-    "WATERLOO_SQUARE": ("Waterloo Public Square", 47.0, 50.0),
-    "GRAND_RIVER_HOSPITAL": ("Grand River Hospital", 54.0, 57.0),
-    "CENTRAL": ("Central Station", 60.0, 63.0),
-    "CITY_HALL": ("Kitchener City Hall", 65.0, 68.0),
-    "KITCHENER_MARKET": ("Kitchener Market", 72.0, 73.0),
-    "FAIRWAY": ("Fairway", 84.0, 86.0),
+    "UW": ("University of Waterloo", 20.0, 18.0),
+    "WATERLOO_SQUARE": ("Waterloo Public Square", 40.0, 40.0),
+    "GRAND_RIVER_HOSPITAL": ("Grand River Hospital", 60.0, 61.0),
+    "CENTRAL": ("Central Station", 80.0, 82.0),
 }
 
 INTERSECTION_LAYOUT = {
-    "I1": ("King / Northfield", 22.0, 17.0, 0),
-    "I2": ("University corridor", 34.0, 35.0, 1),
-    "I3": ("Uptown Waterloo", 45.0, 48.0, 2),
-    "I4": ("King / Victoria", 59.0, 62.0, 1),
-    "I5": ("Downtown Kitchener", 67.5, 70.0, 3),
-    "I6": ("Fairway corridor", 80.0, 82.0, 0),
+    "I1": ("University corridor", 31.0, 30.0, 0),
+    "I2": ("Uptown Waterloo", 50.0, 51.0, 1),
+    "I3": ("King / Victoria", 70.0, 72.0, 2),
 }
 
-SEGMENT_BASE_MINUTES = [4, 4, 5, 4, 4, 5, 5, 4, 5, 8, 9]
-SEGMENT_INTERSECTIONS = ["I1", "I1", "I2", "I2", "I3", "I3", "I4", "I4", "I5", "I6", "I6"]
+SEGMENT_BASE_MINUTES = [5, 5, 5, 8]
+SEGMENT_INTERSECTIONS = ["I1", "I2", "I3", "I2"]
 
 GEO_LAYOUT = {
-    "CONESTOGA": (-80.52954, 43.49834),
-    "NORTHFIELD": (-80.54321, 43.49722),
-    "RESEARCH_TECH": (-80.54514, 43.48144),
     "UW": (-80.54128, 43.47336),
-    "LAURIER": (-80.53000, 43.47083),
     "WATERLOO_SQUARE": (-80.52280, 43.46419),
     "GRAND_RIVER_HOSPITAL": (-80.51185, 43.45723),
     "CENTRAL": (-80.49944, 43.45333),
-    "CITY_HALL": (-80.49108, 43.45203),
-    "KITCHENER_MARKET": (-80.48374, 43.44636),
-    "FAIRWAY": (-80.44186, 43.42231),
 }
 
 INTERSECTION_GEO = {
-    "I1": (-80.5364, 43.4978),
-    "I2": (-80.5432, 43.4772),
-    "I3": (-80.5264, 43.4675),
-    "I4": (-80.5056, 43.4553),
-    "I5": (-80.4874, 43.4492),
-    "I6": (-80.4535, 43.4289),
+    "I1": (-80.53300, 43.46950),
+    "I2": (-80.52000, 43.46200),
+    "I3": (-80.50500, 43.45500),
 }
 
-YARD_GEO = (-80.5150, 43.4430)
+YARD_GEO = (-80.50350, 43.45150)
 
 
 class TransitSimulation:
@@ -135,17 +108,10 @@ class TransitSimulation:
 
     def _spawn_background_demand(self):
         rates = {
-            "CONESTOGA": 0.8,
-            "NORTHFIELD": 0.35,
-            "RESEARCH_TECH": 0.55,
             "UW": 1.35,
-            "LAURIER": 0.95,
             "WATERLOO_SQUARE": 1.0,
             "GRAND_RIVER_HOSPITAL": 0.9,
             "CENTRAL": 1.15,
-            "CITY_HALL": 0.7,
-            "KITCHENER_MARKET": 0.75,
-            "FAIRWAY": 1.05,
         }
         for stop_id, rate in rates.items():
             expected = rate * (0.8 + 0.3 * self.traffic_multiplier)
@@ -160,7 +126,7 @@ class TransitSimulation:
             if train.actual_arrival == self.time:
                 self._spawn_passengers("CENTRAL", train.passengers_for_bus)
                 self.log(
-                    f"{train.train_id} arrived at Kitchener regional rail +{train.passengers_for_bus} transfers",
+                    f"{train.train_id} arrived at Central Station +{train.passengers_for_bus} transfers",
                     "train",
                 )
 
@@ -183,7 +149,7 @@ class TransitSimulation:
 
     def _intersection_for_segment(self, from_index, to_index):
         if from_index == -1:
-            return "I4"
+            return "I3"
         return SEGMENT_INTERSECTIONS[from_index % len(SEGMENT_INTERSECTIONS)]
 
     def _travel_minutes(self, bus):
@@ -217,7 +183,7 @@ class TransitSimulation:
     def _dispatch_bus(self, bus, staged=False):
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = -1
-        bus.target_stop_index = 7
+        bus.target_stop_index = 3
         bus.segment_elapsed = 0
         bus.segment_minutes = max(3, round(6 * self.traffic_multiplier))
         bus.segment_progress = 0.0
@@ -241,7 +207,7 @@ class TransitSimulation:
             arriving_capacity = sum(
                 max(0, bus.capacity - bus.occupancy)
                 for bus in active
-                if bus.target_stop_index in (3, 5, 7)
+                if bus.target_stop_index in (0, 1, 3)
             )
             if demand > max(70, arriving_capacity + 25):
                 self._dispatch_bus(yard[0], staged=True)
@@ -314,7 +280,7 @@ class TransitSimulation:
                 )
 
     def _bus_xy(self, bus):
-        yard = (10.0, 69.0)
+        yard = (88.0, 88.0)
         if bus.state == BusState.YARD:
             return yard
 
@@ -413,7 +379,7 @@ class TransitSimulation:
         self.timeline.append(snapshot)
 
     def run(self):
-        self.log("Waterloo-Kitchener regional simulation started", "system")
+        self.log("Waterloo Corridor Test Scenario started", "system")
 
         for minute in range(self.duration + 1):
             self.time = minute
@@ -427,5 +393,5 @@ class TransitSimulation:
         self.metrics.passengers_left_waiting = sum(
             len(stop.queue) for stop in self.stops.values()
         )
-        self.log("Regional simulation complete", "system")
+        self.log("Corridor simulation complete", "system")
         return self.metrics
