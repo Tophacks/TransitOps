@@ -9,4 +9,4 @@ services:
     healthCheckPath: /health
     envVars:
       - key: SUMO_END
-        value: "5400"
+        value: "900"
