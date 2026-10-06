@@ -3,6 +3,10 @@ name: SUMO integration
 permissions:
   contents: read
 
+concurrency:
+  group: sumo-integration-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
