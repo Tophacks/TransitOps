@@ -5,3 +5,9 @@ __pycache__
 *.pyc
 .venv
 venv
+
+simulation/sumo/network/*.osm.xml
+simulation/sumo/network/*.net.xml
+simulation/sumo/network/*.net.xml.gz
+simulation/sumo/routes/*.rou.xml
+simulation/sumo/routes/*.rou.xml.gz
