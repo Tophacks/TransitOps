@@ -1,213 +1,197 @@
-# TransitOps Python Simulator
+# TransitOps
 
-A lightweight discrete-event transit operations simulator for testing intelligent dispatch and connection-management strategies.
+TransitOps is a transit-operations control simulator that compares fixed operations with intelligent dispatch and signal-priority decisions.
 
-## Current features
-- Train arrivals with configurable delays
-- Passenger surges from train arrivals
-- Bus fleet states: YARD, STAGED, EN_ROUTE, AT_STATION
-- Traffic-dependent bus travel times
-- Pre-staging logic
-- Train-connection holding logic
-- Passenger boarding and queue tracking
-- Event log and KPI summary
-- Baseline vs intelligent-controller comparison
+The current MVP intentionally uses a **small Waterloo-inspired corridor** rather than a city-scale digital twin. This keeps the simulation fast, deterministic, and easy to run locally while preserving the same architecture that can later scale to GTFS and larger SUMO networks.
 
-## Run
+## Current scenario
 
-```bash
-python main.py
+```text
+University of Waterloo
+        │
+     Signal 1
+        │
+Waterloo Public Square
+        │
+     Signal 2
+        │
+Grand River Hospital
+        │
+     Signal 3
+        │
+   Central Station
 ```
 
-## Structure
+The SUMO corridor also contains three east/west cross streets, background road traffic, three simulated transit buses, and a TransitOps controller that can grant bus signal priority.
 
-- `models.py` — domain objects
-- `controller.py` — transit control logic
-- `simulation_engine.py` — minute-by-minute simulation
-- `main.py` — scenario runner and comparison
+This is a Waterloo-inspired test scenario, **not a calibrated reproduction of GRT operations**.
 
-## Roadmap
+## Architecture
 
-Next steps include:
-- Route and stop-level bus movement
-- Passenger origins and destinations
-- Signal-priority requests
-- Schedule adherence and bus bunching
-- Interactive web visualization
-- Demand forecasting with scikit-learn
-- GTFS / GTFS-Realtime integration
-- SUMO + TraCI integration
+```text
+                 TransitOps
 
-This version intentionally starts with deterministic control logic before adding machine learning, so the operational behavior can be validated independently of the prediction model.
+       Python operations controller
+          dispatch / staging
+          queue response
+          signal priority
+                 │
+                 ↕ TraCI
+                 │
+               SUMO
+       cars / buses / signals
+                 │
+          FastAPI WebSocket
+                 │
+                 ▼
+       Next.js + MapLibre + deck.gl
+```
 
-## Live web app (Vercel)
+The repository currently contains two complementary simulation layers:
 
-The repository is structured as a Vercel multi-service project:
+- `backend/` — lightweight Python baseline vs intelligent-controller simulation used for passenger queues, transfer surges, KPIs, and decision comparison.
+- `simulation/` — microscopic SUMO + TraCI corridor used for road traffic, buses, traffic signals, and live browser telemetry.
+
+## Recommended development setup: local laptop
+
+For now, the primary supported workflow is to run SUMO locally rather than deploying the simulation service to the cloud.
+
+### Requirements
+
+- Docker Desktop
+- Node.js 20+ / npm
+
+You do **not** need to install SUMO manually. Docker installs and runs it inside the simulation container.
+
+### 1. Start SUMO + FastAPI
+
+From the repository root:
+
+```bash
+docker compose up --build
+```
+
+The local service will expose:
+
+```text
+http://localhost:8001/
+http://localhost:8001/health
+ws://localhost:8001/ws/simulation
+```
+
+### 2. Start the frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Then open:
+
+```text
+http://localhost:3000
+```
+
+When the frontend is running on localhost it automatically uses:
+
+```text
+ws://localhost:8001/ws/simulation
+```
+
+No WebSocket environment variable is required for local development.
+
+### 3. Run the live SUMO twin
+
+In the TransitOps web interface, press **Run SUMO twin**.
+
+The browser receives live vehicle and signal state from:
+
+```text
+SUMO → TraCI → Python/FastAPI → WebSocket → MapLibre/deck.gl
+```
+
+## What works now
+
+- Compact deterministic SUMO corridor
+- Background car traffic
+- Three simulated transit buses
+- Three signalized intersections
+- TraCI vehicle telemetry
+- TraCI traffic-light telemetry
+- Transit-priority controller for approaching buses
+- FastAPI WebSocket streaming
+- MapLibre + deck.gl browser visualization
+- Passenger queues and transfer surges in the Python operations model
+- Baseline vs TransitOps KPI comparison
+- Local Docker workflow
+- GitHub Actions frontend build validation
+- GitHub Actions SUMO smoke test
+
+The SUMO integration smoke test verifies that the production image builds, road traffic appears, transit buses enter the simulation, and all three traffic lights are present.
+
+## Repository layout
 
 ```text
 TransitOps/
-├── vercel.json
-├── frontend/        # Next.js operations dashboard
-│   └── app/
-└── backend/         # FastAPI + Python simulation engine
-    ├── main.py
-    ├── controller.py
-    ├── models.py
-    └── simulation_engine.py
+├── backend/                  # Python operational simulation + FastAPI API
+├── frontend/                 # Next.js / MapLibre / deck.gl dashboard
+├── simulation/
+│   ├── Dockerfile
+│   ├── server.py             # SUMO WebSocket service
+│   ├── smoke_test.py
+│   ├── traci_controller/
+│   │   ├── runner.py
+│   │   ├── control.py
+│   │   └── telemetry.py
+│   └── sumo/
+│       ├── network/
+│       │   └── build_network.sh
+│       └── routes/
+├── docker-compose.yml
+├── render.yaml               # optional future cloud deployment
+└── vercel.json               # web frontend / lightweight API deployment
 ```
 
-### Deploy
+## Visualization
 
-1. Import `Tophacks/TransitOps` into Vercel.
-2. Keep the project root at the repository root.
-3. Vercel reads `vercel.json` and deploys the Next.js frontend and FastAPI backend together.
-4. The simulator API is exposed at `/api/simulate`.
-5. Pushes to `main` can automatically create new deployments once the GitHub repository is connected.
+The browser uses:
 
-### Local connected development
+- **MapLibre GL JS** for the interactive geographic map
+- **deck.gl** for stations, vehicles, queues, signals, and transit overlays
+- **Next.js / TypeScript** for the application UI
 
-Install the current Vercel CLI and run from the repository root:
+The map provides Waterloo geographic context while the current SUMO road network is intentionally synthetic and compact.
 
-```bash
-npm install -g vercel@latest
-vercel dev -L
-```
+## Cloud deployment
 
-Then open the local URL printed by Vercel.
+Cloud SUMO deployment is **optional and not required for development**.
 
-## Live 2D operations simulator
-
-The Vercel demo now includes a game-like schematic operations view backed by the Python simulation engine.
-
-- Passenger agents with origin, destination, arrival, boarding, and completion state
-- Passenger queues visualized as pixel-style crowd sprites
-- Moving buses with occupancy, target stop, progress, and schedule deviation
-- Four-stop demo corridor plus a staging yard
-- Signalized intersections with live red/green state
-- Transit signal-priority decisions for delayed occupied buses
-- Background passenger demand plus rail-transfer demand spikes
-- Play, pause, timeline scrubbing, and 1x / 2x / 5x / 10x playback
-- Clickable buses, stations, intersections, and yard
-- Baseline-versus-TransitOps operational metrics
-
-The 2D world is deliberately schematic and not to scale. It is an operations proof-of-concept, not a vehicle-dynamics or autonomous-driving perception model.
-
-## Target digital-twin architecture
-
-TransitOps is intended to evolve into a control layer that can operate on top of a microscopic traffic simulator rather than attempting to reproduce autonomous-driving physics itself.
-
-```text
-GTFS / demand / operational inputs
-              ↓
-      TransitOps controller
-              ↓
-  dispatch · staging · holding
-  route assignment · signal priority
-              ↓
-          TraCI API
-              ↓
-            SUMO
-  lanes · traffic lights · vehicles
-  intersections · road congestion
-              ↓
-      browser visualization
-              ↓
-   optional future 3D / WebGL layer
-```
-
-The important architectural boundary is that SUMO is responsible for the traffic environment and vehicle interactions, while TransitOps remains responsible for network-level transit decisions.
-
-### Development stages
-
-**Prototype — current**
-- Python discrete-event simulation
-- Web-based 2D operational digital twin
-- Passenger queues, buses, stops, intersections, and control events
-- Baseline-versus-controller comparison
-
-**Microscopic traffic integration — implemented foundation**
-- Import the Waterloo–Kitchener OpenStreetMap road network into SUMO
-- Generate microscopic background road traffic
-- Use TraCI to stream vehicle position, lane/road state, and traffic-light state
-- Expose hooks for TransitOps holding, rerouting, and signal control
-- Stream SUMO vehicles into the browser through a FastAPI WebSocket
-
-**Data integration**
-- GTFS static schedules
-- GTFS-Realtime service updates
-- Historical passenger demand and transfer counts
-- Weather/event features for demand prediction
-
-**Optional high-fidelity visualization**
-- A richer WebGL or 3D digital-twin frontend may be added later
-- 3D rendering is intentionally not a prerequisite for validating the transit-control algorithms
-
-### Design principle
-
-The project is not primarily a traffic-visualization exercise. The core research and engineering question is whether network-wide operational decisions can improve service outcomes under changing demand, congestion, delays, and transfer conditions.
-
-The visualization exists to make those decisions observable and explainable.
-
-
-## Waterloo–Kitchener regional sandbox
-
-The browser demo now uses the Waterloo–Kitchener ION corridor as a larger geographic frame for the simulator. The current prototype includes major stations from Conestoga through the University of Waterloo, Uptown Waterloo, Grand River Hospital, Central Station, downtown Kitchener, Kitchener Market, and Fairway.
-
-This is intentionally **not** presented as a reproduction of live GRT operations. Real station names and corridor geography provide recognizable context, while vehicle dispatch, passenger demand, staging decisions, and signal-priority behaviour remain experimental TransitOps scenarios.
-
-The next data-integration step is to replace hand-authored network geometry and demand assumptions with GRT open data / GTFS and, later, SUMO/TraCI.
-
-
-## MapLibre + deck.gl visualization
-
-The web visualization layer now uses a real Waterloo-Kitchener street map instead of a hand-drawn SVG city.
-
-- MapLibre GL JS renders the interactive base map.
-- OpenFreeMap provides OpenStreetMap-derived vector tiles with no API key.
-- deck.gl renders the simulation overlays: transit spine, passenger-demand halos, stations, smart intersections, vehicles, and labels.
-- Python/FastAPI remains the simulation and control backend.
-- Simulation snapshots now include geographic longitude/latitude so the browser can render system state in real map space.
-
-The current transit path is still a simplified station-to-station operational corridor. A later GTFS/SUMO integration should replace that simplified geometry with route shapes and microscopic traffic movement.
-
-
-## SUMO cloud simulation service
-
-TransitOps now includes the first implementation of the same architectural pattern used by browser-based SUMO digital twins:
-
-```text
-OpenStreetMap
-      ↓
-SUMO
-      ↕ TraCI
-Python TransitOps controller
-      ↓
-FastAPI WebSocket
-      ↓
-browser visualization
-      ↓
-optional Unity WebGL digital twin
-```
-
-The new `simulation/` service is containerized separately from Vercel because SUMO is a long-running native process. The public web application can remain on Vercel and connect to the simulation service over WebSocket.
-
-See `simulation/README.md` for network generation and local/cloud run instructions.
-
-This milestone establishes the infrastructure rather than claiming a calibrated reproduction of GRT. The Waterloo–Kitchener road network is generated from OpenStreetMap; GRT GTFS, transit routes, passenger demand, and TransitOps control policies are the next integration steps.
-
-
-## SUMO corridor demo
-
-TransitOps currently uses a compact Waterloo-inspired SUMO scenario instead of importing the whole Waterloo–Kitchener road network.
-
-The demo includes University of Waterloo, Waterloo Public Square, Grand River Hospital, Central Station, three signalized intersections, cross traffic, three transit buses, and TraCI-based signal priority.
-
-The network is generated entirely from local node/edge definitions during the Docker build, so there is no giant `.net.xml` in Git and no dependency on live OpenStreetMap/Overpass downloads.
-
-The public web app stays on Vercel. Connect it to the deployed SUMO service with:
+The public frontend can remain on Vercel. If the SUMO service is later deployed to a WebSocket-capable container host, set:
 
 ```text
 NEXT_PUBLIC_SUMO_WS_URL=wss://<simulation-host>/ws/simulation
 ```
 
-This smaller scenario is intended to prove TransitOps control behavior first. City-scale OSM/GTFS integration can be added later without changing the SUMO → TraCI → Python → WebSocket architecture.
+A `render.yaml` blueprint remains in the repository for that future option.
+
+## Roadmap
+
+Next useful milestones:
+
+1. Improve the small corridor control logic and KPIs.
+2. Add explicit bus stops/dwell behavior to the SUMO buses.
+3. Synchronize passenger demand from the Python model with SUMO.
+4. Compare fixed-signal operation against TransitOps signal priority.
+5. Add richer dispatch/pre-staging policies.
+6. Import selected GTFS routes once the control logic is proven.
+7. Expand to a larger OSM network only when the small scenario is stable.
+8. Optionally add a Unity/WebGL visualization layer later.
+
+## Design principle
+
+TransitOps is primarily a **network-level transit operations system**, not a vehicle-autonomy simulator.
+
+SUMO handles traffic and vehicle interactions. TransitOps focuses on decisions such as dispatching, staging, holding, rerouting, passenger-transfer response, and signal priority.
