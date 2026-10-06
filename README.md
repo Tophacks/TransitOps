@@ -155,3 +155,16 @@ The browser demo now uses the Waterloo–Kitchener ION corridor as a larger geog
 This is intentionally **not** presented as a reproduction of live GRT operations. Real station names and corridor geography provide recognizable context, while vehicle dispatch, passenger demand, staging decisions, and signal-priority behaviour remain experimental TransitOps scenarios.
 
 The next data-integration step is to replace hand-authored network geometry and demand assumptions with GRT open data / GTFS and, later, SUMO/TraCI.
+
+
+## MapLibre + deck.gl visualization
+
+The web visualization layer now uses a real Waterloo-Kitchener street map instead of a hand-drawn SVG city.
+
+- MapLibre GL JS renders the interactive base map.
+- OpenFreeMap provides OpenStreetMap-derived vector tiles with no API key.
+- deck.gl renders the simulation overlays: transit spine, passenger-demand halos, stations, smart intersections, vehicles, and labels.
+- Python/FastAPI remains the simulation and control backend.
+- Simulation snapshots now include geographic longitude/latitude so the browser can render system state in real map space.
+
+The current transit path is still a simplified station-to-station operational corridor. A later GTFS/SUMO integration should replace that simplified geometry with route shapes and microscopic traffic movement.
