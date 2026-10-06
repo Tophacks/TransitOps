@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import MapWorld from "./components/MapWorld";
 import RegionalMap from "./components/RegionalMap";
 
 const defaults = {
@@ -456,7 +457,7 @@ export default function Home() {
           <p className="eyebrow">OPERATIONAL DIGITAL TWIN</p>
           <h1>Watch the system respond.</h1>
           <p className="heroCopy">
-            A larger Waterloo–Kitchener sandbox using the real ION station spine as geographic context. The controller still runs an experimental simulated fleet, not live GRT operations.
+            A real interactive Waterloo–Kitchener street map with simulated fleet, passenger demand, station queues and smart-intersection state layered on top. Python remains the operational simulation engine.
           </p>
         </div>
         <div className="clockCard">
