@@ -1,6 +1,7 @@
 import os
 
 import traci
+import sumolib
 
 from network_manager import network_file, network_ready, route_file
 
@@ -13,7 +14,7 @@ def main():
 
     traci.start(
         [
-            os.getenv("SUMO_BINARY", "sumo"),
+            os.getenv("SUMO_BINARY") or sumolib.checkBinary("sumo"),
             "-n",
             str(network_file()),
             "-r",
