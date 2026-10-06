@@ -40,7 +40,6 @@ Next steps include:
 
 This version intentionally starts with deterministic control logic before adding machine learning, so the operational behavior can be validated independently of the prediction model.
 
-
 ## Live web app (Vercel)
 
 The repository is structured as a Vercel multi-service project:
@@ -76,7 +75,6 @@ vercel dev -L
 
 Then open the local URL printed by Vercel.
 
-
 ## Live 2D operations simulator
 
 The Vercel demo now includes a game-like schematic operations view backed by the Python simulation engine.
@@ -92,4 +90,59 @@ The Vercel demo now includes a game-like schematic operations view backed by the
 - Clickable buses, stations, intersections, and yard
 - Baseline-versus-TransitOps operational metrics
 
-The 2D world is deliberately schematic and not to scale. It is an operations proof-of-concept, not a vehicle-dynamics or autonomous-driving perception model. SUMO/TraCI and 3D vehicle simulation remain later roadmap stages.
+The 2D world is deliberately schematic and not to scale. It is an operations proof-of-concept, not a vehicle-dynamics or autonomous-driving perception model.
+
+## Target digital-twin architecture
+
+TransitOps is intended to evolve into a control layer that can operate on top of a microscopic traffic simulator rather than attempting to reproduce autonomous-driving physics itself.
+
+```text
+GTFS / demand / operational inputs
+              ↓
+      TransitOps controller
+              ↓
+  dispatch · staging · holding
+  route assignment · signal priority
+              ↓
+          TraCI API
+              ↓
+            SUMO
+  lanes · traffic lights · vehicles
+  intersections · road congestion
+              ↓
+      browser visualization
+              ↓
+   optional future 3D / WebGL layer
+```
+
+The important architectural boundary is that SUMO is responsible for the traffic environment and vehicle interactions, while TransitOps remains responsible for network-level transit decisions.
+
+### Development stages
+
+**Prototype — current**
+- Python discrete-event simulation
+- Web-based 2D operational digital twin
+- Passenger queues, buses, stops, intersections, and control events
+- Baseline-versus-controller comparison
+
+**Microscopic traffic integration — next major milestone**
+- Import a real or synthetic street network into SUMO
+- Use TraCI to read vehicle positions, queue lengths, travel times, and signal state
+- Replace simplified segment travel times with SUMO telemetry
+- Allow TransitOps to request bus dispatch, holding, rerouting, and signal priority
+
+**Data integration**
+- GTFS static schedules
+- GTFS-Realtime service updates
+- Historical passenger demand and transfer counts
+- Weather/event features for demand prediction
+
+**Optional high-fidelity visualization**
+- A richer WebGL or 3D digital-twin frontend may be added later
+- 3D rendering is intentionally not a prerequisite for validating the transit-control algorithms
+
+### Design principle
+
+The project is not primarily a traffic-visualization exercise. The core research and engineering question is whether network-wide operational decisions can improve service outcomes under changing demand, congestion, delays, and transfer conditions.
+
+The visualization exists to make those decisions observable and explainable.
