@@ -25,6 +25,8 @@ const fallbackNetwork = {
   passengers_per_sprite: 5,
 };
 
+const routeOrder = ["CENTRAL", "KING", "MARKET", "UNIVERSITY"];
+
 function Metric({ label, value, accent = false }) {
   return (
     <div className={`metric ${accent ? "metricAccent" : ""}`}>
@@ -34,13 +36,14 @@ function Metric({ label, value, accent = false }) {
   );
 }
 
-function PersonSprite({ index }) {
+function PersonSprite({ index, moving = false }) {
   return (
     <span
-      className="pixelPerson"
+      className={`pixelPerson ${moving ? "walkingPerson" : ""}`}
       style={{
         "--dx": `${(index % 6) * 7}px`,
         "--dy": `${Math.floor(index / 6) * 10}px`,
+        "--delay": `${(index % 8) * -0.22}s`,
       }}
       aria-hidden="true"
     >
@@ -49,29 +52,129 @@ function PersonSprite({ index }) {
   );
 }
 
-function NetworkWorld({ network, snapshot, selected, onSelect }) {
+function interpolate(points, progress) {
+  const usable = points.filter(Boolean);
+  if (usable.length < 2) return usable[0] || { x: 0, y: 0 };
+  const p = ((progress % 1) + 1) % 1;
+  const segmentFloat = p * (usable.length - 1);
+  const index = Math.min(usable.length - 2, Math.floor(segmentFloat));
+  const local = segmentFloat - index;
+  const a = usable[index];
+  const b = usable[index + 1];
+  return {
+    x: a.x + (b.x - a.x) * local,
+    y: a.y + (b.y - a.y) * local,
+  };
+}
+
+function AmbientTraffic({ points, minute = 0, traffic = 1 }) {
+  const count = Math.max(7, Math.min(24, Math.round(9 * traffic)));
+  return (
+    <>
+      {Array.from({ length: count }).map((_, index) => {
+        const pos = interpolate(points, (minute * 0.013 + index / count) % 1);
+        const reverse = index % 2 === 1;
+        return (
+          <span
+            className={`ambientCar ${reverse ? "reverseCar" : ""}`}
+            key={index}
+            style={{
+              left: `${pos.x}%`,
+              top: `${pos.y + (reverse ? 1.3 : -1.3)}%`,
+            }}
+            aria-hidden="true"
+          >
+            <i />
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function TopDownBus({ bus, selected, onSelect }) {
+  const load = Math.min(100, Math.round((bus.occupancy / bus.capacity) * 100));
+  return (
+    <button
+      type="button"
+      className={`busSprite ${bus.state === "YARD" ? "busIdle" : ""} ${selected?.data?.id === bus.id ? "selectedBus" : ""}`}
+      style={{ left: `${bus.x}%`, top: `${bus.y}%` }}
+      onClick={() => onSelect({ type: "bus", data: bus })}
+      title={`${bus.id} → ${bus.target}`}
+    >
+      <span className="busRoute">R2</span>
+      <span className="busBody">
+        <span className="busWindshield" />
+        <span className="busRoof">
+          <i /><i /><i />
+        </span>
+        <span className="busRear" />
+      </span>
+      <span className="busTag">{bus.id}</span>
+      <span className="busLoad"><i style={{ width: `${load}%` }} /></span>
+    </button>
+  );
+}
+
+function NetworkWorld({ network, snapshot, events, selected, onSelect, traffic }) {
   const stopById = Object.fromEntries(network.stops.map((stop) => [stop.id, stop]));
-  const route = ["CENTRAL", "KING", "MARKET", "UNIVERSITY"];
-  const points = [network.yard, ...route.map((id) => stopById[id])];
+  const points = [network.yard, ...routeOrder.map((id) => stopById[id])];
+  const recentTrain = events?.some(
+    (event) => event.kind === "train" && snapshot && snapshot.minute - event.minute >= 0 && snapshot.minute - event.minute <= 4
+  );
 
   return (
     <div className="world" aria-label="Schematic real-time transit simulation">
+      <div className="district districtA"><span>Employment District</span></div>
+      <div className="district districtB"><span>University District</span></div>
+      <div className="district districtC"><span>Market District</span></div>
+
       <svg className="worldRoads" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline
-          className="roadShadow"
-          points={points.map((p) => `${p.x},${p.y}`).join(" ")}
-        />
-        <polyline
-          className="road"
-          points={points.map((p) => `${p.x},${p.y}`).join(" ")}
-        />
-        <line className="rail" x1="9" y1="27" x2="91" y2="27" />
-        <line className="railSleeper" x1="9" y1="30" x2="91" y2="30" />
+        <polyline className="arterialEdge" points={points.map((p) => `${p.x},${p.y}`).join(" ")} />
+        <polyline className="arterial" points={points.map((p) => `${p.x},${p.y}`).join(" ")} />
+        <polyline className="laneDivider" points={points.map((p) => `${p.x},${p.y}`).join(" ")} />
+        <line className="sideStreet" x1="46" y1="50" x2="46" y2="88" />
+        <line className="sideStreet" x1="67" y1="38" x2="67" y2="84" />
+        <line className="sideStreet" x1="75" y1="48" x2="88" y2="48" />
+        <line className="railTrack" x1="5" y1="22" x2="95" y2="22" />
+        <line className="railTrack railTrackTwo" x1="5" y1="25" x2="95" y2="25" />
+        {Array.from({ length: 22 }).map((_, i) => (
+          <line key={i} className="railTie" x1={7 + i * 4} y1="20.5" x2={7 + i * 4} y2="26.5" />
+        ))}
       </svg>
 
-      <div className="trainSprite" style={{ left: "15%", top: "19%" }}>
-        <span className="trainCars">▰▰▰</span>
-        <small>Regional rail</small>
+      <AmbientTraffic points={points} minute={snapshot?.minute || 0} traffic={traffic} />
+
+      <div className="railPlatform">
+        <span>PLATFORM 2</span>
+        <strong>Regional Rail</strong>
+      </div>
+
+      <div className="trainSprite" style={{ left: recentTrain ? "29%" : "13%", top: "15.5%" }}>
+        <span className="trainNose" />
+        <span className="trainCar" /><span className="trainCar" /><span className="trainCar" />
+        <small>{recentTrain ? "ARRIVING" : "IN SERVICE"}</small>
+      </div>
+
+      <div className="transferWalkway" aria-hidden="true">
+        {recentTrain && Array.from({ length: 10 }).map((_, index) => (
+          <PersonSprite key={index} index={index} moving />
+        ))}
+      </div>
+
+      <div className="hubComplex">
+        <div className="hubHeader">
+          <span>CENTRAL INTERMODAL</span>
+          <strong>4 bays · rail transfer</strong>
+        </div>
+        <div className="hubBays">
+          {["A", "B", "C", "D"].map((bay, index) => (
+            <div className="bay" key={bay}>
+              <span>BAY {bay}</span>
+              <i className={index < 2 ? "bayActive" : ""} />
+            </div>
+          ))}
+        </div>
       </div>
 
       <button
@@ -80,8 +183,9 @@ function NetworkWorld({ network, snapshot, selected, onSelect }) {
         style={{ left: `${network.yard.x}%`, top: `${network.yard.y}%` }}
         onClick={() => onSelect({ type: "yard", data: network.yard })}
       >
-        <span className="yardIcon">▤</span>
-        <strong>YARD</strong>
+        <span className="yardIcon">▥</span>
+        <strong>NORTH YARD</strong>
+        <small>staging</small>
       </button>
 
       {snapshot?.intersections.map((intersection) => (
@@ -93,9 +197,8 @@ function NetworkWorld({ network, snapshot, selected, onSelect }) {
           onClick={() => onSelect({ type: "intersection", data: intersection })}
           title={`${intersection.name}: ${intersection.phase}`}
         >
-          <span />
-          <span />
-          <span />
+          <span /><span /><span />
+          <b>{intersection.id}</b>
         </button>
       ))}
 
@@ -114,8 +217,10 @@ function NetworkWorld({ network, snapshot, selected, onSelect }) {
               onClick={() => onSelect({ type: "stop", data: { ...stop, ...live } })}
             >
               <span className="stopDisc" />
-              <strong>{stop.name}</strong>
-              <small>{live ? `${live.queue} waiting` : "station"}</small>
+              <span className="stopText">
+                <strong>{stop.name}</strong>
+                <small>{live ? `${live.queue} waiting` : "station"}</small>
+              </span>
             </button>
             <div className="peoplePatch" aria-label={live ? `${live.queue} people waiting` : "No queue data"}>
               {Array.from({ length: sprites }).map((_, index) => (
@@ -127,22 +232,26 @@ function NetworkWorld({ network, snapshot, selected, onSelect }) {
       })}
 
       {snapshot?.buses.map((bus) => (
-        <button
-          type="button"
-          key={bus.id}
-          className={`busSprite ${bus.state === "YARD" ? "busIdle" : ""} ${selected?.data?.id === bus.id ? "selectedBus" : ""}`}
-          style={{ left: `${bus.x}%`, top: `${bus.y}%` }}
-          onClick={() => onSelect({ type: "bus", data: bus })}
-          title={`${bus.id} → ${bus.target}`}
-        >
-          <span className="busWindows">▪▪▪</span>
-          <strong>{bus.id}</strong>
-        </button>
+        <TopDownBus key={bus.id} bus={bus} selected={selected} onSelect={onSelect} />
       ))}
 
+      <div className="worldHud">
+        <div>
+          <span>NETWORK LOAD</span>
+          <strong>{snapshot?.waiting ?? 0} waiting</strong>
+        </div>
+        <div>
+          <span>ROAD CONDITIONS</span>
+          <strong>{traffic >= 1.6 ? "HEAVY" : traffic >= 1.15 ? "MODERATE" : "LIGHT"}</strong>
+        </div>
+        <div>
+          <span>VISIBLE SCALE</span>
+          <strong>1 person = {network.passengers_per_sprite || 5}</strong>
+        </div>
+      </div>
+
       <div className="worldLegend">
-        <span><i className="legendPerson" /> = {network.passengers_per_sprite || 5} passengers</span>
-        <span>schematic / not to scale</span>
+        <span>schematic operational digital twin · not to scale</span>
       </div>
     </div>
   );
@@ -152,23 +261,25 @@ function Inspector({ selected, snapshot }) {
   if (!selected) {
     return (
       <div className="inspectorEmpty">
-        Click a bus, station, signal, or the yard to inspect its live state.
+        Select a bus, station, signal, or staging yard to inspect the live state.
       </div>
     );
   }
 
   if (selected.type === "bus") {
     const live = snapshot?.buses.find((bus) => bus.id === selected.data.id) || selected.data;
+    const load = Math.round((live.occupancy / live.capacity) * 100);
     return (
       <div className="inspectorBody">
-        <p className="eyebrow">VEHICLE</p>
-        <h3>{live.id}</h3>
+        <p className="eyebrow">VEHICLE TELEMETRY</p>
+        <div className="inspectTitle"><h3>{live.id}</h3><span>Route R2</span></div>
+        <div className="occupancyBar"><i style={{ width: `${load}%` }} /></div>
         <dl>
           <div><dt>Status</dt><dd>{live.state.replaceAll("_", " ")}</dd></div>
-          <div><dt>Occupancy</dt><dd>{live.occupancy} / {live.capacity}</dd></div>
+          <div><dt>Occupancy</dt><dd>{live.occupancy} / {live.capacity} · {load}%</dd></div>
           <div><dt>Next stop</dt><dd>{live.target}</dd></div>
           <div><dt>Schedule deviation</dt><dd>+{live.schedule_deviation} min</dd></div>
-          <div><dt>Segment progress</dt><dd>{Math.round((live.progress || 0) * 100)}%</dd></div>
+          <div><dt>Road segment</dt><dd>{Math.round((live.progress || 0) * 100)}%</dd></div>
         </dl>
       </div>
     );
@@ -178,12 +289,13 @@ function Inspector({ selected, snapshot }) {
     const live = snapshot?.stops.find((stop) => stop.id === selected.data.id) || selected.data;
     return (
       <div className="inspectorBody">
-        <p className="eyebrow">STATION</p>
+        <p className="eyebrow">STATION OPERATIONS</p>
         <h3>{live.name}</h3>
         <dl>
-          <div><dt>Waiting</dt><dd>{live.queue ?? 0}</dd></div>
-          <div><dt>Visible crowd units</dt><dd>{live.sprites ?? 0}</dd></div>
-          <div><dt>Mode</dt><dd>{live.id === "CENTRAL" ? "Intermodal hub" : "Bus stop"}</dd></div>
+          <div><dt>Passenger queue</dt><dd>{live.queue ?? 0}</dd></div>
+          <div><dt>Displayed crowd units</dt><dd>{live.sprites ?? 0}</dd></div>
+          <div><dt>Facility</dt><dd>{live.id === "CENTRAL" ? "Intermodal terminal" : "Surface stop"}</dd></div>
+          <div><dt>Boarding state</dt><dd>{(live.queue ?? 0) > 40 ? "High demand" : "Normal"}</dd></div>
         </dl>
       </div>
     );
@@ -193,12 +305,13 @@ function Inspector({ selected, snapshot }) {
     const live = snapshot?.intersections.find((item) => item.id === selected.data.id) || selected.data;
     return (
       <div className="inspectorBody">
-        <p className="eyebrow">INTERSECTION</p>
+        <p className="eyebrow">SMART INTERSECTION</p>
         <h3>{live.name}</h3>
         <dl>
-          <div><dt>Signal</dt><dd className={live.phase === "GREEN" ? "goodText" : "badText"}>{live.phase}</dd></div>
+          <div><dt>Signal phase</dt><dd className={live.phase === "GREEN" ? "goodText" : "badText"}>{live.phase}</dd></div>
           <div><dt>Node</dt><dd>{live.id}</dd></div>
-          <div><dt>Priority capable</dt><dd>Yes</dd></div>
+          <div><dt>Transit priority</dt><dd>Enabled</dd></div>
+          <div><dt>Control mode</dt><dd>Local + network</dd></div>
         </dl>
       </div>
     );
@@ -206,9 +319,9 @@ function Inspector({ selected, snapshot }) {
 
   return (
     <div className="inspectorBody">
-      <p className="eyebrow">DEPOT</p>
+      <p className="eyebrow">FLEET STAGING</p>
       <h3>{selected.data.name}</h3>
-      <p className="inspectorCopy">Buses wait here until scheduled dispatch or a demand-triggered pre-staging decision.</p>
+      <p className="inspectorCopy">Vehicles remain staged until scheduled dispatch or a demand-triggered release command reduces predicted capacity shortfall.</p>
     </div>
   );
 }
@@ -231,8 +344,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!playing || timeline.length === 0) return;
-
-    const delay = Math.max(110, 900 / speed);
+    const delay = Math.max(100, 900 / speed);
     const timer = window.setInterval(() => {
       setFrame((current) => {
         if (current >= timeline.length - 1) {
@@ -242,7 +354,6 @@ export default function Home() {
         return current + 1;
       });
     }, delay);
-
     return () => window.clearInterval(timer);
   }, [playing, speed, timeline.length]);
 
@@ -250,7 +361,7 @@ export default function Home() {
     if (!data || !snapshot) return [];
     return data.smart.events
       .filter((event) => event.minute <= snapshot.minute)
-      .slice(-10)
+      .slice(-8)
       .reverse();
   }, [data, snapshot]);
 
@@ -279,9 +390,7 @@ export default function Home() {
         body: JSON.stringify(controls),
       });
 
-      if (!response.ok) {
-        throw new Error(`Simulation failed (${response.status})`);
-      }
+      if (!response.ok) throw new Error(`Simulation failed (${response.status})`);
 
       const result = await response.json();
       setData(result);
@@ -305,182 +414,135 @@ export default function Home() {
       <header className="topbar">
         <div className="brand">
           <div className="brandMark">T</div>
-          <div>
-            <strong>TransitOps</strong>
-            <span>Network Intelligence</span>
-          </div>
+          <div><strong>TransitOps</strong><span>Network Intelligence</span></div>
         </div>
-        <div className="status">
-          <span className={`statusDot ${playing ? "pulse" : ""}`} />
-          {data ? (playing ? "Simulation running" : "Simulation paused") : "Simulation environment"}
+        <div className="topStatus">
+          <span className="scenarioName">Scenario 01 · Rail transfer disruption</span>
+          <span className="status"><i className={`statusDot ${playing ? "pulse" : ""}`} />{data ? (playing ? "Running" : "Paused") : "Ready"}</span>
         </div>
       </header>
 
       <section className="hero compactHero">
         <div>
-          <p className="eyebrow">2D OPERATIONS DIGITAL TWIN</p>
-          <h1>See the network make decisions.</h1>
+          <p className="eyebrow">OPERATIONAL DIGITAL TWIN</p>
+          <h1>Watch the system respond.</h1>
           <p className="heroCopy">
-            A schematic transit world where passengers queue, buses move stop-to-stop,
-            signals change, and the controller reacts to demand and delay.
+            Passenger demand, road traffic, station queues and signal state all evolve together while the controller stages and dispatches the fleet.
           </p>
         </div>
         <div className="clockCard">
-          <span>SIM TIME</span>
+          <span>SIMULATION CLOCK</span>
           <strong>{String(snapshot?.minute ?? 0).padStart(2, "0")}:00</strong>
-          <small>1 frame = 1 simulated minute</small>
+          <small>{playing ? `running at ${speed}×` : "paused"}</small>
         </div>
       </section>
 
-      <div className="gameLayout">
-        <aside className="sidePanel">
-          <form className="controlPanel" onSubmit={runSimulation}>
-            <div className="panelHeading">
-              <div>
-                <p className="eyebrow">SCENARIO</p>
-                <h2>Control room</h2>
-              </div>
-              <span>60 min</span>
-            </div>
-
-            <label>
-              <div className="labelRow"><span>Traffic load</span><strong>{Number(controls.traffic_multiplier).toFixed(2)}×</strong></div>
-              <input type="range" min="0.5" max="2.5" step="0.05" value={controls.traffic_multiplier} onChange={(e) => update("traffic_multiplier", Number(e.target.value))} />
-            </label>
-            <label>
-              <div className="labelRow"><span>Train delay</span><strong>{controls.train_delay} min</strong></div>
-              <input type="range" min="0" max="20" step="1" value={controls.train_delay} onChange={(e) => update("train_delay", Number(e.target.value))} />
-            </label>
-            <label>
-              <div className="labelRow"><span>Transfer demand</span><strong>{controls.passenger_demand}</strong></div>
-              <input type="range" min="20" max="300" step="5" value={controls.passenger_demand} onChange={(e) => update("passenger_demand", Number(e.target.value))} />
-            </label>
-            <label>
-              <div className="labelRow"><span>Fleet</span><strong>{controls.fleet_size} buses</strong></div>
-              <input type="range" min="1" max="10" step="1" value={controls.fleet_size} onChange={(e) => update("fleet_size", Number(e.target.value))} />
-            </label>
-
-            <button className="runButton" disabled={loading}>
-              {loading ? "Building scenario…" : data ? "Restart scenario" : "Start simulation"}
+      <section className="simulatorShell">
+        <div className="simTopbar">
+          <div className="playback">
+            <button type="button" className="primaryPlayback" onClick={togglePlayback} disabled={!data}>
+              {playing ? "Ⅱ  Pause" : "▶  Play"}
             </button>
-            {error && <p className="error">{error}</p>}
-          </form>
-
-          <div className="inspector">
-            <Inspector selected={selected} snapshot={snapshot} />
-          </div>
-        </aside>
-
-        <section className="networkPanel mainWorld">
-          <div className="worldToolbar">
-            <div>
-              <p className="eyebrow">LIVE NETWORK</p>
-              <h2>Demo corridor</h2>
-            </div>
-            <div className="playback">
-              <button type="button" onClick={togglePlayback} disabled={!data}>
-                {playing ? "Ⅱ Pause" : "▶ Play"}
+            {[1, 2, 5, 10].map((value) => (
+              <button type="button" key={value} className={speed === value ? "activeSpeed" : ""} onClick={() => setSpeed(value)}>
+                {value}×
               </button>
-              {[1, 2, 5, 10].map((value) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={speed === value ? "activeSpeed" : ""}
-                  onClick={() => setSpeed(value)}
-                >
-                  {value}×
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
 
-          <NetworkWorld
-            network={network}
-            snapshot={snapshot}
-            selected={selected}
-            onSelect={setSelected}
+          <div className="topMetrics">
+            <div><span>WAITING</span><strong>{snapshot?.waiting ?? "—"}</strong></div>
+            <div><span>ACTIVE BUSES</span><strong>{snapshot ? snapshot.buses.filter((b) => b.state !== "YARD").length : "—"}</strong></div>
+            <div><span>AVG WAIT</span><strong>{smart ? `${smart.average_wait.toFixed(1)}m` : "—"}</strong></div>
+            <div><span>TRAFFIC</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
+          </div>
+        </div>
+
+        <NetworkWorld
+          network={network}
+          snapshot={snapshot}
+          events={data?.smart?.events || []}
+          selected={selected}
+          onSelect={setSelected}
+          traffic={controls.traffic_multiplier}
+        />
+
+        <div className="timelineControl">
+          <span>00:00</span>
+          <input
+            aria-label="Simulation timeline"
+            type="range"
+            min="0"
+            max={Math.max(0, timeline.length - 1)}
+            value={Math.min(frame, Math.max(0, timeline.length - 1))}
+            onChange={(e) => { setFrame(Number(e.target.value)); setPlaying(false); }}
+            disabled={!data}
           />
+          <span>60:00</span>
+        </div>
+      </section>
 
-          <div className="timelineControl">
-            <span>00:00</span>
-            <input
-              aria-label="Simulation timeline"
-              type="range"
-              min="0"
-              max={Math.max(0, timeline.length - 1)}
-              value={Math.min(frame, Math.max(0, timeline.length - 1))}
-              onChange={(e) => {
-                setFrame(Number(e.target.value));
-                setPlaying(false);
-              }}
-              disabled={!data}
-            />
-            <span>60:00</span>
+      <div className="operationsDeck">
+        <form className="controlPanel" onSubmit={runSimulation}>
+          <div className="panelHeading">
+            <div><p className="eyebrow">SCENARIO</p><h2>Operating conditions</h2></div>
+            <span>editable</span>
           </div>
+          <label>
+            <div className="labelRow"><span>Road traffic</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
+            <input type="range" min="0.5" max="2.5" step="0.05" value={controls.traffic_multiplier} onChange={(e) => update("traffic_multiplier", Number(e.target.value))} />
+          </label>
+          <label>
+            <div className="labelRow"><span>Rail delay</span><strong>{controls.train_delay} min</strong></div>
+            <input type="range" min="0" max="20" step="1" value={controls.train_delay} onChange={(e) => update("train_delay", Number(e.target.value))} />
+          </label>
+          <label>
+            <div className="labelRow"><span>Transfer demand</span><strong>{controls.passenger_demand}</strong></div>
+            <input type="range" min="20" max="300" step="5" value={controls.passenger_demand} onChange={(e) => update("passenger_demand", Number(e.target.value))} />
+          </label>
+          <label>
+            <div className="labelRow"><span>Available fleet</span><strong>{controls.fleet_size}</strong></div>
+            <input type="range" min="1" max="10" step="1" value={controls.fleet_size} onChange={(e) => update("fleet_size", Number(e.target.value))} />
+          </label>
+          <button className="runButton" disabled={loading}>{loading ? "Rebuilding scenario…" : data ? "Apply & restart" : "Start simulation"}</button>
+          {error && <p className="error">{error}</p>}
+        </form>
 
-          <div className="metricsGrid">
-            <Metric label="Waiting now" value={snapshot ? snapshot.waiting : "—"} accent />
-            <Metric label="Avg wait" value={smart ? `${smart.average_wait.toFixed(1)} min` : "—"} />
-            <Metric label="Pre-staged" value={smart ? smart.buses_staged : "—"} />
-            <Metric label="Signal priority" value={smart ? smart.signal_priority_requests : "—"} />
+        <section className="inspector">
+          <Inspector selected={selected} snapshot={snapshot} />
+        </section>
+
+        <section className="decisionPanel">
+          <div className="panelHeading">
+            <div><p className="eyebrow">CONTROLLER</p><h2>Decision feed</h2></div>
+            <span>{visibleEvents.length} recent</span>
+          </div>
+          <div className="eventFeed compactFeed">
+            {visibleEvents.length ? visibleEvents.map((event, index) => (
+              <div className={`eventRow event-${event.kind || "info"}`} key={`${event.minute}-${index}-${event.message}`}>
+                <span className="eventTime">{String(event.minute).padStart(2, "0")}:00</span>
+                <span>{event.message}</span>
+              </div>
+            )) : <div className="inspectorEmpty">Start the simulation to generate controller decisions and network events.</div>}
           </div>
         </section>
 
-        <aside className="rightRail">
-          <section className="miniPanel">
-            <div className="panelHeading">
-              <div>
-                <p className="eyebrow">OPERATIONS</p>
-                <h2>Live state</h2>
-              </div>
-            </div>
-            <div className="opsRows">
-              <div><span>Buses active</span><strong>{snapshot ? snapshot.buses.filter((b) => b.state !== "YARD").length : 0}</strong></div>
-              <div><span>Passengers waiting</span><strong>{snapshot?.waiting ?? 0}</strong></div>
-              <div><span>Completed trips</span><strong>{smart?.completed_trips ?? 0}</strong></div>
-              <div><span>Traffic multiplier</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
-            </div>
-          </section>
-
-          <section className="miniPanel eventMini">
-            <div className="panelHeading">
-              <div>
-                <p className="eyebrow">DECISION FEED</p>
-                <h2>Controller events</h2>
-              </div>
-            </div>
-            <div className="eventFeed compactFeed">
-              {visibleEvents.length ? visibleEvents.map((event, index) => (
-                <div className={`eventRow event-${event.kind || "info"}`} key={`${event.minute}-${index}-${event.message}`}>
-                  <span className="eventTime">{String(event.minute).padStart(2, "0")}:00</span>
-                  <span>{event.message}</span>
-                </div>
-              )) : (
-                <div className="inspectorEmpty">Start the simulation to populate the operations feed.</div>
-              )}
-            </div>
-          </section>
-        </aside>
+        <section className="impactPanel">
+          <div className="panelHeading">
+            <div><p className="eyebrow">RESULT</p><h2>Control impact</h2></div>
+            <strong className="impactNumber">{improvement}</strong>
+          </div>
+          <div className="impactRows">
+            <div><span>Baseline avg wait</span><strong>{baseline ? `${baseline.average_wait.toFixed(1)} min` : "—"}</strong></div>
+            <div><span>TransitOps avg wait</span><strong>{smart ? `${smart.average_wait.toFixed(1)} min` : "—"}</strong></div>
+            <div><span>Pre-stage actions</span><strong>{smart?.buses_staged ?? "—"}</strong></div>
+            <div><span>Signal priority</span><strong>{smart?.signal_priority_requests ?? "—"}</strong></div>
+          </div>
+        </section>
       </div>
 
-      <section className="comparison">
-        <div className="panelHeading">
-          <div>
-            <p className="eyebrow">CONTROL IMPACT</p>
-            <h2>Baseline vs TransitOps</h2>
-          </div>
-          <div className="impactNumber">{improvement}</div>
-        </div>
-        <div className="comparisonGrid">
-          <div className="comparisonCard"><span>Baseline avg wait</span><strong>{baseline ? `${baseline.average_wait.toFixed(1)} min` : "—"}</strong></div>
-          <div className="comparisonCard active"><span>TransitOps avg wait</span><strong>{smart ? `${smart.average_wait.toFixed(1)} min` : "—"}</strong></div>
-          <div className="comparisonCard"><span>Maximum queue</span><strong>{smart?.max_queue ?? "—"}</strong></div>
-          <div className="comparisonCard"><span>Still waiting at end</span><strong>{smart?.left_waiting ?? "—"}</strong></div>
-        </div>
-      </section>
-
       <footer>
-        <span>TransitOps concept simulator · schematic network, not a vehicle-dynamics model</span>
+        <span>TransitOps concept simulator · operational model, schematic geometry</span>
         <span>Python DES · FastAPI · Next.js · Vercel</span>
       </footer>
     </main>
