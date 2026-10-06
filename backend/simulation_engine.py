@@ -352,24 +352,6 @@ class TransitSimulation:
         if bus.state == BusState.YARD:
             return YARD_GEO
 
-        target_id = ROUTE[bus.target_stop_index]
-        target = GEO_LAYOUT[target_id]
-
-        if bus.current_stop_index == -1:
-            start = YARD_GEO
-        else:
-            start = GEO_LAYOUT[ROUTE[bus.current_stop_index]]
-
-        p = bus.segment_progress if bus.state == BusState.EN_ROUTE else 1.0
-        lng = start[0] + (target[0] - start[0]) * p
-        lat = start[1] + (target[1] - start[1]) * p
-        return round(lng, 6), round(lat, 6)
-
-
-    def _bus_geo(self, bus):
-        if bus.state == BusState.YARD:
-            return YARD_GEO
-
         target = GEO_LAYOUT[ROUTE[bus.target_stop_index]]
 
         if bus.current_stop_index == -1:
