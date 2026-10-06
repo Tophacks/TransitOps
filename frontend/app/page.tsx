@@ -13,55 +13,38 @@ import type {
 } from "../lib/types";
 
 const DEFAULTS: Controls = {
-  traffic_multiplier: 1.25,
-  train_delay: 5,
-  passenger_demand: 135,
-  fleet_size: 4,
+  traffic_multiplier: 1.15,
+  train_delay: 4,
+  passenger_demand: 110,
+  fleet_size: 3,
 };
 
 const FALLBACK_NETWORK: Network = {
   yard: {
     id: "YARD",
-    name: "Regional Staging Yard",
-    lon: -80.515,
-    lat: 43.443,
+    name: "Corridor Staging Yard",
+    lon: -80.5035,
+    lat: 43.4515,
   },
   stops: [
-    { id: "CONESTOGA", name: "Conestoga", lon: -80.52954, lat: 43.49834 },
-    { id: "NORTHFIELD", name: "Northfield", lon: -80.54321, lat: 43.49722 },
-    { id: "RESEARCH_TECH", name: "Research & Technology", lon: -80.54514, lat: 43.48144 },
     { id: "UW", name: "University of Waterloo", lon: -80.54128, lat: 43.47336 },
-    { id: "LAURIER", name: "Laurier-Waterloo Park", lon: -80.53, lat: 43.47083 },
     { id: "WATERLOO_SQUARE", name: "Waterloo Public Square", lon: -80.5228, lat: 43.46419 },
     { id: "GRAND_RIVER_HOSPITAL", name: "Grand River Hospital", lon: -80.51185, lat: 43.45723 },
     { id: "CENTRAL", name: "Central Station", lon: -80.49944, lat: 43.45333 },
-    { id: "CITY_HALL", name: "Kitchener City Hall", lon: -80.49108, lat: 43.45203 },
-    { id: "KITCHENER_MARKET", name: "Kitchener Market", lon: -80.48374, lat: 43.44636 },
-    { id: "FAIRWAY", name: "Fairway", lon: -80.44186, lat: 43.42231 },
   ],
   intersections: [
-    { id: "I1", name: "King / Northfield", lon: -80.5364, lat: 43.4978 },
-    { id: "I2", name: "University corridor", lon: -80.5432, lat: 43.4772 },
-    { id: "I3", name: "Uptown Waterloo", lon: -80.5264, lat: 43.4675 },
-    { id: "I4", name: "King / Victoria", lon: -80.5056, lat: 43.4553 },
-    { id: "I5", name: "Downtown Kitchener", lon: -80.4874, lat: 43.4492 },
-    { id: "I6", name: "Fairway corridor", lon: -80.4535, lat: 43.4289 },
+    { id: "I1", name: "University corridor", lon: -80.533, lat: 43.4695 },
+    { id: "I2", name: "Uptown Waterloo", lon: -80.52, lat: 43.462 },
+    { id: "I3", name: "King / Victoria", lon: -80.505, lat: 43.455 },
   ],
   route_order: [
-    "CONESTOGA",
-    "NORTHFIELD",
-    "RESEARCH_TECH",
     "UW",
-    "LAURIER",
     "WATERLOO_SQUARE",
     "GRAND_RIVER_HOSPITAL",
     "CENTRAL",
-    "CITY_HALL",
-    "KITCHENER_MARKET",
-    "FAIRWAY",
   ],
   passengers_per_sprite: 6,
-  corridor_name: "Waterloo-Kitchener regional sandbox",
+  corridor_name: "Waterloo Corridor Test Scenario",
 };
 
 function Inspector({
@@ -255,7 +238,7 @@ export default function Home() {
           </div>
         </div>
         <div className="topStatus">
-          <span className="scenarioName">Waterloo–Kitchener regional sandbox</span>
+          <span className="scenarioName">Waterloo Corridor Test Scenario</span>
           <span className="status">
             <i className={`statusDot ${playing || sumo.state === "running" ? "pulse" : ""}`} />
             {sumo.state === "running"
@@ -274,7 +257,7 @@ export default function Home() {
           <p className="eyebrow">OPERATIONAL DIGITAL TWIN</p>
           <h1>Python computes. TypeScript renders.</h1>
           <p className="heroCopy">
-            FastAPI produces transit state and control decisions. The browser renders the Waterloo–Kitchener network with MapLibre and deck.gl.
+            Four stops, three smart signals, a staging yard, background road traffic, and a transfer surge. Python makes the decisions; SUMO handles the traffic.
           </p>
         </div>
         <div className="clockCard">
@@ -357,7 +340,7 @@ export default function Home() {
             }}
             disabled={!data}
           />
-          <span>90:00</span>
+          <span>60:00</span>
         </div>
       </section>
 
@@ -380,12 +363,12 @@ export default function Home() {
 
           <label>
             <div className="labelRow"><span>Transfer demand</span><strong>{controls.passenger_demand}</strong></div>
-            <input type="range" min="20" max="500" step="5" value={controls.passenger_demand} onChange={(event) => update("passenger_demand", Number(event.target.value))} />
+            <input type="range" min="20" max="250" step="5" value={controls.passenger_demand} onChange={(event) => update("passenger_demand", Number(event.target.value))} />
           </label>
 
           <label>
             <div className="labelRow"><span>Available fleet</span><strong>{controls.fleet_size}</strong></div>
-            <input type="range" min="1" max="12" step="1" value={controls.fleet_size} onChange={(event) => update("fleet_size", Number(event.target.value))} />
+            <input type="range" min="1" max="6" step="1" value={controls.fleet_size} onChange={(event) => update("fleet_size", Number(event.target.value))} />
           </label>
 
           <button className="runButton" disabled={loading}>
