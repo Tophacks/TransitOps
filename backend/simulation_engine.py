@@ -45,6 +45,22 @@ SEGMENT_BASE_MINUTES = [4, 4, 5, 4, 4, 5, 5, 4, 5, 8, 9]
 SEGMENT_INTERSECTIONS = ["I1", "I1", "I2", "I2", "I3", "I3", "I4", "I4", "I5", "I6", "I6"]
 
 GEO_LAYOUT = {
+    "CONESTOGA": (-80.52917, 43.49806),
+    "NORTHFIELD": (-80.54321, 43.49722),
+    "RESEARCH_TECH": (-80.54514, 43.48144),
+    "UW": (-80.54107, 43.47312),
+    "LAURIER": (-80.53450, 43.46899),
+    "WATERLOO_SQUARE": (-80.52280, 43.46419),
+    "GRAND_RIVER_HOSPITAL": (-80.51185, 43.45723),
+    "CENTRAL": (-80.49874, 43.45304),
+    "CITY_HALL": (-80.49108, 43.45203),
+    "KITCHENER_MARKET": (-80.48374, 43.44636),
+    "FAIRWAY": (-80.44186, 43.42231),
+}
+
+YARD_GEO = (-80.5065, 43.4485)
+
+GEO_LAYOUT = {
     "CONESTOGA": (-80.52954, 43.49834),
     "NORTHFIELD": (-80.54321, 43.49722),
     "RESEARCH_TECH": (-80.54514, 43.48144),
@@ -331,6 +347,23 @@ class TransitSimulation:
         x = start[0] + (target[0] - start[0]) * p
         y = start[1] + (target[1] - start[1]) * p
         return round(x, 2), round(y, 2)
+
+    def _bus_geo(self, bus):
+        if bus.state == BusState.YARD:
+            return YARD_GEO
+
+        target_id = ROUTE[bus.target_stop_index]
+        target = GEO_LAYOUT[target_id]
+
+        if bus.current_stop_index == -1:
+            start = YARD_GEO
+        else:
+            start = GEO_LAYOUT[ROUTE[bus.current_stop_index]]
+
+        p = bus.segment_progress if bus.state == BusState.EN_ROUTE else 1.0
+        lng = start[0] + (target[0] - start[0]) * p
+        lat = start[1] + (target[1] - start[1]) * p
+        return round(lng, 6), round(lat, 6)
 
 
     def _bus_geo(self, bus):
