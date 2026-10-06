@@ -22,6 +22,16 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+def root():
+    return {
+        "service": "TransitOps SUMO",
+        "status": "online",
+        "network_ready": network_ready(),
+        "websocket": "/ws/simulation",
+    }
+
+
 @app.get("/health")
 def health():
     return {
@@ -62,7 +72,7 @@ async def simulation_socket(websocket: WebSocket):
                 {
                     "type": "status",
                     "status": "building_network",
-                    "message": "Building compressed Waterloo–Kitchener SUMO network from OpenStreetMap. First run may take several minutes.",
+                    "message": "SUMO network asset is missing; rebuilding Waterloo–Kitchener from OpenStreetMap.",
                 }
             )
             await asyncio.to_thread(ensure_network)
