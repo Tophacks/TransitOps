@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import maplibregl from "maplibre-gl";
+import { LngLatBounds, Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import { MapLibreOverlay } from "@deck.gl/maplibre";
 import { PathLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 
@@ -99,7 +99,7 @@ export default function NetworkMap({
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const map = new maplibregl.Map({
+    const map = new MapLibreMap({
       container: containerRef.current,
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: [-80.505, 43.462],
@@ -110,7 +110,7 @@ export default function NetworkMap({
       attributionControl: true,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+    map.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
 
     const overlay = new MapLibreOverlay({
       interleaved: true,
@@ -123,7 +123,7 @@ export default function NetworkMap({
     overlayRef.current = overlay;
 
     map.once("load", () => {
-      const bounds = new maplibregl.LngLatBounds();
+      const bounds = new LngLatBounds();
       Object.values(STATION_GEO).forEach((coordinate) => bounds.extend(coordinate));
       map.fitBounds(bounds, {
         padding: { top: 70, right: 60, bottom: 70, left: 60 },
