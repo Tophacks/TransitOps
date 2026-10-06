@@ -125,11 +125,12 @@ The important architectural boundary is that SUMO is responsible for the traffic
 - Passenger queues, buses, stops, intersections, and control events
 - Baseline-versus-controller comparison
 
-**Microscopic traffic integration — next major milestone**
-- Import a real or synthetic street network into SUMO
-- Use TraCI to read vehicle positions, queue lengths, travel times, and signal state
-- Replace simplified segment travel times with SUMO telemetry
-- Allow TransitOps to request bus dispatch, holding, rerouting, and signal priority
+**Microscopic traffic integration — implemented foundation**
+- Import the Waterloo–Kitchener OpenStreetMap road network into SUMO
+- Generate microscopic background road traffic
+- Use TraCI to stream vehicle position, lane/road state, and traffic-light state
+- Expose hooks for TransitOps holding, rerouting, and signal control
+- Stream SUMO vehicles into the browser through a FastAPI WebSocket
 
 **Data integration**
 - GTFS static schedules
@@ -197,7 +198,7 @@ This milestone establishes the infrastructure rather than claiming a calibrated 
 
 ## Production SUMO asset handling
 
-The full Waterloo–Kitchener SUMO network is generated from OpenStreetMap and stored as `waterloo_kitchener.net.xml.gz` on the simulation service's persistent volume rather than committed as a giant raw XML file.
+The full Waterloo–Kitchener SUMO network is generated from OpenStreetMap **during the simulation Docker build** and baked into the image as `waterloo_kitchener.net.xml.gz`. The giant raw XML network is never committed to Git and users never download it manually.
 
 The web application can connect to the SUMO service by setting:
 
