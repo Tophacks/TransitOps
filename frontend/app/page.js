@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import RegionalMap from "./components/RegionalMap";
 
 const defaults = {
   traffic_multiplier: 1.25,
@@ -486,10 +487,9 @@ export default function Home() {
           </div>
         </div>
 
-        <NetworkWorld
+        <RegionalMap
           network={network}
           snapshot={snapshot}
-          events={data?.smart?.events || []}
           selected={selected}
           onSelect={setSelected}
           traffic={controls.traffic_multiplier}
