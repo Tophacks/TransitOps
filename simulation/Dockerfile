@@ -2,8 +2,6 @@ FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV SUMO_NETWORK_DIR=/data/network
-ENV SUMO_ROUTE_DIR=/data/routes
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends wget ca-certificates \
@@ -18,8 +16,11 @@ COPY simulation /app/simulation
 
 WORKDIR /app/simulation
 
-RUN mkdir -p /data/network /data/routes
-VOLUME ["/data"]
+# Build the large Waterloo–Kitchener road network once into the image.
+# The compressed .net.xml.gz/.rou.xml.gz assets never need to live in Git.
+RUN export SUMO_HOME=$(python -c 'import sumo; print(sumo.SUMO_HOME)') \
+    && chmod +x sumo/network/build_network.sh \
+    && ./sumo/network/build_network.sh
 
 EXPOSE 8001
 
