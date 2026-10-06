@@ -2,6 +2,7 @@ import asyncio
 import os
 
 import traci
+import sumolib
 
 from network_manager import ensure_network, network_file, route_file
 from .control import TransitOpsController
@@ -19,7 +20,7 @@ class SumoSession:
     def start(self):
         ensure_network()
 
-        sumo_binary = os.getenv("SUMO_BINARY", "sumo")
+        sumo_binary = os.getenv("SUMO_BINARY") or sumolib.checkBinary("sumo")
         label = f"transitops-{id(self)}"
 
         traci.start(
