@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type SumoVehicle = {
   id: string;
@@ -37,13 +37,17 @@ export function useSumoStream() {
   const [error, setError] = useState("");
 
   const configuredUrl = process.env.NEXT_PUBLIC_SUMO_WS_URL ?? "";
+  const [url, setUrl] = useState(configuredUrl);
 
-  const url = useMemo(() => {
-    if (configuredUrl) return configuredUrl;
-    if (typeof window !== "undefined" && window.location.hostname === "localhost") {
-      return "ws://localhost:8001/ws/simulation";
+  useEffect(() => {
+    if (configuredUrl) {
+      setUrl(configuredUrl);
+      return;
     }
-    return "";
+
+    if (window.location.hostname === "localhost") {
+      setUrl("ws://localhost:8001/ws/simulation");
+    }
   }, [configuredUrl]);
 
   const stop = useCallback(() => {
