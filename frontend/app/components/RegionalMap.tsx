@@ -123,7 +123,11 @@ export default function RegionalMap({
 
       const overlay = new MapLibreOverlay({
         interleaved: false,
+        useDevicePixels: 1,
         layers: [],
+        onError: (error) => {
+          setMapError(error.message || "Map overlay rendering failed.");
+        },
       });
 
       map.addControl(overlay);
