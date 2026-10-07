@@ -1416,3 +1416,168 @@ footer {
     right: 12px;
   }
 }
+
+
+/* Reliable non-WebGL corridor renderer */
+.fallbackMap {
+  background:
+    radial-gradient(circle at 20% 20%, rgba(117,224,189,.05), transparent 22rem),
+    linear-gradient(180deg,#09151d 0%,#071018 100%);
+}
+
+.fallbackGrid {
+  position:absolute;
+  inset:0;
+  background:
+    linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+  background-size:34px 34px;
+}
+
+.fallbackTitle {
+  position:absolute;
+  right:14px;
+  top:12px;
+  z-index:5;
+  text-align:right;
+  display:grid;
+  gap:2px;
+  pointer-events:none;
+}
+
+.fallbackTitle strong { font-size:.78rem; }
+.fallbackTitle span { color:var(--muted); font-size:.58rem; }
+
+.fallbackMapSvg {
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+}
+
+.fallbackStreet {
+  fill:none;
+  stroke:#2d3d48;
+  stroke-width:1.35;
+  opacity:.9;
+}
+
+.fallbackStreet.minor {
+  stroke:#22313b;
+  stroke-width:.8;
+}
+
+.fallbackRouteHalo {
+  fill:none;
+  stroke:#071018;
+  stroke-width:3.2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.fallbackRoute {
+  fill:none;
+  stroke:#75e0bd;
+  stroke-width:1.4;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  filter:drop-shadow(0 0 2px rgba(117,224,189,.45));
+}
+
+.fallbackStop,
+.fallbackSignal,
+.fallbackBus,
+.fallbackYard {
+  position:absolute;
+  transform:translate(-50%,-50%);
+  z-index:8;
+}
+
+.fallbackStop {
+  border:0;
+  background:transparent;
+  color:var(--text);
+  display:grid;
+  grid-template-columns:12px auto;
+  grid-template-areas:"dot name" "dot queue";
+  column-gap:6px;
+  text-align:left;
+  cursor:pointer;
+}
+
+.fallbackStop i {
+  grid-area:dot;
+  width:11px;
+  height:11px;
+  align-self:center;
+  border-radius:50%;
+  border:3px solid var(--accent);
+  background:#071018;
+}
+
+.fallbackStop span { grid-area:name; font-size:.65rem; white-space:nowrap; font-weight:700; }
+.fallbackStop small { grid-area:queue; color:var(--muted); font-size:.52rem; }
+
+.fallbackSignal {
+  width:20px;
+  height:28px;
+  border:1px solid #40515d;
+  border-radius:5px;
+  background:#0c161d;
+  cursor:pointer;
+  color:#768892;
+  font-size:.45rem;
+}
+
+.fallbackSignal i {
+  display:block;
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  margin:4px auto 2px;
+}
+
+.fallbackSignal.green i { background:var(--accent); box-shadow:0 0 8px rgba(117,224,189,.45); }
+.fallbackSignal.red i { background:var(--danger); box-shadow:0 0 8px rgba(240,142,142,.4); }
+
+.fallbackBus {
+  min-width:42px;
+  padding:3px 5px;
+  border:1px solid #9fe8d0;
+  border-radius:5px;
+  background:#14503f;
+  color:#eefaf6;
+  cursor:pointer;
+  box-shadow:0 3px 0 #08231a;
+}
+
+.fallbackBus span { display:block; font-size:.44rem; letter-spacing:.08em; }
+.fallbackBus small { display:block; font-size:.5rem; }
+
+.fallbackLiveVehicle {
+  position:absolute;
+  transform:translate(-50%,-50%);
+  width:8px;
+  height:5px;
+  border-radius:2px;
+  background:#aab9c1;
+  z-index:7;
+  box-shadow:0 1px 0 rgba(0,0,0,.4);
+}
+
+.fallbackLiveVehicle.bus {
+  width:13px;
+  height:7px;
+  background:var(--accent);
+  border:1px solid #e7fff7;
+}
+
+.fallbackYard {
+  border:1px dashed #61747f;
+  border-radius:6px;
+  background:#0d1921;
+  color:#91a2ab;
+  font-size:.5rem;
+  padding:6px 8px;
+  cursor:pointer;
+}
