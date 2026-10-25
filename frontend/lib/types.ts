@@ -3,6 +3,12 @@ export type Controls = {
   train_delay: number;
   passenger_demand: number;
   fleet_size: number;
+  demand_multiplier: number;
+  surge_passengers: number;
+  surge_minute: number | null;
+  breakdown_minute: number | null;
+  emergency_dispatch_minute: number | null;
+  seed: number;
 };
 
 export type StopState = {
@@ -94,6 +100,7 @@ export type SimulationResponse = {
   smart: CaseResult;
   impact: {
     average_wait_reduction: number;
+    additional_completed_trips: number;
     max_queue_reduction: number;
     fewer_left_waiting: number;
   };

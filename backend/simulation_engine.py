@@ -53,12 +53,25 @@ class TransitSimulation:
         traffic_multiplier=1.0,
         initial_queue=20,
         seed=17,
+        demand_multiplier=1.0,
+        breakdown_minute=None,
+        surge_minute=None,
+        surge_passengers=0,
+        emergency_dispatch_minute=None,
     ):
         self.buses = buses
         self.trains = sorted(trains, key=lambda t: t.actual_arrival)
         self.intelligent = intelligent
         self.duration = duration
         self.traffic_multiplier = max(0.5, min(float(traffic_multiplier), 3.0))
+        self.demand_multiplier = max(0.5, min(float(demand_multiplier), 3.0))
+        self.breakdown_minute = breakdown_minute
+        self.surge_minute = surge_minute
+        self.surge_passengers = max(0, int(surge_passengers))
+        self.emergency_dispatch_minute = emergency_dispatch_minute
+        self.breakdown_bus_id = None
+        self.breakdown_until = -1
+        self.breakdown_minutes = 6
         self.metrics = SimulationMetrics()
         self.events = []
         self.timeline = []
@@ -114,7 +127,7 @@ class TransitSimulation:
             "CENTRAL": 1.15,
         }
         for stop_id, rate in rates.items():
-            expected = rate * (0.8 + 0.3 * self.traffic_multiplier)
+            expected = rate * self.demand_multiplier * (0.8 + 0.3 * self.traffic_multiplier)
             base = int(expected)
             extra = 1 if self._rng.random() < (expected - base) else 0
             count = base + extra
@@ -129,6 +142,26 @@ class TransitSimulation:
                     f"{train.train_id} arrived at Central Station +{train.passengers_for_bus} transfers",
                     "train",
                 )
+
+    def _scenario_events(self):
+        if self.surge_minute is not None and self.time == self.surge_minute:
+            self._spawn_passengers("UW", self.surge_passengers)
+            self.log(f"Event surge: +{self.surge_passengers} passengers at UW", "surge")
+        if self.breakdown_minute is not None and self.time == self.breakdown_minute:
+            active = next((bus for bus in self.buses if bus.state != BusState.YARD), None)
+            if active:
+                self.breakdown_bus_id = active.bus_id
+                self.breakdown_until = self.time + self.breakdown_minutes
+                self.log(f"{active.bus_id} breakdown: six-minute roadside hold", "disruption")
+            else:
+                self.log("Breakdown skipped: no active vehicle", "disruption")
+        if self.emergency_dispatch_minute is not None and self.time == self.emergency_dispatch_minute:
+            yard = next((bus for bus in self.buses if bus.state == BusState.YARD), None)
+            if yard:
+                self._dispatch_bus(yard, staged=True)
+                self.log(f"Emergency dispatch: {yard.bus_id} deployed toward Central", "emergency")
+            else:
+                self.log("Emergency dispatch requested, but no bus is available", "emergency")
 
     def _near_term_hub_demand(self, lookahead=10):
         demand = (
@@ -248,6 +281,11 @@ class TransitSimulation:
         for bus in self.buses:
             if bus.state == BusState.YARD:
                 continue
+            if bus.bus_id == self.breakdown_bus_id and self.time < self.breakdown_until:
+                continue
+            if bus.bus_id == self.breakdown_bus_id and self.time == self.breakdown_until:
+                self.log(f"{bus.bus_id} returned to service", "recovery")
+                self.breakdown_bus_id = None
 
             if bus.state == BusState.DWELLING:
                 bus.dwell_minutes -= 1
@@ -367,7 +405,7 @@ class TransitSimulation:
                     "y": y,
                     "lon": lon,
                     "lat": lat,
-                    "state": bus.state.name,
+                    "state": "BROKEN_DOWN" if bus.bus_id == self.breakdown_bus_id and self.time < self.breakdown_until else bus.state.name,
                     "occupancy": bus.occupancy,
                     "capacity": bus.capacity,
                     "target": target_name,
@@ -386,6 +424,7 @@ class TransitSimulation:
             if minute > 0:
                 self._spawn_background_demand()
             self._process_train_arrivals()
+            self._scenario_events()
             self._dispatch_logic()
             self._advance_buses()
             self._capture_snapshot()
