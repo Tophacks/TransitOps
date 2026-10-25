@@ -195,3 +195,11 @@ Next useful milestones:
 TransitOps is primarily a **network-level transit operations system**, not a vehicle-autonomy simulator.
 
 SUMO handles traffic and vehicle interactions. TransitOps focuses on decisions such as dispatching, staging, holding, rerouting, passenger-transfer response, and signal priority.
+
+## Scenario playground (Python lightweight simulation)
+
+The public operations model now supports deterministic, repeatable baseline-vs-adaptive comparisons under a shared scenario: `demand_multiplier` (0.5–3), `surge_minute` / `surge_passengers` (at UW), `breakdown_minute` (six-minute roadside hold of first active bus), and `emergency_dispatch_minute` (reserve bus dispatched from yard, when available). Controls retain traffic, train delay, fleet size and random seed. The frontend offers five presets and run-to-run KPI comparisons.
+
+These are stylized **corridor operations simulations**, not calibrated real traffic, and not the microscopic SUMO process. The interactive map already uses MapLibre; public geospatial tooling such as God's Eye View is a potential design reference, not a data dependency. Traffic overlays, when added, should explicitly distinguish externally sourced speed measurements from modeled vehicle positions.
+
+Fair comparison means both dispatch policies receive the same **seed and scenario settings**, rather than necessarily identical arrival traces (policy-dependent random draws can cause future draws to diverge). For stronger causal estimates, run multiple seeds and compare distributions. Simulated emergency dispatch is a **yard fleet action**, not an emergency-services callout.

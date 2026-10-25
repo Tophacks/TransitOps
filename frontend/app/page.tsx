@@ -17,7 +17,21 @@ const DEFAULTS: Controls = {
   train_delay: 4,
   passenger_demand: 110,
   fleet_size: 3,
+  demand_multiplier: 1,
+  surge_passengers: 0,
+  surge_minute: null,
+  breakdown_minute: null,
+  emergency_dispatch_minute: null,
+  seed: 17,
 };
+
+const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
+  { id: "normal", title: "Weekday baseline", description: "Regular corridor demand and traffic", controls: DEFAULTS },
+  { id: "rush", title: "Rush-hour pressure", description: "Heavy traffic and 1.8× walk-up demand", controls: { ...DEFAULTS, traffic_multiplier: 2.1, demand_multiplier: 1.8, fleet_size: 5 } },
+  { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...DEFAULTS, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
+  { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
+  { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
+];
 
 const FALLBACK_NETWORK: Network = {
   yard: {
@@ -344,6 +358,23 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="scenarioPlayground" aria-label="Simulation playground">
+        <div className="panelHeading"><div><p className="eyebrow">EXPERIMENT LAB</p><h2>Scenario playground</h2>
+          <p>Use the same seed for a fair baseline-versus-adaptive comparison. These outcomes come from the Python corridor model, not real GRT telemetry.</p>
+        </div><span>60 simulated minutes</span></div>
+        <div className="scenarioPresets">{PRESETS.map((preset) => (
+          <button type="button" key={preset.id} onClick={() => setControls({ ...preset.controls })}>
+            <strong>{preset.title}</strong><small>{preset.description}</small>
+          </button>
+        ))}</div>
+        {data && <div className="comparisonDeck">
+          <div><span>Baseline waiting</span><strong>{baseline?.left_waiting ?? "—"}</strong></div>
+          <div><span>Adaptive waiting</span><strong>{smart?.left_waiting ?? "—"}</strong></div>
+          <div><span>Completed trips (baseline → adaptive)</span><strong>{baseline?.completed_trips ?? "—"} → {smart?.completed_trips ?? "—"}</strong></div>
+          <div><span>Average boarding wait change</span><strong>{data.impact.average_wait_reduction.toFixed(1)} min</strong></div>
+        </div>}
+        <div className="scenarioInstructions">Selecting a preset sets controls only. Press <strong>Apply &amp; restart</strong> to run both dispatch policies under matching conditions. Positive wait reduction means the adaptive controller improved the result.</div>
+      </section>
       <div className="operationsDeck">
         <form className="controlPanel" onSubmit={runSimulation}>
           <div className="panelHeading">
@@ -371,6 +402,26 @@ export default function Home() {
             <input type="range" min="1" max="6" step="1" value={controls.fleet_size} onChange={(event) => update("fleet_size", Number(event.target.value))} />
           </label>
 
+          <label>
+            <div className="labelRow"><span>Background passenger demand</span><strong>{controls.demand_multiplier.toFixed(1)}×</strong></div>
+            <input type="range" min="0.5" max="3" step="0.1" value={controls.demand_multiplier} onChange={(event) => update("demand_multiplier", Number(event.target.value))} />
+          </label>
+          <label>
+            <div className="labelRow"><span>Event crowd surge at UW</span><strong>{controls.surge_passengers} people</strong></div>
+            <input type="range" min="0" max="350" step="10" value={controls.surge_passengers} onChange={(event) => setControls((current) => ({ ...current, surge_passengers: Number(event.target.value), surge_minute: Number(event.target.value) ? (current.surge_minute ?? 20) : null }))} />
+          </label>
+          <label>
+            <div className="labelRow"><span>Breakdown event</span><strong>{controls.breakdown_minute === null ? "Off" : "Minute " + controls.breakdown_minute}</strong></div>
+            <select value={controls.breakdown_minute === null ? "off" : String(controls.breakdown_minute)} onChange={(event) => update("breakdown_minute", event.target.value === "off" ? null : Number(event.target.value))}>
+              <option value="off">Disabled</option><option value="15">Minute 15</option><option value="20">Minute 20</option><option value="35">Minute 35</option>
+            </select>
+          </label>
+          <label>
+            <div className="labelRow"><span>Emergency dispatch</span><strong>{controls.emergency_dispatch_minute === null ? "Off" : "Minute " + controls.emergency_dispatch_minute}</strong></div>
+            <select value={controls.emergency_dispatch_minute === null ? "off" : String(controls.emergency_dispatch_minute)} onChange={(event) => update("emergency_dispatch_minute", event.target.value === "off" ? null : Number(event.target.value))}>
+              <option value="off">Disabled</option><option value="15">Minute 15</option><option value="25">Minute 25</option>
+            </select>
+          </label>
           <button className="runButton" disabled={loading}>
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>

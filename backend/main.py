@@ -22,6 +22,12 @@ class SimulationRequest(BaseModel):
     train_delay: int = Field(default=5, ge=0, le=30)
     passenger_demand: int = Field(default=135, ge=10, le=500)
     fleet_size: int = Field(default=4, ge=1, le=12)
+    demand_multiplier: float = Field(default=1.0, ge=0.5, le=3.0)
+    surge_passengers: int = Field(default=0, ge=0, le=350)
+    surge_minute: int | None = Field(default=None, ge=1, le=59)
+    breakdown_minute: int | None = Field(default=None, ge=1, le=59)
+    emergency_dispatch_minute: int | None = Field(default=None, ge=1, le=59)
+    seed: int = Field(default=17, ge=0, le=1000000)
 
 
 def metrics_to_dict(metrics):
@@ -109,7 +115,12 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         intelligent=intelligent,
         duration=60,
         traffic_multiplier=payload.traffic_multiplier,
-        seed=17,
+        seed=payload.seed,
+        demand_multiplier=payload.demand_multiplier,
+        surge_minute=payload.surge_minute,
+        surge_passengers=payload.surge_passengers,
+        breakdown_minute=payload.breakdown_minute,
+        emergency_dispatch_minute=payload.emergency_dispatch_minute,
     )
     metrics = sim.run()
 
@@ -137,6 +148,7 @@ def simulate(payload: SimulationRequest):
         "max_queue_reduction": (
             baseline["metrics"]["max_queue"] - smart["metrics"]["max_queue"]
         ),
+        "additional_completed_trips": smart["metrics"]["completed_trips"] - baseline["metrics"]["completed_trips"],
         "fewer_left_waiting": (
             baseline["metrics"]["left_waiting"] - smart["metrics"]["left_waiting"]
         ),
