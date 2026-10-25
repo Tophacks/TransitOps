@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
+import GeospatialMap from "./components/GeospatialMap";
 import { useSumoStream } from "../lib/useSumoStream";
 import type {
   Controls,
@@ -157,6 +158,7 @@ export default function Home() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
   const [selected, setSelected] = useState<Selection>(null);
+  const [mapView, setMapView] = useState<"geographic" | "schematic">("geographic");
   const sumo = useSumoStream();
 
   const timeline = data?.smart.timeline ?? [];
@@ -331,14 +333,18 @@ export default function Home() {
           </div>
         </div>
 
-        <RegionalMap
-          network={network}
-          snapshot={snapshot}
-          selected={selected}
-          onSelect={setSelected}
-          traffic={controls.traffic_multiplier}
-          sumoSnapshot={sumo.snapshot}
-        />
+        <div className="mapViewControl" role="group" aria-label="Map view">
+          <div><strong>Spatial layers</strong><span>Geographic context from OpenStreetMap; all vehicles are modeled.</span></div>
+          <div className="mapViewButtons">
+            <button type="button" aria-pressed={mapView==="geographic"} onClick={()=>setMapView("geographic")}>Geographic map</button>
+            <button type="button" aria-pressed={mapView==="schematic"} onClick={()=>setMapView("schematic")}>Schematic</button>
+          </div>
+        </div>
+        {mapView === "geographic" ? (
+          <GeospatialMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} sumoSnapshot={sumo.snapshot}/>
+        ) : (
+          <RegionalMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumo.snapshot}/>
+        )}
 
         <div className="timelineControl">
           <span>00:00</span>

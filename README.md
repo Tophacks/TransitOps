@@ -203,3 +203,9 @@ The public operations model now supports deterministic, repeatable baseline-vs-a
 These are stylized **corridor operations simulations**, not calibrated real traffic, and not the microscopic SUMO process. The interactive map already uses MapLibre; public geospatial tooling such as God's Eye View is a potential design reference, not a data dependency. Traffic overlays, when added, should explicitly distinguish externally sourced speed measurements from modeled vehicle positions.
 
 Fair comparison means both dispatch policies receive the same **seed and scenario settings**, rather than necessarily identical arrival traces (policy-dependent random draws can cause future draws to diverge). For stronger causal estimates, run multiple seeds and compare distributions. Simulated emergency dispatch is a **yard fleet action**, not an emergency-services callout.
+
+### Geographic context layers
+
+TransitOps can now switch between a keyless OpenStreetMap raster basemap powered by the existing MapLibre library and the legacy schematic. The basemap depicts actual geographic streets, while buses, signal phases and occupancy remain **simulated** from either the Python prototype or optional SUMO TraCI frames. The connected stop-to-stop line is schematic geometry projected onto the basemap, **not** a surveyed road-following route. Live GPS, public transit positions, observed car positions and live speed feeds are **not** claimed.
+
+This layering was informed by the local-first, modular ideas in Bilawal Sidhu's God's Eye View (MIT-licensed source), but does not vendor that project or redistribute its provider-restricted assets/datasets. OSM tiles are subject to the OpenStreetMap Tile Usage Policy and require visible attribution. For heavy usage, configure an appropriately licensed hosted tile provider.
