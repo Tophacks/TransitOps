@@ -32,6 +32,17 @@ export type IntersectionState = {
   phase?: "GREEN" | "RED";
 };
 
+export type SegmentMotion = {
+  from: string;
+  to: string;
+  /** whole simulated minutes spent on this segment so far (includes a signal hold) */
+  elapsed: number;
+  minutes: number;
+  hold_minutes: number;
+  length_m: number;
+  distance_m: number;
+};
+
 export type BusState = {
   id: string;
   lon: number;
@@ -40,8 +51,10 @@ export type BusState = {
   occupancy: number;
   capacity: number;
   target: string;
+  /** distance travelled on the current street segment / segment length */
   progress: number;
   schedule_deviation: number;
+  segment?: SegmentMotion | null;
 };
 
 export type Yard = {
