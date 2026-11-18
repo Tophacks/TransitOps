@@ -7,6 +7,7 @@ import type { GeoJSONSource, Map as MapInstance, Popup } from "maplibre-gl";
 import type { Network, Snapshot, Selection, LiveSumoSnapshot, SimulationEvent, StopState } from "../../lib/types";
 import type { GrtMode, GrtShapes, GrtVehicle } from "../../lib/grtTypes";
 import { useGrtFleet } from "../../lib/useGrtFleet";
+import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
 import { ION_LENGTH, articulatePath, ionTrains, type TrainPose } from "../../lib/motion/ion.ts";
@@ -77,6 +78,18 @@ function streetRoutes(): GeoJSON.FeatureCollection {
   return featureCollection(corridor.data.segments
     .filter((segment) => segment.from !== "YARD")
     .map((segment) => line(segment.path.map(([lon, lat]) => [lon, lat]), { id: `${segment.from}>${segment.to}` })));
+}
+
+function depotFeatures(): GeoJSON.FeatureCollection {
+  const { centre, id, name } = ION_DEPOT;
+  return featureCollection([
+    point(...centre, { id, name }),
+    {
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [ION_DEPOT_BOUNDARY] },
+      properties: { id, name },
+    },
+  ]);
 }
 
 function ionTracks(): GeoJSON.FeatureCollection {
@@ -153,6 +166,16 @@ function addLayers(map: MapInstance) {
   for (const id of [...SIMULATION_SOURCES, "grt-vehicles", "live-solids", "live-ground"]) {
     map.addSource(id, { type: "geojson", data: featureCollection([]) });
   }
+  map.addSource("ion-depot", {
+    type: "geojson",
+    data: depotFeatures(),
+    attribution: 'Yard boundary © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+  });
+  map.addLayer({
+    id: "ion-depot-boundary", type: "line", source: "ion-depot", minzoom: 15,
+    filter: ["==", ["geometry-type"], "Polygon"],
+    paint: { "line-color": "#e6bdff", "line-width": 2, "line-dasharray": [3, 2] },
+  }, firstLabel);
   setData(map, "route", streetRoutes());
   setData(map, "ion-track", ionTracks());
   map.addLayer({
@@ -217,7 +240,24 @@ function addLayers(map: MapInstance) {
     },
     paint: { "icon-opacity": ["get", "opacity"] },
   });
+  map.addLayer({
+    id: "ion-depot-marker", type: "circle", source: "ion-depot", minzoom: 12,
+    filter: ["==", ["geometry-type"], "Point"],
+    paint: {
+      "circle-color": "#e6bdff", "circle-radius": 7,
+      "circle-stroke-color": "#1d1830", "circle-stroke-width": 3,
+    },
+  });
   if (map.getStyle()?.glyphs) {
+    map.addLayer({
+      id: "ion-depot-label", type: "symbol", source: "ion-depot", minzoom: 14,
+      filter: ["==", ["geometry-type"], "Point"],
+      layout: {
+        "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"],
+        "text-size": 13, "text-anchor": "top", "text-offset": [0, 0.75],
+      },
+      paint: { "text-color": "#f2dfff", "text-halo-color": "#20152c", "text-halo-width": 2 },
+    });
     map.addLayer({
       id: "stops-label",
       type: "symbol",
@@ -308,6 +348,7 @@ export default function GeospatialMap({
   const [selectedSumo, setSelectedSumo] = useState<string | null>(null);
   const [selectedTrain, setSelectedTrain] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
+  const [depotSelected, setDepotSelected] = useState(false);
   const fleet = useGrtFleet(live);
   const trackerRef = useRef(new LiveTracker());
   const shapeCache = useRef(new Map<string, PathPoint[]>());
@@ -322,15 +363,25 @@ export default function GeospatialMap({
   const simPose = simBus ? busPoses(corridor, timeline, now).find((pose) => pose.id === simBus.id) : undefined;
   const trainPose = simulating && selectedTrain ? ionTrains(ion, now).find((train) => train.id === selectedTrain) : undefined;
   const focus = vehicle ?? sumoBus;
-  const lon = focus?.lon;
-  const lat = focus?.lat;
+  const lon = depotSelected ? ION_DEPOT.centre[0] : focus?.lon;
+  const lat = depotSelected ? ION_DEPOT.centre[1] : focus?.lat;
   const livePose = vehicle ? trackerRef.current.pose(fleetKey(vehicle.mode, vehicle.id), performance.now() / 1000) : undefined;
-  const animatedFocus = simPose ? simPose.id : trainPose ? trainPose.id : vehicle ? fleetKey(vehicle.mode, vehicle.id) : null;
+  const animatedFocus = depotSelected ? null
+    : simPose ? simPose.id : trainPose ? trainPose.id : vehicle ? fleetKey(vehicle.mode, vehicle.id) : null;
   const callbacks = useRef({ network, snapshot, onSelect, sumoSnapshot, timeline });
   callbacks.current = { network, snapshot, onSelect, sumoSnapshot, timeline };
   const sceneRef = useRef<Scene>({ buses: [], trains: [] });
   const sceneState = useRef({ animatedFocus, follow, selectedBus: simBus?.id ?? null, simulating });
   sceneState.current = { animatedFocus, follow, selectedBus: simBus?.id ?? null, simulating };
+
+  function selectDepot() {
+    setFollow(false);
+    setSelectedVehicle(null);
+    setSelectedTrain(null);
+    setSelectedSumo(null);
+    callbacks.current.onSelect(null);
+    setDepotSelected(true);
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -385,12 +436,17 @@ export default function GeospatialMap({
           addLayers(currentMap);
           const clickable = [
             "stops-circle", "signals-circle", "yard-circle", "sim-bus-markers", "vehicle-bodies",
-            "grt-points", "grt-route-labels", "live-bodies",
+            "grt-points", "grt-route-labels", "live-bodies", "ion-depot-marker", "ion-depot-label",
           ].filter((id) => currentMap.getLayer(id));
           currentMap.on("click", clickable, (event) => {
             const feature = event.features?.[0];
             const id = feature?.properties?.id;
             if (typeof id !== "string") return;
+            if (id === ION_DEPOT.id) {
+              selectDepot();
+              return;
+            }
+            setDepotSelected(false);
             const current = callbacks.current;
             switch (feature?.layer.id) {
               case "grt-points":
@@ -636,6 +692,7 @@ export default function GeospatialMap({
   }, [lat, lon, ready, animatedFocus]);
 
   function clearDetails() {
+    setDepotSelected(false);
     setFollow(false);
     setSelectedTrain(null);
     if (live) setSelectedVehicle(null);
@@ -665,7 +722,7 @@ export default function GeospatialMap({
     map.easeTo({ ...camera(map.getContainer().clientWidth), duration: 1400 });
   }
 
-  const showPopup = Boolean(focus || simPose || trainPose);
+  const showPopup = Boolean(depotSelected || focus || simPose || trainPose);
 
   return (
     <section className="geoMapShell" aria-label="Waterloo corridor geographic basemap">
@@ -675,6 +732,13 @@ export default function GeospatialMap({
           <button type="button" aria-pressed={tilted} disabled={!ready} onClick={toggleTilt}>3D</button>
           <button type="button" disabled={!ready} onClick={() => goTo(campusCamera)}>Campus</button>
           {!live && <button type="button" disabled={!ready} onClick={() => goTo(ionCurveCamera)}>ION curve</button>}
+          <button type="button" disabled={!ready} onClick={() => {
+            goTo((width) => ({
+              center: ION_DEPOT.centre, zoom: width < 640 ? 15.8 : 16.6,
+              pitch: tilted ? 45 : 0, bearing: 0,
+            }));
+            selectDepot();
+          }}>ION depot</button>
           <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA })}>Region</button>
           <button type="button" aria-pressed={live} onClick={() => {
             clearDetails();
@@ -713,9 +777,15 @@ export default function GeospatialMap({
           )}
       </div>
       {popupContent && showPopup && createPortal(
-        <aside className="geoVehicleCard" aria-label="Selected vehicle details">
-          <button type="button" aria-label="Close vehicle details" onClick={clearDetails}>×</button>
-          {vehicle ? (
+        <aside className="geoVehicleCard" aria-label={depotSelected ? "ION depot details" : "Selected vehicle details"}>
+          <button type="button" aria-label={depotSelected ? "Close depot details" : "Close vehicle details"} onClick={clearDetails}>×</button>
+          {depotSelected ? (
+            <>
+              <strong>ION Operations, Maintenance and Storage Facility</strong>
+              <span>{ION_DEPOT.address}</span>
+              <span>Light rail maintenance and train storage · no passenger boarding</span>
+            </>
+          ) : vehicle ? (
             <>
               <strong>Live GPS · {FEED_NAMES[vehicle.mode]} {vehicle.route}</strong>
               <span>{vehicle.headsign || `Vehicle ${vehicle.id}`}</span>
