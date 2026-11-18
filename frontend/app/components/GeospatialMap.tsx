@@ -43,12 +43,11 @@ const FEED_NAMES = { bus: "GRT bus", ion: "ION train" };
 /** Close-up over the Phillip St / University Ave corner and the UW Station bus loop. */
 function campusCamera(width: number): Camera {
   const narrow = width < 640;
-  return {
-    center: narrow ? [-80.53895, 43.47445] : [-80.539, 43.4743],
-    zoom: narrow ? 17.75 : 18.3,
-    pitch: 62,
-    bearing: 20,
-  };
+  // On a phone the overlay covers the top of the map: look further along the
+  // bus loop so UW Station and the run toward Phillip St stay in view.
+  return narrow
+    ? { center: [-80.5393, 43.47425], zoom: 17.7, pitch: 60, bearing: 35 }
+    : { center: [-80.539, 43.4743], zoom: 18.3, pitch: 62, bearing: 20 };
 }
 
 /** Where ION turns from King St onto Erb St at Waterloo Public Square. */
@@ -266,6 +265,7 @@ export default function GeospatialMap({
   const animatedFocus = simPose ? simPose.id : trainPose ? trainPose.id : null;
   const callbacks = useRef({ network, snapshot, onSelect, sumoSnapshot, timeline });
   callbacks.current = { network, snapshot, onSelect, sumoSnapshot, timeline };
+  const sceneRef = useRef<Scene>({ buses: [], trains: [] });
   const sceneState = useRef({ animatedFocus, follow, selectedBus: simBus?.id ?? null, simulating });
   sceneState.current = { animatedFocus, follow, selectedBus: simBus?.id ?? null, simulating };
 
@@ -290,6 +290,14 @@ export default function GeospatialMap({
         });
         map = currentMap;
         mapRef.current = currentMap;
+        // Opt-in handle for the browser checks in e2e/ (open the page with ?e2e).
+        if (new URLSearchParams(window.location.search).has("e2e")) {
+          (window as unknown as { __transitops?: unknown }).__transitops = {
+            map: currentMap,
+            scene: () => sceneRef.current,
+            seek: (seconds: number) => clock.seek(seconds),
+          };
+        }
         const content = document.createElement("div");
         popupRef.current = new maplibre.Popup({
           closeButton: false, closeOnClick: false, offset: 22, maxWidth: "260px",
@@ -302,6 +310,11 @@ export default function GeospatialMap({
           customAttribution: "Street paths: GRT GTFS, Region of Waterloo Open Data",
         }), "bottom-right");
         currentMap.on("dragstart", () => setFollow(false));
+        // MapLibre opens the compact attribution expanded; on a phone that
+        // covers a sixth of the map. Keep it behind its (i) button there.
+        if (host.current.clientWidth < 640) {
+          host.current.querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+        }
         currentMap.once("load", () => {
           if (disposed) return;
           addLayers(currentMap);
@@ -423,6 +436,7 @@ export default function GeospatialMap({
           buses: busPoses(corridor, callbacks.current.timeline, t),
           trains: ionTrains(ion, t),
         };
+        sceneRef.current = scene;
         const bodies = emptyBodies();
         for (const bus of scene.buses) busBody(bus, bus.id === state.selectedBus, bodies);
         for (const train of scene.trains) trainBody(train, bodies);
@@ -541,6 +555,7 @@ export default function GeospatialMap({
               <strong><i aria-hidden="true" />Simulated · not live vehicles</strong>
               <span>Python simulated bus positions, moving along GRT street paths</span>
               <span>ION trains follow the real track on an illustrative timetable</span>
+              <span className="simBadgeShort">Python simulator buses · ION on an illustrative timetable</span>
             </div>
           )}
       </div>
