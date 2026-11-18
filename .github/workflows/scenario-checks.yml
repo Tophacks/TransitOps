@@ -35,3 +35,5 @@ jobs:
           node-version: "22"
       - name: Install and build frontend
         run: npm install && npm run build
+      - name: Motion core tests (parity with the Python simulator)
+        run: npm run test:motion

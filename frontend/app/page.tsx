@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
 import GeospatialMap from "./components/GeospatialMap";
 import { useSumoStream } from "../lib/useSumoStream";
+import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
+import { busPoses, type BusPose } from "../lib/motion/playback.ts";
+import { corridor } from "../lib/motion/scene.ts";
 import type {
   Controls,
   Network,
@@ -35,24 +38,29 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
 ];
 
+const STOP_NAMES: Record<string, string> = {
+  UW: "University of Waterloo",
+  WATERLOO_SQUARE: "Waterloo Public Square",
+  GRAND_RIVER_HOSPITAL: "Grand River Hospital",
+  CENTRAL: "Central Station",
+};
+const SIGNAL_NAMES: Record<string, string> = {
+  I1: "University corridor",
+  I2: "Uptown Waterloo",
+  I3: "King / Victoria",
+};
+const geo = corridor.data;
+
+// Same curb stops and signals the Python backend uses (generated geometry).
 const FALLBACK_NETWORK: Network = {
   yard: {
     id: "YARD",
     name: "Corridor Staging Yard",
-    lon: -80.5035,
-    lat: 43.4515,
+    lon: geo.stops.YARD.lon,
+    lat: geo.stops.YARD.lat,
   },
-  stops: [
-    { id: "UW", name: "University of Waterloo", lon: -80.54128, lat: 43.47336 },
-    { id: "WATERLOO_SQUARE", name: "Waterloo Public Square", lon: -80.5228, lat: 43.46419 },
-    { id: "GRAND_RIVER_HOSPITAL", name: "Grand River Hospital", lon: -80.51185, lat: 43.45723 },
-    { id: "CENTRAL", name: "Central Station", lon: -80.49944, lat: 43.45333 },
-  ],
-  intersections: [
-    { id: "I1", name: "University corridor", lon: -80.533, lat: 43.4695 },
-    { id: "I2", name: "Uptown Waterloo", lon: -80.52, lat: 43.462 },
-    { id: "I3", name: "King / Victoria", lon: -80.505, lat: 43.455 },
-  ],
+  stops: Object.entries(STOP_NAMES).map(([id, name]) => ({ id, name, lon: geo.stops[id].lon, lat: geo.stops[id].lat })),
+  intersections: Object.entries(SIGNAL_NAMES).map(([id, name]) => ({ id, name, lon: geo.signals[id].lon, lat: geo.signals[id].lat })),
   route_order: [
     "UW",
     "WATERLOO_SQUARE",
@@ -63,14 +71,21 @@ const FALLBACK_NETWORK: Network = {
   corridor_name: "Waterloo Corridor Test Scenario",
 };
 
+function formatClock(seconds: number) {
+  const whole = Math.floor(seconds);
+  return `${String(Math.floor(whole / 60)).padStart(2, "0")}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 function Inspector({
   selected,
   snapshot,
   decision,
+  pose,
 }: {
   selected: Selection;
   snapshot: Snapshot | null;
   decision?: SimulationEvent;
+  pose?: BusPose;
 }) {
   if (!selected) {
     return (
@@ -99,7 +114,10 @@ function Inspector({
           <div><dt>Occupancy</dt><dd>{live.occupancy} / {live.capacity} · {load}%</dd></div>
           <div><dt>Next stop</dt><dd>{live.target}</dd></div>
           <div><dt>Schedule deviation</dt><dd>+{live.schedule_deviation} min</dd></div>
-          <div><dt>Segment progress</dt><dd>{Math.round(live.progress * 100)}%</dd></div>
+          <div><dt>Segment progress</dt><dd>{pose
+            ? `${Math.round((pose.distance / pose.length) * 100)}% · ${Math.round(pose.distance)} of ${Math.round(pose.length)} m`
+            : `${Math.round(live.progress * 100)}%`}</dd></div>
+          {pose && <div><dt>Speed</dt><dd>{Math.round(pose.speed * 3.6)} km/h{pose.state !== "EN_ROUTE" ? ` · ${pose.state.replaceAll("_", " ").toLowerCase()}` : ""}</dd></div>}
         </dl>
         {decision && <div className="geoDecision">
           <strong>{decision.message}</strong>
@@ -161,16 +179,17 @@ export default function Home() {
   const [data, setData] = useState<SimulationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [frame, setFrame] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(2);
+  const playback = usePlayback(30);
+  const { seconds, playing, speed } = playback;
   const [selected, setSelected] = useState<Selection>(null);
   const [mapView, setMapView] = useState<"geographic" | "schematic">("geographic");
   const [liveMap, setLiveMap] = useState(true);
   const sumo = useSumoStream();
 
-  const timeline = data?.smart.timeline ?? [];
+  const timeline = useMemo(() => data?.smart.timeline ?? [], [data]);
+  const frame = Math.min(Math.floor(seconds / 60), Math.max(0, timeline.length - 1));
   const snapshot = timeline[frame] ?? null;
+  const poses = useMemo(() => busPoses(corridor, timeline, seconds), [timeline, seconds]);
   const network = data?.network ?? FALLBACK_NETWORK;
   const sumoMapSnapshot = sumo.state === "idle" ? null : sumo.snapshot;
   const smart = data?.smart.metrics;
@@ -180,22 +199,6 @@ export default function Home() {
     ? data?.smart.events.findLast((event) =>
         event.bus_id === selectedBus && event.minute <= snapshot.minute && event.reason)
     : undefined;
-
-  useEffect(() => {
-    if (!playing || timeline.length === 0) return;
-
-    const timer = window.setInterval(() => {
-      setFrame((current) => {
-        if (current >= timeline.length - 1) {
-          setPlaying(false);
-          return current;
-        }
-        return current + 1;
-      });
-    }, Math.max(80, 900 / speed));
-
-    return () => window.clearInterval(timer);
-  }, [playing, speed, timeline.length]);
 
   const visibleEvents = useMemo(() => {
     if (!data || !snapshot) return [];
@@ -218,8 +221,7 @@ export default function Home() {
     event?.preventDefault();
     setLoading(true);
     setError("");
-    setPlaying(false);
-    setFrame(0);
+    playback.pause();
     setSelected(null);
     setLiveMap(false);
     sumo.stop();
@@ -237,7 +239,8 @@ export default function Home() {
 
       const result = (await response.json()) as SimulationResponse;
       setData(result);
-      setPlaying(true);
+      playback.load(Math.max(0, result.smart.timeline.length - 1) * 60);
+      playback.play();
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -251,12 +254,8 @@ export default function Home() {
 
   function togglePlayback() {
     if (!data) return;
-
-    if (frame >= timeline.length - 1) {
-      setFrame(0);
-    }
-
-    setPlaying((current) => !current);
+    if (playing) playback.pause();
+    else playback.play();
   }
 
   return (
@@ -302,9 +301,11 @@ export default function Home() {
             live={liveMap}
             onModeChange={setLiveMap}
             sumoSnapshot={sumoMapSnapshot}
+            timeline={timeline}
+            clock={playback.clock}
           />
         ) : (
-          <RegionalMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
+          <RegionalMap network={network} snapshot={snapshot} poses={poses} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
         )}
 
         <div className="simTopbar">
@@ -340,41 +341,46 @@ export default function Home() {
             >
               {playing ? "Ⅱ  Pause" : "▶  Play"}
             </button>
-            {[1, 2, 5, 10].map((value) => (
-              <button
-                type="button"
-                key={value}
-                className={speed === value ? "activeSpeed" : ""}
-                onClick={() => setSpeed(value)}
-              >
-                {value}×
-              </button>
-            ))}
+            <div className="speedGroup" role="group" aria-label="Playback speed (simulated seconds per second)">
+              {PLAYBACK_SPEEDS.map((value) => (
+                <button
+                  type="button"
+                  key={value}
+                  aria-pressed={speed === value}
+                  className={speed === value ? "activeSpeed" : ""}
+                  title={value === 1 ? "Real time" : `${value}× real time`}
+                  onClick={() => playback.setSpeed(value)}
+                >
+                  {value}×
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="topMetrics">
             <div><span>WAITING</span><strong>{snapshot?.waiting ?? "—"}</strong></div>
-            <div><span>ACTIVE BUSES</span><strong>{snapshot ? snapshot.buses.filter((bus) => bus.state !== "YARD").length : "—"}</strong></div>
+            <div><span>ACTIVE BUSES</span><strong>{snapshot ? poses.length : "—"}</strong></div>
             <div><span>AVG WAIT</span><strong>{smart ? `${smart.average_wait.toFixed(1)}m` : "—"}</strong></div>
             <div><span>TRAFFIC</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
           </div>
         </div>
 
         <div className="timelineControl">
-          <span aria-label="Current simulation minute">{String(snapshot?.minute ?? 0).padStart(2, "0")}:00</span>
+          <span aria-label="Current simulation time">{formatClock(seconds)}</span>
           <input
             aria-label="Simulation timeline"
             type="range"
             min="0"
-            max={Math.max(0, timeline.length - 1)}
-            value={Math.min(frame, Math.max(0, timeline.length - 1))}
+            step="1"
+            max={Math.max(0, timeline.length - 1) * 60}
+            value={Math.round(seconds)}
             onChange={(event) => {
-              setFrame(Number(event.target.value));
-              setPlaying(false);
+              playback.pause();
+              playback.seek(Number(event.target.value));
             }}
             disabled={!data}
           />
-          <span>60:00</span>
+          <span>{formatClock(Math.max(0, timeline.length - 1) * 60)}</span>
         </div>
       </section>
 
@@ -454,7 +460,12 @@ export default function Home() {
         </form>
 
         <section className="inspector">
-          <Inspector selected={selected} snapshot={snapshot} decision={decision} />
+          <Inspector
+            selected={selected}
+            snapshot={snapshot}
+            decision={decision}
+            pose={selected?.type === "bus" ? poses.find((pose) => pose.id === selected.data.id) : undefined}
+          />
         </section>
 
         <section className="decisionPanel">

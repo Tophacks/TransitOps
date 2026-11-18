@@ -6,14 +6,17 @@ import type {
   Network,
   Selection,
   Snapshot,
-  StopState,
   LiveSumoSnapshot,
   LiveSumoVehicle,
 } from "../../lib/types";
+import type { BusPose } from "../../lib/motion/playback.ts";
+import { corridor } from "../../lib/motion/scene.ts";
 
 type Props = {
   network: Network;
   snapshot: Snapshot | null;
+  /** bus positions at the current playback instant */
+  poses?: BusPose[];
   selected: Selection;
   onSelect: (selection: Selection) => void;
   traffic: number;
@@ -36,6 +39,7 @@ function project(lon: number, lat: number) {
 export default function RegionalMap({
   network,
   snapshot,
+  poses = [],
   selected,
   onSelect,
   traffic,
@@ -49,14 +53,13 @@ export default function RegionalMap({
       Number.isFinite(vehicle.lon) && Number.isFinite(vehicle.lat)
   );
 
-  const routeStops = network.route_order
-    .map((id) => stops.find((stop) => stop.id === id))
-    .filter((stop): stop is StopState => Boolean(stop));
-
-  const routePoints = routeStops
-    .map((stop) => {
-      const p = project(stop.lon, stop.lat);
-      return `${p.x},${p.y}`;
+  // The buses' street path, drawn in the schematic's projection.
+  const routePoints = network.route_order
+    .map((id, index) => corridor.segment(id, network.route_order[(index + 1) % network.route_order.length]))
+    .flatMap((segment) => segment.path)
+    .map(([lon, lat]) => {
+      const p = project(lon, lat);
+      return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
     })
     .join(" ");
 
@@ -130,7 +133,9 @@ export default function RegionalMap({
 
       {!sumoSnapshot &&
         buses.map((bus: BusState) => {
-          const p = project(bus.lon, bus.lat);
+          const pose = poses.find((item) => item.id === bus.id);
+          if (snapshot && !pose && bus.state !== "YARD") return null;
+          const p = pose ? project(pose.centre[0], pose.centre[1]) : project(bus.lon, bus.lat);
           const selectedBus = selected?.type === "bus" && selected.data.id === bus.id;
           return (
             <button

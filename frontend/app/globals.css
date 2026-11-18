@@ -1658,3 +1658,17 @@ footer {
 .geoMapHost .geoVehiclePopup .maplibregl-popup-tip { border:0; }
 .geoDecision { display:grid; gap:4px; margin-top:3px; border-top:1px solid #426268; padding-top:6px; }
 .geoDecision > strong { color:#ead387; }
+
+/* Campus scene: simulated vehicles drawn as 3D bodies on real streets. */
+.simBadge { display:grid; gap:3px; }
+.simBadge strong { display:flex; align-items:center; gap:7px; color:#ffe2a0; letter-spacing:.01em; }
+.simBadge strong i { width:8px; height:8px; border-radius:2px; background:#f1bf4b; box-shadow:0 0 0 2px #f1bf4b40; }
+.geoVehicleCard button.followButton { position:static; justify-self:start; margin-top:2px; }
+.geoVehicleCard button.followButton[aria-pressed="true"] { background:#23534c; border-color:#79c5b4; }
+.speedGroup { display:flex; gap:6px; }
+.speedGroup button[aria-pressed="true"] { color:var(--accent); }
+@media (max-width:560px) {
+  .geoMapOverlay { left:8px; top:8px; padding:9px 10px; max-width:calc(100% - 64px); }
+  .geoMapControls button { padding:5px 7px; font-size:.66rem; }
+  .simBadge span:last-child { display:none; }
+}

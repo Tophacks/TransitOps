@@ -1,6 +1,7 @@
 import math
 import random
 
+import corridor
 from models import BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
@@ -27,20 +28,20 @@ INTERSECTION_LAYOUT = {
 SEGMENT_BASE_MINUTES = [5, 5, 5, 8]
 SEGMENT_INTERSECTIONS = ["I1", "I2", "I3", "I2"]
 
+# Real GRT curb stops and signalised intersections on the street path
+# (see tools/waterloo_geometry). Buses travel between them along the streets,
+# never in a straight line across blocks.
 GEO_LAYOUT = {
-    "UW": (-80.54128, 43.47336),
-    "WATERLOO_SQUARE": (-80.52280, 43.46419),
-    "GRAND_RIVER_HOSPITAL": (-80.51185, 43.45723),
-    "CENTRAL": (-80.49944, 43.45333),
+    stop_id: (corridor.STOPS[stop_id]["lon"], corridor.STOPS[stop_id]["lat"])
+    for stop_id in ROUTE
 }
 
 INTERSECTION_GEO = {
-    "I1": (-80.53300, 43.46950),
-    "I2": (-80.52000, 43.46200),
-    "I3": (-80.50500, 43.45500),
+    iid: (corridor.SIGNALS[iid]["lon"], corridor.SIGNALS[iid]["lat"])
+    for iid in INTERSECTION_LAYOUT
 }
 
-YARD_GEO = (-80.50350, 43.45150)
+YARD_GEO = (corridor.STOPS["YARD"]["lon"], corridor.STOPS["YARD"]["lat"])
 
 
 class TransitSimulation:
@@ -224,6 +225,7 @@ class TransitSimulation:
                                f"and carried {bus.occupancy} riders (threshold {max(10, bus.capacity // 3)}).",
                     )
 
+        bus.segment_hold_minutes = signal_delay
         return max(2, congestion + signal_delay)
 
     def _dispatch_bus(self, bus, staged=False, reason=None):
@@ -233,6 +235,7 @@ class TransitSimulation:
         bus.segment_elapsed = 0
         bus.segment_minutes = max(3, round(6 * self.traffic_multiplier))
         bus.segment_progress = 0.0
+        bus.segment_hold_minutes = 0
         bus.schedule_deviation = 1 if staged else 0
 
         if staged:
@@ -358,21 +361,39 @@ class TransitSimulation:
         y = start[1] + (target[1] - start[1]) * p
         return round(x, 2), round(y, 2)
 
-    def _bus_geo(self, bus):
+    def _segment_ids(self, bus):
+        origin = "YARD" if bus.current_stop_index == -1 else ROUTE[bus.current_stop_index]
+        return origin, ROUTE[bus.target_stop_index]
+
+    def _bus_motion(self, bus):
+        """Where the bus is along the street path of its current segment.
+
+        Progress is distance travelled divided by segment length. The bus
+        accelerates, slows for corners and a red signal, and brakes into the
+        stop; the profile is fitted to the minutes the simulator allotted.
+        """
         if bus.state == BusState.YARD:
+            return None
+        origin, target = self._segment_ids(bus)
+        run = corridor.bus_run(origin, target, max(1, bus.segment_minutes), bus.segment_hold_minutes)
+        elapsed = bus.segment_minutes if bus.state == BusState.DWELLING else bus.segment_elapsed
+        distance = run.distance(elapsed * 60.0)
+        return {
+            "from": origin,
+            "to": target,
+            "elapsed": elapsed,
+            "minutes": bus.segment_minutes,
+            "hold_minutes": bus.segment_hold_minutes,
+            "length_m": run.length,
+            "distance_m": round(distance, 1),
+        }
+
+    def _bus_geo(self, bus, motion=None):
+        motion = motion if motion is not None else self._bus_motion(bus)
+        if motion is None:
             return YARD_GEO
-
-        target = GEO_LAYOUT[ROUTE[bus.target_stop_index]]
-
-        if bus.current_stop_index == -1:
-            start = YARD_GEO
-        else:
-            start = GEO_LAYOUT[ROUTE[bus.current_stop_index]]
-
-        p = bus.segment_progress if bus.state == BusState.EN_ROUTE else 1.0
-        lon = start[0] + (target[0] - start[0]) * p
-        lat = start[1] + (target[1] - start[1]) * p
-        return round(lon, 6), round(lat, 6)
+        seg = corridor.segment(motion["from"], motion["to"])
+        return corridor.position(seg, motion["distance_m"])
 
     def _capture_snapshot(self):
         total_waiting = sum(len(stop.queue) for stop in self.stops.values())
@@ -414,7 +435,8 @@ class TransitSimulation:
 
         for bus in self.buses:
             x, y = self._bus_xy(bus)
-            lon, lat = self._bus_geo(bus)
+            motion = self._bus_motion(bus)
+            lon, lat = self._bus_geo(bus, motion)
             target_name = (
                 self.stops[ROUTE[bus.target_stop_index]].name
                 if bus.state != BusState.YARD
@@ -431,8 +453,9 @@ class TransitSimulation:
                     "occupancy": bus.occupancy,
                     "capacity": bus.capacity,
                     "target": target_name,
-                    "progress": round(bus.segment_progress, 3),
+                    "progress": round(motion["distance_m"] / motion["length_m"], 3) if motion else 0.0,
                     "schedule_deviation": bus.schedule_deviation,
+                    "segment": motion,
                 }
             )
 

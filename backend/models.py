@@ -54,6 +54,7 @@ class Bus:
     segment_minutes: int = 1
     segment_elapsed: int = 0
     dwell_minutes: int = 0
+    segment_hold_minutes: int = 0
     onboard: list[Passenger] = field(default_factory=list)
     schedule_deviation: int = 0
 

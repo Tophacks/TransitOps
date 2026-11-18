@@ -7,7 +7,8 @@
     "dev": "next dev",
     "prebuild": "node scripts/copy-maplibre-worker.mjs",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test:motion": "node --test tests/motion.test.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "^9.2.2",

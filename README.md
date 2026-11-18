@@ -26,6 +26,21 @@ The SUMO corridor also contains three east/west cross streets, background road t
 
 This is a Waterloo-inspired test scenario, **not a calibrated reproduction of GRT operations**.
 
+### Street paths and the campus scene
+
+Simulated buses drive real streets between real GRT curb stops: the UW Station
+bus loop, Phillip St, University Ave and King St. The paths come from GRT's GTFS
+feed (see `tools/waterloo_geometry/`). The simulator measures each bus's progress
+as distance along that path. A shared trip model turns the minutes it allots to a
+segment into distance: the bus pulls away, slows for corners and red signals, and
+brakes into the next stop. The browser runs a line-for-line port of that model
+every frame, so playback is smooth and still matches the simulator at each minute.
+
+In the geographic map, **Simulation** opens a close-up of campus. Buses and
+articulated ION trains are drawn as 3D bodies that buildings can hide. The ION
+trains run on the real track but follow an illustrative timetable, because the
+Python model does not simulate light rail.
+
 ## Architecture
 
 ```text

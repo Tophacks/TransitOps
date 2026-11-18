@@ -7,7 +7,10 @@ class MapLayerStaticTests(unittest.TestCase):
   text=(ROOT/'app/components/GeospatialMap.tsx').read_text()
   self.assertIn('AttributionControl',text)
   self.assertIn('Python simulated bus positions',text)
-  self.assertIn('stop-to-stop route is illustrative',text)
+  self.assertIn('Simulated · not live vehicles',text)
+  self.assertIn('illustrative timetable',text)
+  self.assertNotIn('stop-to-stop route',text)
+  self.assertIn('"vehicle-bodies"',text)
   self.assertIn('"sumo-traffic"',text)
   self.assertIn('map.remove()',text)
  def test_toggle_and_fallback(self):
