@@ -9,6 +9,7 @@ import type {
   Controls,
   Network,
   Selection,
+  SimulationEvent,
   SimulationResponse,
   Snapshot,
 } from "../lib/types";
@@ -65,9 +66,11 @@ const FALLBACK_NETWORK: Network = {
 function Inspector({
   selected,
   snapshot,
+  decision,
 }: {
   selected: Selection;
   snapshot: Snapshot | null;
+  decision?: SimulationEvent;
 }) {
   if (!selected) {
     return (
@@ -98,6 +101,10 @@ function Inspector({
           <div><dt>Schedule deviation</dt><dd>+{live.schedule_deviation} min</dd></div>
           <div><dt>Segment progress</dt><dd>{Math.round(live.progress * 100)}%</dd></div>
         </dl>
+        {decision && <div className="geoDecision">
+          <strong>{decision.message}</strong>
+          <span>{decision.reason}</span>
+        </div>}
       </div>
     );
   }
@@ -159,13 +166,20 @@ export default function Home() {
   const [speed, setSpeed] = useState(2);
   const [selected, setSelected] = useState<Selection>(null);
   const [mapView, setMapView] = useState<"geographic" | "schematic">("geographic");
+  const [liveMap, setLiveMap] = useState(true);
   const sumo = useSumoStream();
 
   const timeline = data?.smart.timeline ?? [];
   const snapshot = timeline[frame] ?? null;
   const network = data?.network ?? FALLBACK_NETWORK;
+  const sumoMapSnapshot = sumo.state === "idle" ? null : sumo.snapshot;
   const smart = data?.smart.metrics;
   const baseline = data?.baseline.metrics;
+  const selectedBus = selected?.type === "bus" ? selected.data.id : undefined;
+  const decision = selectedBus && snapshot
+    ? data?.smart.events.findLast((event) =>
+        event.bus_id === selectedBus && event.minute <= snapshot.minute && event.reason)
+    : undefined;
 
   useEffect(() => {
     if (!playing || timeline.length === 0) return;
@@ -207,6 +221,8 @@ export default function Home() {
     setPlaying(false);
     setFrame(0);
     setSelected(null);
+    setLiveMap(false);
+    sumo.stop();
 
     try {
       const response = await fetch("/api/simulate", {
@@ -268,28 +284,39 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="hero compactHero">
-        <div>
-          <p className="eyebrow">OPERATIONAL DIGITAL TWIN</p>
-          <h1>Python computes. TypeScript renders.</h1>
-          <p className="heroCopy">
-            Four stops, three smart signals, a staging yard, background road traffic, and a transfer surge. Python makes the decisions; SUMO handles the traffic.
-          </p>
-        </div>
-        <div className="clockCard">
-          <span>SIMULATION CLOCK</span>
-          <strong>{String(snapshot?.minute ?? 0).padStart(2, "0")}:00</strong>
-          <small>{playing ? `running at ${speed}×` : "paused"}</small>
-        </div>
-      </section>
-
       <section className="simulatorShell">
+        <div className="mapViewControl">
+          <h1>Waterloo transit map</h1>
+          <div className="mapViewButtons" role="group" aria-label="Map view">
+            <button type="button" aria-pressed={mapView === "geographic"} onClick={() => setMapView("geographic")}>Geographic map</button>
+            <button type="button" aria-pressed={mapView === "schematic"} onClick={() => setMapView("schematic")}>Schematic</button>
+          </div>
+        </div>
+        {mapView === "geographic" ? (
+          <GeospatialMap
+            network={network}
+            snapshot={snapshot}
+            decision={decision}
+            selected={selected}
+            onSelect={setSelected}
+            live={liveMap}
+            onModeChange={setLiveMap}
+            sumoSnapshot={sumoMapSnapshot}
+          />
+        ) : (
+          <RegionalMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
+        )}
+
         <div className="simTopbar">
           <div className="playback">
             <button
               type="button"
               className={sumo.state === "running" ? "activeSpeed" : ""}
-              onClick={sumo.state === "running" ? sumo.stop : sumo.start}
+              onClick={sumo.state === "running" ? sumo.stop : () => {
+                setLiveMap(false);
+                setSelected(null);
+                sumo.start();
+              }}
               disabled={
                 (!sumo.available && sumo.state !== "running") ||
                 sumo.state === "connecting" ||
@@ -333,21 +360,8 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mapViewControl" role="group" aria-label="Map view">
-          <div><strong>Spatial layers</strong><span>Geographic context from OpenStreetMap; all vehicles are modeled.</span></div>
-          <div className="mapViewButtons">
-            <button type="button" aria-pressed={mapView==="geographic"} onClick={()=>setMapView("geographic")}>Geographic map</button>
-            <button type="button" aria-pressed={mapView==="schematic"} onClick={()=>setMapView("schematic")}>Schematic</button>
-          </div>
-        </div>
-        {mapView === "geographic" ? (
-          <GeospatialMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} sumoSnapshot={sumo.snapshot}/>
-        ) : (
-          <RegionalMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumo.snapshot}/>
-        )}
-
         <div className="timelineControl">
-          <span>00:00</span>
+          <span aria-label="Current simulation minute">{String(snapshot?.minute ?? 0).padStart(2, "0")}:00</span>
           <input
             aria-label="Simulation timeline"
             type="range"
@@ -440,7 +454,7 @@ export default function Home() {
         </form>
 
         <section className="inspector">
-          <Inspector selected={selected} snapshot={snapshot} />
+          <Inspector selected={selected} snapshot={snapshot} decision={decision} />
         </section>
 
         <section className="decisionPanel">

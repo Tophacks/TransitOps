@@ -206,6 +206,10 @@ Fair comparison means both dispatch policies receive the same **seed and scenari
 
 ### Geographic context layers
 
-TransitOps can now switch between a keyless OpenStreetMap raster basemap powered by the existing MapLibre library and the legacy schematic. The basemap depicts actual geographic streets, while buses, signal phases and occupancy remain **simulated** from either the Python prototype or optional SUMO TraCI frames. The connected stop-to-stop line is schematic geometry projected onto the basemap, **not** a surveyed road-following route. Live GPS, public transit positions, observed car positions and live speed feeds are **not** claimed.
+The dashboard opens on the tilted Waterloo map. Use **Campus** and **Region** to change the view, **3D** to switch to a flat map, or **Schematic** for the simulation diagram. The dark OpenFreeMap basemap uses OpenStreetMap building heights where available.
 
-This layering was informed by the local-first, modular ideas in Bilawal Sidhu's God's Eye View (MIT-licensed source), but does not vendor that project or redistribute its provider-restricted assets/datasets. OSM tiles are subject to the OpenStreetMap Tile Usage Policy and require visible attribution. For heavy usage, configure an appropriately licensed hosted tile provider.
+**Live fleet** shows public GPS positions for GRT buses and ION trains. Select a vehicle for its route, destination, and upcoming or current stop when available. The map checks for updates every 20 seconds and labels each feed independently when it is stale or unavailable. Choose **Simulation** to see the simulated buses, stops, signal phases, and illustrative stop-to-stop corridor again. The vehicle callout follows the selected vehicle. Start the Python simulation and select a bus to see its latest recorded dispatch or priority decision and the reason for it. Dashboard controls and KPIs refer to the simulation.
+
+The Next.js route at `/feeds/grt` reads the [Region of Waterloo GTFS feeds](https://webapps.regionofwaterloo.ca/api/grt-routes/). Static GTFS supplies the route names, destinations and stop names. The route needs outbound HTTPS access. It runs with the frontend and requires no simulator, account, or API key.
+
+Contains information provided by the Regional Municipality of Waterloo under licence. Map attribution is displayed in the map control.
