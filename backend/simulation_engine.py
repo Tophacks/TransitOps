@@ -92,8 +92,13 @@ class TransitSimulation:
         self._spawn_passengers("UW", 12, initial=True)
         self._spawn_passengers("WATERLOO_SQUARE", 8, initial=True)
 
-    def log(self, message, kind="info"):
-        self.events.append({"minute": self.time, "message": message, "kind": kind})
+    def log(self, message, kind="info", *, bus_id=None, reason=None):
+        event = {"minute": self.time, "message": message, "kind": kind}
+        if bus_id is not None:
+            event["bus_id"] = bus_id
+        if reason is not None:
+            event["reason"] = reason
+        self.events.append(event)
 
     def _destination_for(self, origin):
         origin_index = ROUTE.index(origin)
@@ -152,14 +157,19 @@ class TransitSimulation:
             if active:
                 self.breakdown_bus_id = active.bus_id
                 self.breakdown_until = self.time + self.breakdown_minutes
-                self.log(f"{active.bus_id} breakdown: six-minute roadside hold", "disruption")
+                self.log(f"{active.bus_id} breakdown: six-minute roadside hold", "disruption", bus_id=active.bus_id)
             else:
                 self.log("Breakdown skipped: no active vehicle", "disruption")
         if self.emergency_dispatch_minute is not None and self.time == self.emergency_dispatch_minute:
             yard = next((bus for bus in self.buses if bus.state == BusState.YARD), None)
             if yard:
                 self._dispatch_bus(yard, staged=True)
-                self.log(f"Emergency dispatch: {yard.bus_id} deployed toward Central", "emergency")
+                self.log(
+                    f"Emergency dispatch: {yard.bus_id} deployed toward Central",
+                    "emergency",
+                    bus_id=yard.bus_id,
+                    reason="The scenario requested a reserve bus at this minute.",
+                )
             else:
                 self.log("Emergency dispatch requested, but no bus is available", "emergency")
 
@@ -209,11 +219,14 @@ class TransitSimulation:
                     self.log(
                         f"{bus.bus_id} signal priority approved at {intersection.name}",
                         "priority",
+                        bus_id=bus.bus_id,
+                        reason=f"The signal was red, the bus was {bus.schedule_deviation} min late, "
+                               f"and carried {bus.occupancy} riders (threshold {max(10, bus.capacity // 3)}).",
                     )
 
         return max(2, congestion + signal_delay)
 
-    def _dispatch_bus(self, bus, staged=False):
+    def _dispatch_bus(self, bus, staged=False, reason=None):
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = -1
         bus.target_stop_index = 3
@@ -224,26 +237,35 @@ class TransitSimulation:
 
         if staged:
             self.metrics.buses_staged += 1
-            self.log(f"{bus.bus_id} pre-staged toward Central Station", "decision")
+            self.log(f"{bus.bus_id} pre-staged toward Central Station", "decision", bus_id=bus.bus_id, reason=reason)
         else:
-            self.log(f"{bus.bus_id} dispatched from regional staging yard", "dispatch")
+            self.log(
+                f"{bus.bus_id} dispatched from regional staging yard",
+                "dispatch",
+                bus_id=bus.bus_id,
+                reason="A bus was available for the scheduled ten-minute dispatch.",
+            )
 
     def _dispatch_logic(self):
-        active = [b for b in self.buses if b.state != BusState.YARD]
-        yard = [b for b in self.buses if b.state == BusState.YARD]
-
+        yard = [bus for bus in self.buses if bus.state == BusState.YARD]
         if self.time % 10 == 0 and yard:
-            self._dispatch_bus(yard[0])
+            self._dispatch_bus(yard.pop(0))
 
         if self.intelligent and yard:
             demand = self._near_term_hub_demand()
             arriving_capacity = sum(
                 max(0, bus.capacity - bus.occupancy)
-                for bus in active
-                if bus.target_stop_index in (0, 1, 3)
+                for bus in self.buses
+                if bus.state != BusState.YARD and bus.target_stop_index in (0, 1, 3)
             )
-            if demand > max(70, arriving_capacity + 25):
-                self._dispatch_bus(yard[0], staged=True)
+            threshold = max(70, arriving_capacity + 25)
+            if demand > threshold:
+                self._dispatch_bus(
+                    yard[0],
+                    staged=True,
+                    reason=f"Forecast demand of {demand} riders exceeded the staging threshold "
+                           f"of {threshold}, with {arriving_capacity} seats expected to arrive.",
+                )
 
     def _alight_and_board(self, bus, stop_id):
         staying = []

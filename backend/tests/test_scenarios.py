@@ -25,4 +25,14 @@ class Scenarios(unittest.TestCase):
   self.assertTrue(any(e['kind']=='recovery' for e in a.events))
   self.assertTrue(any(e['kind']=='emergency' for e in a.events))
   self.assertTrue(any(x['state']=='BROKEN_DOWN' for tick in a.timeline for x in tick['buses']))
+ def test_scheduled_and_adaptive_dispatch_explain_distinct_buses(self):
+  sim = self.run_case(smart=True, initial_queue=220)
+  first_minute = [event for event in sim.events if event["minute"] == 0]
+  scheduled = next(event for event in first_minute if event["kind"] == "dispatch")
+  staged = next(event for event in first_minute if event["kind"] == "decision")
+  self.assertEqual(scheduled["bus_id"], "B101")
+  self.assertEqual(staged["bus_id"], "B102")
+  self.assertIn("scheduled", scheduled["reason"])
+  self.assertIn("Forecast demand", staged["reason"])
+  self.assertIn(f"{sim.buses[0].capacity} seats", staged["reason"])
 if __name__=='__main__': unittest.main()

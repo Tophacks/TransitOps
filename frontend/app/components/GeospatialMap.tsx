@@ -1,25 +1,31 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { GeoJSONSource, Map as MapInstance } from "maplibre-gl";
+import { createPortal } from "react-dom";
+import type { GeoJSONSource, Map as MapInstance, Popup } from "maplibre-gl";
 
-import type { Network, Snapshot, Selection, LiveSumoSnapshot, StopState } from "../../lib/types";
+import type { Network, Snapshot, Selection, LiveSumoSnapshot, SimulationEvent, StopState } from "../../lib/types";
 import type { GrtMode } from "../../lib/grtTypes";
 import { useGrtFleet } from "../../lib/useGrtFleet";
 
 type Props = {
   network: Network;
   snapshot: Snapshot | null;
+  decision?: SimulationEvent;
+  selected: Selection;
   onSelect: (selection: Selection) => void;
+  live: boolean;
+  onModeChange: (live: boolean) => void;
   sumoSnapshot?: LiveSumoSnapshot | null;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const SIMULATION_SOURCES = ["route", "stops", "intersections", "buses", "traffic", "yard"];
 const SIMULATION_LAYERS = [
-  "route-stroke", "stops-circle", "signals-circle", "yard-circle", "sumo-traffic", "buses-circle",
+  "route-stroke", "stops-circle", "signals-circle", "yard-circle", "sumo-traffic", "sim-bus-markers",
 ];
-const REGION_CAMERA = { center: [-80.52, 43.463] as [number, number], zoom: 12.25 };
+const REGION_CAMERA = { center: [-80.518, 43.462] as [number, number], zoom: 13.35 };
+const STREET_CAMERA = { pitch: 48, bearing: -24 };
 const CAMPUS_CAMERA = { center: [-80.5435, 43.4718] as [number, number], zoom: 15.65 };
 const FEED_NAMES = { bus: "GRT bus", ion: "ION train" };
 
@@ -45,7 +51,47 @@ function setData(map: MapInstance, id: string, data: GeoJSON.FeatureCollection) 
   map.getSource<GeoJSONSource>(id)?.setData(data);
 }
 
+function addVehicleIcon(map: MapInstance, name: string, color: string, train = false) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 56;
+  canvas.height = 56;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Vehicle icons require a 2D canvas");
+  context.scale(2, 2);
+
+  context.fillStyle = color;
+  context.strokeStyle = "#101c28";
+  context.lineWidth = 1.5;
+  context.beginPath();
+  context.roundRect(1, 1, 26, 26, train ? 10 : 7);
+  context.fill();
+  context.stroke();
+
+  context.fillStyle = "#111e2c";
+  context.beginPath();
+  context.roundRect(train ? 8 : 6, 5, train ? 12 : 16, 15, train ? 5 : 4);
+  context.fill();
+  context.fillRect(9, 19, 3, 3);
+  context.fillRect(16, 19, 3, 3);
+  context.fillStyle = color;
+  context.fillRect(9, 8, 10, 5);
+  for (const x of [10, 16]) context.fillRect(x, 16, 2, 2);
+  if (train) {
+    context.strokeStyle = "#111e2c";
+    context.beginPath();
+    context.moveTo(10, 20);
+    context.lineTo(8, 23);
+    context.moveTo(18, 20);
+    context.lineTo(20, 23);
+    context.stroke();
+  }
+  map.addImage(name, context.getImageData(0, 0, 56, 56), { pixelRatio: 2 });
+}
+
 function addLayers(map: MapInstance) {
+  addVehicleIcon(map, "grt-bus", "#83bcff");
+  addVehicleIcon(map, "ion-train", "#79e2b9", true);
+  addVehicleIcon(map, "sim-bus", "#ead387");
   const layers = map.getStyle()?.layers ?? [];
   const buildings = layers.findIndex((layer) => layer.id === "building");
   const firstLabel = layers.slice(buildings + 1).find((layer) => layer.type === "symbol")?.id;
@@ -55,9 +101,8 @@ function addLayers(map: MapInstance) {
       type: "fill-extrusion",
       source: "openmaptiles",
       "source-layer": "building",
-      minzoom: 14,
+      minzoom: 13,
       filter: ["!=", ["get", "hide_3d"], true],
-      layout: { visibility: "none" },
       paint: {
         "fill-extrusion-color": "#445363",
         "fill-extrusion-height": ["coalesce", ["get", "render_height"], 5],
@@ -75,16 +120,19 @@ function addLayers(map: MapInstance) {
   map.addLayer({ id: "signals-circle", type: "circle", source: "intersections", paint: { "circle-radius": 5, "circle-color": ["match", ["get", "phase"], "GREEN", "#63c68f", "#e9a064"] } });
   map.addLayer({ id: "yard-circle", type: "circle", source: "yard", paint: { "circle-radius": 9, "circle-color": "#adbed3", "circle-stroke-color": "#203541", "circle-stroke-width": 3 } });
   map.addLayer({ id: "sumo-traffic", type: "circle", source: "traffic", paint: { "circle-radius": 3, "circle-color": "#748d9c", "circle-opacity": 0.8 } });
-  map.addLayer({ id: "buses-circle", type: "circle", source: "buses", paint: { "circle-radius": 8, "circle-color": "#177957", "circle-stroke-color": "#eaffb5", "circle-stroke-width": 2 } });
+  map.addLayer({
+    id: "sim-bus-markers",
+    type: "symbol",
+    source: "buses",
+    layout: { "icon-image": "sim-bus", "icon-allow-overlap": true },
+  });
   map.addLayer({
     id: "grt-points",
-    type: "circle",
+    type: "symbol",
     source: "grt-vehicles",
-    paint: {
-      "circle-radius": ["match", ["get", "mode"], "ion", 8, 6],
-      "circle-color": ["match", ["get", "mode"], "ion", "#67dcad", "#83bcff"],
-      "circle-stroke-color": "#101f31",
-      "circle-stroke-width": 2,
+    layout: {
+      "icon-image": ["match", ["get", "mode"], "ion", "ion-train", "grt-bus"],
+      "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.55, 13, 0.82, 16, 1],
     },
   });
   if (map.getStyle()?.glyphs) {
@@ -97,7 +145,9 @@ function addLayers(map: MapInstance) {
         "text-field": ["get", "label"],
         "text-font": ["Noto Sans Regular"],
         "text-anchor": "bottom",
-        "text-offset": [0, -0.8],
+        "text-offset": [0, -1.05],
+        "text-optional": true,
+        "text-ignore-placement": true,
         "text-size": 13,
       },
       paint: { "text-color": "#eef6ff", "text-halo-color": "#101f31", "text-halo-width": 2 },
@@ -109,18 +159,28 @@ function fleetKey(mode: GrtMode, id: string) {
   return `${mode}:${id}`;
 }
 
-export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapshot = null }: Props) {
+export default function GeospatialMap({
+  network, snapshot, decision, selected, onSelect, live, onModeChange, sumoSnapshot = null,
+}: Props) {
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapInstance | null>(null);
+  const popupRef = useRef<Popup | null>(null);
+  const [popupContent, setPopupContent] = useState<HTMLDivElement | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [tilted, setTilted] = useState(false);
-  const [live, setLive] = useState(false);
+  const [tilted, setTilted] = useState(true);
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
+  const [selectedSumo, setSelectedSumo] = useState<string | null>(null);
   const fleet = useGrtFleet(live);
-  const vehicle = fleet?.vehicles.find(({ mode, id }) => fleetKey(mode, id) === selectedVehicle);
-  const callbacks = useRef({ network, snapshot, onSelect });
-  callbacks.current = { network, snapshot, onSelect };
+  const vehicle = live ? fleet?.vehicles.find(({ mode, id }) => fleetKey(mode, id) === selectedVehicle) : undefined;
+  const sumoBus = !live ? sumoSnapshot?.vehicles.find((item) => item.id === selectedSumo) : undefined;
+  const simBus = !live && !sumoSnapshot && selected?.type === "bus"
+    ? snapshot?.buses.find((item) => item.id === selected.data.id) : undefined;
+  const focus = vehicle ?? sumoBus ?? simBus;
+  const lon = focus?.lon;
+  const lat = focus?.lat;
+  const callbacks = useRef({ network, snapshot, onSelect, sumoSnapshot });
+  callbacks.current = { network, snapshot, onSelect, sumoSnapshot };
 
   useEffect(() => {
     let disposed = false;
@@ -135,44 +195,63 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
           container: host.current,
           style: MAP_STYLE,
           ...REGION_CAMERA,
+          ...STREET_CAMERA,
           minZoom: 9,
           maxZoom: 18,
           attributionControl: false,
         });
         map = currentMap;
         mapRef.current = currentMap;
+        const content = document.createElement("div");
+        popupRef.current = new maplibre.Popup({
+          closeButton: false, closeOnClick: false, offset: 16, maxWidth: "245px",
+          className: "geoVehiclePopup",
+        }).setDOMContent(content);
+        setPopupContent(content);
         currentMap.addControl(new maplibre.NavigationControl(), "top-right");
         currentMap.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-right");
         currentMap.once("load", () => {
           if (disposed) return;
           addLayers(currentMap);
-          const targets = [
-            ["stops-circle", "stop"], ["signals-circle", "intersection"],
-            ["buses-circle", "bus"], ["yard-circle", "yard"],
-          ] as const;
-          for (const [layer, type] of targets) {
-            currentMap.on("click", layer, (event) => {
-              const id = event.features?.[0]?.properties?.id;
-              const current = callbacks.current;
-              if (type === "stop") {
+          const clickable = [
+            "stops-circle", "signals-circle", "yard-circle", "sim-bus-markers",
+            "grt-points", "grt-route-labels",
+          ].filter((id) => currentMap.getLayer(id));
+          currentMap.on("click", clickable, (event) => {
+            const feature = event.features?.[0];
+            const id = feature?.properties?.id;
+            if (typeof id !== "string") return;
+            const current = callbacks.current;
+            switch (feature?.layer.id) {
+              case "grt-points":
+              case "grt-route-labels":
+                setSelectedVehicle(id);
+                break;
+              case "stops-circle": {
                 const data = (current.snapshot?.stops ?? current.network.stops).find((item) => item.id === id);
-                if (data) current.onSelect({ type, data });
-              } else if (type === "intersection") {
-                const data = (current.snapshot?.intersections ?? current.network.intersections).find((item) => item.id === id);
-                if (data) current.onSelect({ type, data });
-              } else if (type === "bus") {
-                const data = current.snapshot?.buses.find((item) => item.id === id);
-                if (data) current.onSelect({ type, data });
-              } else {
-                current.onSelect({ type, data: current.network.yard });
+                if (data) current.onSelect({ type: "stop", data });
+                break;
               }
-            });
-          }
-          const fleetLayers = ["grt-points", "grt-route-labels"].filter((id) => currentMap.getLayer(id));
-          currentMap.on("click", fleetLayers, (event) => {
-            setSelectedVehicle(event.features?.[0]?.properties?.id ?? null);
+              case "signals-circle": {
+                const data = (current.snapshot?.intersections ?? current.network.intersections).find((item) => item.id === id);
+                if (data) current.onSelect({ type: "intersection", data });
+                break;
+              }
+              case "sim-bus-markers": {
+                if (current.sumoSnapshot) {
+                  setSelectedSumo(id);
+                  current.onSelect(null);
+                } else {
+                  const data = current.snapshot?.buses.find((item) => item.id === id);
+                  if (data) current.onSelect({ type: "bus", data });
+                }
+                break;
+              }
+              case "yard-circle":
+                current.onSelect({ type: "yard", data: current.network.yard });
+                break;
+            }
           });
-          const clickable = [...targets.map(([id]) => id), ...fleetLayers];
           currentMap.on("mouseenter", clickable, () => { currentMap.getCanvas().style.cursor = "pointer"; });
           currentMap.on("mouseleave", clickable, () => { currentMap.getCanvas().style.cursor = ""; });
           setFailed(false);
@@ -189,6 +268,8 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
     void init();
     return () => {
       disposed = true;
+      popupRef.current?.remove();
+      popupRef.current = null;
       if (map) map.remove();
       mapRef.current = null;
     };
@@ -201,7 +282,6 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
       map.setLayoutProperty(layer, "visibility", live ? "none" : "visible");
     }
     map.resize();
-
   }, [live, ready]);
 
   useEffect(() => {
@@ -236,6 +316,26 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
     }))));
   }, [fleet, live, ready]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    const popup = popupRef.current;
+    if (!map || !popup || !ready) return;
+    if (lon == null || lat == null) {
+      popup.remove();
+      return;
+    }
+    popup.setLngLat([lon, lat]);
+    if (!popup.isOpen()) popup.addTo(map);
+  }, [lat, lon, ready]);
+
+  function clearDetails() {
+    if (live) setSelectedVehicle(null);
+    else {
+      setSelectedSumo(null);
+      onSelect(null);
+    }
+  }
+
   function toggleTilt() {
     const map = mapRef.current;
     if (!map) return;
@@ -245,7 +345,7 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
       map.setLayoutProperty("corridor-buildings", "visibility", next ? "visible" : "none");
     }
     map.easeTo(next
-      ? { ...(map.getZoom() < 14 ? CAMPUS_CAMERA : {}), pitch: 55, bearing: -35 }
+      ? STREET_CAMERA
       : { pitch: 0, bearing: 0 });
   }
 
@@ -254,11 +354,17 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
       <div ref={host} className="geoMapHost" role="region" aria-label="Interactive Waterloo corridor map" />
       <div className="geoMapOverlay">
         <div className="geoMapControls" role="group" aria-label="Map layers">
-          <button type="button" aria-pressed={tilted} disabled={!ready} onClick={toggleTilt}>3D buildings</button>
-          <button type="button" aria-pressed={live} disabled={!ready} onClick={() => {
-            setSelectedVehicle(null);
-            setLive(!live);
-          }}>GRT live</button>
+          <button type="button" aria-pressed={tilted} disabled={!ready} onClick={toggleTilt}>3D</button>
+          <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo(CAMPUS_CAMERA)}>Campus</button>
+          <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo(REGION_CAMERA)}>Region</button>
+          <button type="button" aria-pressed={live} onClick={() => {
+            clearDetails();
+            onModeChange(true);
+          }}>Live fleet</button>
+          <button type="button" aria-pressed={!live} onClick={() => {
+            clearDetails();
+            onModeChange(false);
+          }}>Simulation</button>
         </div>
         {failed ? <span role="status">Basemap unavailable. Switch to Schematic to view the simulation.</span>
           : !ready ? <span role="status">Loading Waterloo map…</span>
@@ -280,13 +386,36 @@ export default function GeospatialMap({ network, snapshot, onSelect, sumoSnapsho
             </>
           )}
       </div>
-      {live && vehicle && (
-        <aside className="geoVehicleCard" aria-label="Selected live vehicle">
-          <button type="button" aria-label="Close vehicle details" onClick={() => setSelectedVehicle(null)}>×</button>
-          <strong>{FEED_NAMES[vehicle.mode]} {vehicle.route}</strong>
-          <span>{vehicle.headsign || `Vehicle ${vehicle.id}`}</span>
-          <span>{vehicle.stop ? `${vehicle.stopStatus} · ${vehicle.stop}` : "Stop information unavailable"}</span>
-        </aside>
+      {popupContent && focus && createPortal(
+        <aside className="geoVehicleCard" aria-label="Selected vehicle details">
+          <button type="button" aria-label="Close vehicle details" onClick={clearDetails}>×</button>
+          {vehicle ? (
+            <>
+              <strong>{FEED_NAMES[vehicle.mode]} {vehicle.route}</strong>
+              <span>{vehicle.headsign || `Vehicle ${vehicle.id}`}</span>
+              <span>{vehicle.stop ? `${vehicle.stopStatus} · ${vehicle.stop}` : "Stop information unavailable"}</span>
+            </>
+          ) : sumoBus ? (
+            <>
+              <strong>SUMO bus {sumoBus.id}</strong>
+              <span>{Math.round(sumoBus.speed_mps * 3.6)} km/h</span>
+            </>
+          ) : simBus && (
+            <>
+              <strong>Simulated bus {simBus.id}</strong>
+              <span>{simBus.state.replaceAll("_", " ")} · {simBus.occupancy}/{simBus.capacity} aboard</span>
+              {simBus.state !== "YARD" && <span>{simBus.state === "DWELLING" ? "At stop" : "Target stop"} · {simBus.target}</span>}
+              {decision ? (
+                <div className="geoDecision">
+                  <strong>Controller · {String(decision.minute).padStart(2, "0")}:00</strong>
+                  <span>{decision.message}</span>
+                  <span>{decision.reason}</span>
+                </div>
+              ) : <span>No dispatch or priority decision recorded by this minute.</span>}
+            </>
+          )}
+        </aside>,
+        popupContent,
       )}
     </section>
   );

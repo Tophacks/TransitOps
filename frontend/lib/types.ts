@@ -85,6 +85,8 @@ export type SimulationEvent = {
   minute: number;
   message: string;
   kind: string;
+  bus_id?: string;
+  reason?: string;
 };
 
 export type CaseResult = {

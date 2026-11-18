@@ -206,9 +206,9 @@ Fair comparison means both dispatch policies receive the same **seed and scenari
 
 ### Geographic context layers
 
-Open **Geographic map** for the dark OpenFreeMap basemap, or **Schematic** for the simulation diagram. **3D buildings** tilts the geographic map and focuses on the University of Waterloo when you are zoomed out. Building heights come from the basemap's OpenStreetMap data, with a default height for footprints without height data.
+The dashboard opens on the tilted Waterloo map. Use **Campus** and **Region** to change the view, **3D** to switch to a flat map, or **Schematic** for the simulation diagram. The dark OpenFreeMap basemap uses OpenStreetMap building heights where available.
 
-**GRT live** shows public GPS positions for GRT buses and ION trains. Select a vehicle for its route, destination, and upcoming or current stop when available. The map checks for updates every 20 seconds and labels each feed independently when it is stale or unavailable. Turn off **GRT live** to see the simulated buses, stops, signal phases, and illustrative stop-to-stop corridor again. Dashboard controls and KPIs always refer to the simulation.
+**Live fleet** shows public GPS positions for GRT buses and ION trains. Select a vehicle for its route, destination, and upcoming or current stop when available. The map checks for updates every 20 seconds and labels each feed independently when it is stale or unavailable. Choose **Simulation** to see the simulated buses, stops, signal phases, and illustrative stop-to-stop corridor again. The vehicle callout follows the selected vehicle. Start the Python simulation and select a bus to see its latest recorded dispatch or priority decision and the reason for it. Dashboard controls and KPIs refer to the simulation.
 
 The Next.js route at `/feeds/grt` reads the [Region of Waterloo GTFS feeds](https://webapps.regionofwaterloo.ca/api/grt-routes/). Static GTFS supplies the route names, destinations and stop names. The route needs outbound HTTPS access. It runs with the frontend and requires no simulator, account, or API key.
 
