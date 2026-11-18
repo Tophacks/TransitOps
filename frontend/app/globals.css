@@ -1614,3 +1614,44 @@ footer {
 .mapViewButtons button[aria-pressed="true"]{background:#316a56;color:white;border-color:#68c39b}
 .geoMapHost .maplibregl-ctrl-attrib{background:#ffffffeb!important;color:#21342b!important}
 @media(max-width:660px){.mapViewControl{flex-direction:column;align-items:flex-start}.geoMapShell{height:400px}.geoMapOverlay{max-width:85%}.mapViewButtons{width:100%}.mapViewButtons button{flex:1}}
+
+.geoMapControls { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:4px; pointer-events:auto; }
+.geoMapControls button, .geoVehicleCard button {
+  border:1px solid #426268;
+  border-radius:6px;
+  background:#152b34;
+  color:#e0f5ef;
+  cursor:pointer;
+  padding:6px 9px;
+  font-size:.72rem;
+  font-weight:700;
+}
+.geoMapControls button[aria-pressed="true"] { background:#23534c; border-color:#79c5b4; }
+.geoMapControls button:disabled { opacity:.6; cursor:default; }
+.geoFeedStatus { display:grid; gap:4px; }
+.geoFeedMode::before {
+  content:"";
+  display:inline-block;
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  margin-right:6px;
+  background:#83bcff;
+}
+.geoFeedMode.ion::before { background:#67dcad; }
+.geoVehicleCard {
+  position:absolute;
+  left:14px;
+  bottom:20px;
+  z-index:2;
+  display:grid;
+  gap:4px;
+  background:#0c2029f5;
+  border:1px solid #426268;
+  border-radius:8px;
+  color:#e0f5ef;
+  padding:10px 42px 10px 12px;
+  font-size:.76rem;
+  max-width:calc(100% - 58px);
+}
+.geoVehicleCard button { position:absolute; top:6px; right:6px; }

@@ -334,14 +334,14 @@ export default function Home() {
         </div>
 
         <div className="mapViewControl" role="group" aria-label="Map view">
-          <div><strong>Spatial layers</strong><span>Geographic context from OpenStreetMap; all vehicles are modeled.</span></div>
+          <div><strong>Spatial layers</strong><span>Waterloo corridor simulation and GRT vehicle tracking.</span></div>
           <div className="mapViewButtons">
             <button type="button" aria-pressed={mapView==="geographic"} onClick={()=>setMapView("geographic")}>Geographic map</button>
             <button type="button" aria-pressed={mapView==="schematic"} onClick={()=>setMapView("schematic")}>Schematic</button>
           </div>
         </div>
         {mapView === "geographic" ? (
-          <GeospatialMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} sumoSnapshot={sumo.snapshot}/>
+          <GeospatialMap network={network} snapshot={snapshot} onSelect={setSelected} sumoSnapshot={sumo.snapshot}/>
         ) : (
           <RegionalMap network={network} snapshot={snapshot} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumo.snapshot}/>
         )}

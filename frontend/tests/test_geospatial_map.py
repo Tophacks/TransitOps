@@ -5,8 +5,8 @@ ROOT=Path(__file__).resolve().parents[1]
 class MapLayerStaticTests(unittest.TestCase):
  def test_map_layers_distinguish_simulation_from_basemap(self):
   text=(ROOT/'app/components/GeospatialMap.tsx').read_text()
-  self.assertIn('© OpenStreetMap contributors',text)
-  self.assertIn('NOT live transit feeds',text)
+  self.assertIn('AttributionControl',text)
+  self.assertIn('Python simulated bus positions',text)
   self.assertIn('stop-to-stop route is illustrative',text)
   self.assertIn('"sumo-traffic"',text)
   self.assertIn('map.remove()',text)
