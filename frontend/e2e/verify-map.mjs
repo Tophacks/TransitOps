@@ -79,7 +79,7 @@ async function run(name, viewport, record) {
   const shot = (label) => page.screenshot({ path: path.join(outDir, `${name}-${label}.png`) });
 
   await page.goto(base.href, { waitUntil: "load" });
-  await page.waitForFunction(() => window.__transitops?.map?.loaded(), null, { timeout: 90_000 });
+  await page.waitForFunction(() => window.__transitops?.map?.isStyleLoaded(), null, { timeout: 90_000 });
   await page.waitForTimeout(3000);
 
   // Simulation opens the campus close-up.

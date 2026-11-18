@@ -1,5 +1,5 @@
 import type { IonTrack } from "./corridor.ts";
-import { bearing, deltaMetres, lerpPath, type LonLat } from "./path.ts";
+import { bearing, deltaMetres, lerpPath, type LonLat, type PathPoint } from "./path.ts";
 
 // Illustrative ION service for the campus scene. The Python simulator does not
 // model light rail positions, so this timetable is generated here and labelled
@@ -116,11 +116,16 @@ export type TrainPose = {
  * straight, and neighbouring sections meet at the same bellows gap.
  */
 export function articulate(trip: IonTrip, nose: number): SectionPose[] {
+  return articulatePath(trip.track.path, nose);
+}
+
+/** The same articulation along any track path (live trains use their GTFS shape). */
+export function articulatePath(path: readonly PathPoint[], nose: number): SectionPose[] {
   const sections: SectionPose[] = [];
   let s = nose;
   for (const length of ION_SECTIONS) {
-    const front = lerpPath(trip.track.path, s);
-    const rear = lerpPath(trip.track.path, s - length);
+    const front = lerpPath(path, s);
+    const rear = lerpPath(path, s - length);
     sections.push({
       front,
       rear,

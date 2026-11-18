@@ -5,12 +5,14 @@ import { createPortal } from "react-dom";
 import type { GeoJSONSource, Map as MapInstance, Popup } from "maplibre-gl";
 
 import type { Network, Snapshot, Selection, LiveSumoSnapshot, SimulationEvent, StopState } from "../../lib/types";
-import type { GrtMode } from "../../lib/grtTypes";
+import type { GrtMode, GrtShapes, GrtVehicle } from "../../lib/grtTypes";
 import { useGrtFleet } from "../../lib/useGrtFleet";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
-import { ionTrains, type TrainPose } from "../../lib/motion/ion.ts";
-import { busBody, emptyBodies, trainBody } from "../../lib/motion/bodies.ts";
+import { ION_LENGTH, articulatePath, ionTrains, type TrainPose } from "../../lib/motion/ion.ts";
+import { busBody, emptyBodies, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
+import { LiveTracker, type LivePing, type LivePose } from "../../lib/motion/live.ts";
+import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.ts";
 import { corridor, ion } from "../../lib/motion/scene.ts";
 
 type Props = {
@@ -34,6 +36,9 @@ const SIMULATION_LAYERS = [
   "route-stroke", "ion-track-line", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
   "sim-bus-markers", "vehicle-ground", "vehicle-bodies",
 ];
+// Live GPS vehicles drawn as 3D bodies at street zoom.
+const LIVE_LAYERS = ["live-ground", "live-bodies"];
+const SHAPE_BATCH = 40;
 // Bodies take over from flat markers once a 12 m bus is legible.
 const BODY_MIN_ZOOM = 15;
 const REGION_CAMERA = { center: [-80.518, 43.462] as [number, number], zoom: 13.35 };
@@ -145,7 +150,7 @@ function addLayers(map: MapInstance) {
     }, firstLabel);
   }
 
-  for (const id of [...SIMULATION_SOURCES, "grt-vehicles"]) {
+  for (const id of [...SIMULATION_SOURCES, "grt-vehicles", "live-solids", "live-ground"]) {
     map.addSource(id, { type: "geojson", data: featureCollection([]) });
   }
   setData(map, "route", streetRoutes());
@@ -174,6 +179,20 @@ function addLayers(map: MapInstance) {
       "fill-extrusion-vertical-gradient": true,
     },
   }, firstLabel);
+  map.addLayer({
+    id: "live-ground", type: "fill", source: "live-ground", minzoom: BODY_MIN_ZOOM,
+    paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "opacity"], "fill-antialias": true },
+  }, firstLabel);
+  map.addLayer({
+    id: "live-bodies", type: "fill-extrusion", source: "live-solids", minzoom: BODY_MIN_ZOOM,
+    paint: {
+      "fill-extrusion-color": ["get", "color"],
+      "fill-extrusion-base": ["get", "base"],
+      "fill-extrusion-height": ["get", "height"],
+      "fill-extrusion-opacity": 1,
+      "fill-extrusion-vertical-gradient": true,
+    },
+  }, firstLabel);
   map.addLayer({ id: "stops-circle", type: "circle", source: "stops", paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 6, 18, 9], "circle-color": "#e8fff2", "circle-stroke-color": "#177957", "circle-stroke-width": 3, "circle-pitch-alignment": "map" } });
   map.addLayer({ id: "signals-circle", type: "circle", source: "intersections", paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 18, 8], "circle-color": ["match", ["get", "phase"], "GREEN", "#63c68f", "#e9a064"], "circle-pitch-alignment": "map" } });
   map.addLayer({ id: "yard-circle", type: "circle", source: "yard", paint: { "circle-radius": 9, "circle-color": "#adbed3", "circle-stroke-color": "#203541", "circle-stroke-width": 3 } });
@@ -189,10 +208,14 @@ function addLayers(map: MapInstance) {
     id: "grt-points",
     type: "symbol",
     source: "grt-vehicles",
+    // Icons when zoomed out; 3D bodies take over at street zoom.
+    maxzoom: BODY_MIN_ZOOM + 0.2,
     layout: {
       "icon-image": ["match", ["get", "mode"], "ion", "ion-train", "grt-bus"],
       "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.55, 13, 0.82, 16, 1],
+      "icon-allow-overlap": true,
     },
+    paint: { "icon-opacity": ["get", "opacity"] },
   });
   if (map.getStyle()?.glyphs) {
     map.addLayer({
@@ -216,7 +239,8 @@ function addLayers(map: MapInstance) {
       source: "grt-vehicles",
       minzoom: 12,
       layout: {
-        "text-field": ["get", "label"],
+        // Labelled as live GPS once the 3D bodies show.
+        "text-field": ["step", ["zoom"], ["get", "label"], BODY_MIN_ZOOM, ["concat", ["get", "label"], " · live GPS"]],
         "text-font": ["Noto Sans Regular"],
         "text-anchor": "bottom",
         "text-offset": [0, -1.05],
@@ -224,7 +248,7 @@ function addLayers(map: MapInstance) {
         "text-ignore-placement": true,
         "text-size": 13,
       },
-      paint: { "text-color": "#eef6ff", "text-halo-color": "#101f31", "text-halo-width": 2 },
+      paint: { "text-color": "#eef6ff", "text-halo-color": "#101f31", "text-halo-width": 2, "text-opacity": ["get", "opacity"] },
     });
   }
 }
@@ -234,6 +258,41 @@ function fleetKey(mode: GrtMode, id: string) {
 }
 
 type Scene = { buses: BusPose[]; trains: TrainPose[] };
+
+function livePing(vehicle: GrtVehicle): LivePing {
+  return {
+    key: fleetKey(vehicle.mode, vehicle.id),
+    id: vehicle.id,
+    mode: vehicle.mode,
+    lon: vehicle.lon,
+    lat: vehicle.lat,
+    timestamp: vehicle.timestamp,
+    shapeId: vehicle.shapeId ? `${vehicle.mode}:${vehicle.shapeId}` : null,
+    progress: vehicle.progress,
+    stopped: vehicle.stopStatus === "At stop",
+  };
+}
+
+/** A short straight track through a train that is off its shape (detour or no shape). */
+function straightTrack(centre: [number, number], heading: number): PathPoint[] {
+  const h = (heading * Math.PI) / 180;
+  const half = ION_LENGTH;
+  const back = offsetLonLat(centre, -Math.sin(h) * half, -Math.cos(h) * half);
+  const ahead = offsetLonLat(centre, Math.sin(h) * half, Math.cos(h) * half);
+  return encodePath([back, ahead]);
+}
+
+function liveBody(pose: LivePose, selected: boolean, out: BodyLayers) {
+  const livery = pose.stale ? "stale" : "live";
+  if (pose.mode === "ion") {
+    // The GPS fix is the middle of the train; articulate the five sections behind the nose.
+    const path = pose.path ?? straightTrack(pose.centre, pose.heading);
+    const nose = (pose.path && pose.s != null ? pose.s : ION_LENGTH) + ION_LENGTH / 2;
+    trainBody({ id: pose.key, direction: "north", nose, speed: pose.speed, sections: articulatePath(path, nose) }, out, livery, pose.opacity);
+  } else {
+    busBody({ id: pose.key, centre: pose.centre, heading: pose.heading }, selected, out, livery, pose.opacity);
+  }
+}
 
 export default function GeospatialMap({
   network, snapshot, decision, selected, onSelect, live, onModeChange, sumoSnapshot = null, timeline, clock,
@@ -250,6 +309,9 @@ export default function GeospatialMap({
   const [selectedTrain, setSelectedTrain] = useState<string | null>(null);
   const [follow, setFollow] = useState(false);
   const fleet = useGrtFleet(live);
+  const trackerRef = useRef(new LiveTracker());
+  const shapeCache = useRef(new Map<string, PathPoint[]>());
+  const fleetRef = useRef(new Map<string, GrtVehicle>());
   const vehicle = live ? fleet?.vehicles.find(({ mode, id }) => fleetKey(mode, id) === selectedVehicle) : undefined;
   const sumoBus = !live ? sumoSnapshot?.vehicles.find((item) => item.id === selectedSumo) : undefined;
   const simulating = !live && !sumoSnapshot;
@@ -262,7 +324,8 @@ export default function GeospatialMap({
   const focus = vehicle ?? sumoBus;
   const lon = focus?.lon;
   const lat = focus?.lat;
-  const animatedFocus = simPose ? simPose.id : trainPose ? trainPose.id : null;
+  const livePose = vehicle ? trackerRef.current.pose(fleetKey(vehicle.mode, vehicle.id), performance.now() / 1000) : undefined;
+  const animatedFocus = simPose ? simPose.id : trainPose ? trainPose.id : vehicle ? fleetKey(vehicle.mode, vehicle.id) : null;
   const callbacks = useRef({ network, snapshot, onSelect, sumoSnapshot, timeline });
   callbacks.current = { network, snapshot, onSelect, sumoSnapshot, timeline };
   const sceneRef = useRef<Scene>({ buses: [], trains: [] });
@@ -296,6 +359,8 @@ export default function GeospatialMap({
             map: currentMap,
             scene: () => sceneRef.current,
             seek: (seconds: number) => clock.seek(seconds),
+            live: () => trackerRef.current.poses(performance.now() / 1000)
+              .map(({ path: _path, ...pose }) => pose),
           };
         }
         const content = document.createElement("div");
@@ -320,7 +385,7 @@ export default function GeospatialMap({
           addLayers(currentMap);
           const clickable = [
             "stops-circle", "signals-circle", "yard-circle", "sim-bus-markers", "vehicle-bodies",
-            "grt-points", "grt-route-labels",
+            "grt-points", "grt-route-labels", "live-bodies",
           ].filter((id) => currentMap.getLayer(id));
           currentMap.on("click", clickable, (event) => {
             const feature = event.features?.[0];
@@ -330,6 +395,7 @@ export default function GeospatialMap({
             switch (feature?.layer.id) {
               case "grt-points":
               case "grt-route-labels":
+              case "live-bodies":
                 setSelectedVehicle(id);
                 break;
               case "stops-circle": {
@@ -392,6 +458,9 @@ export default function GeospatialMap({
     if (!map || !ready) return;
     for (const layer of SIMULATION_LAYERS) {
       if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", live ? "none" : "visible");
+    }
+    for (const layer of LIVE_LAYERS) {
+      if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", live ? "visible" : "none");
     }
     map.resize();
     if (!live) map.easeTo({ ...campusCamera(map.getContainer().clientWidth), duration: 1600 });
@@ -458,16 +527,100 @@ export default function GeospatialMap({
     return () => cancelAnimationFrame(frame);
   }, [clock, live, ready, sumoSnapshot, timeline]);
 
+  // Each poll of the live feed: fetch any route shapes we lack, then hand the
+  // pings to the tracker, which glides vehicles along those shapes.
+  useEffect(() => {
+    if (!live) {
+      trackerRef.current = new LiveTracker();
+      fleetRef.current = new Map();
+      return;
+    }
+    if (!fleet) return;
+    let cancelled = false;
+    async function sync(vehicles: GrtVehicle[]) {
+      for (const mode of ["bus", "ion"] as const) {
+        const missing = [...new Set(vehicles
+          .filter((item) => item.mode === mode && item.shapeId && !shapeCache.current.has(`${mode}:${item.shapeId}`))
+          .map((item) => item.shapeId as string))];
+        for (let i = 0; i < missing.length; i += SHAPE_BATCH) {
+          const query = missing.slice(i, i + SHAPE_BATCH).map((id) => `id=${encodeURIComponent(id)}`).join("&");
+          try {
+            const response = await fetch(`/feeds/grt/shapes?mode=${mode}&${query}`);
+            if (!response.ok) continue;
+            const body = (await response.json()) as GrtShapes;
+            for (const [id, path] of Object.entries(body.shapes)) shapeCache.current.set(`${mode}:${id}`, path);
+          } catch {
+            // Without a shape the vehicle is drawn at its raw GPS fix.
+          }
+        }
+      }
+      if (cancelled) return;
+      fleetRef.current = new Map(vehicles.map((item) => [fleetKey(item.mode, item.id), item]));
+      trackerRef.current.update(vehicles.map(livePing), (id) => shapeCache.current.get(id), performance.now() / 1000);
+    }
+    void sync(fleet.vehicles);
+    return () => {
+      cancelled = true;
+    };
+  }, [fleet, live]);
+
+  // Live animation loop: icons when zoomed out, 3D bodies at street zoom.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    const vehicles = live ? fleet?.vehicles ?? [] : [];
-    setData(map, "grt-vehicles", featureCollection(vehicles.map((item) => point(item.lon, item.lat, {
-      id: fleetKey(item.mode, item.id),
-      mode: item.mode,
-      label: item.route ?? (item.mode === "ion" ? "ION" : ""),
-    }))));
-  }, [fleet, live, ready]);
+    if (!live) {
+      for (const id of ["grt-vehicles", "live-solids", "live-ground"]) setData(map, id, featureCollection([]));
+      return;
+    }
+    let frame = 0;
+    let lastIcons = 0;
+    let hadBodies = true;
+    const draw = (time: number) => {
+      const poses = trackerRef.current.poses(time / 1000);
+      const zoom = map.getZoom();
+      const state = sceneState.current;
+      // Icons move a fraction of a pixel per frame when zoomed out: ~12 updates a second is smooth.
+      if (time - lastIcons > (zoom < BODY_MIN_ZOOM ? 80 : 400)) {
+        lastIcons = time;
+        setData(map, "grt-vehicles", featureCollection(poses.map((pose) => {
+          const info = fleetRef.current.get(pose.key);
+          return point(pose.centre[0], pose.centre[1], {
+            id: pose.key,
+            mode: pose.mode,
+            label: info?.route ?? (pose.mode === "ion" ? "ION" : ""),
+            opacity: pose.opacity * (pose.stale ? 0.55 : 1),
+          });
+        })));
+      }
+      const bodies = emptyBodies();
+      const showBodies = zoom >= BODY_MIN_ZOOM - 0.2;
+      if (showBodies) {
+        const bounds = map.getBounds();
+        const pad = 0.004;
+        for (const pose of poses) {
+          const [lon, lat] = pose.centre;
+          if (lon < bounds.getWest() - pad || lon > bounds.getEast() + pad || lat < bounds.getSouth() - pad || lat > bounds.getNorth() + pad) continue;
+          liveBody(pose, pose.key === state.animatedFocus, bodies);
+        }
+      }
+      // Zoomed out there are no bodies: don't re-send empty data every frame.
+      if (showBodies || hadBodies) {
+        setData(map, "live-solids", featureCollection(bodies.solids));
+        setData(map, "live-ground", featureCollection(bodies.ground));
+        hadBodies = showBodies;
+      }
+      const focus = state.animatedFocus ? poses.find((pose) => pose.key === state.animatedFocus) : undefined;
+      const popup = popupRef.current;
+      if (focus && popup) {
+        popup.setLngLat(focus.centre);
+        if (!popup.isOpen()) popup.addTo(map);
+        if (state.follow) map.jumpTo({ center: focus.centre });
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [live, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -536,7 +689,7 @@ export default function GeospatialMap({
           : !ready ? <span role="status">Loading Waterloo map…</span>
           : live ? (
             <div className="geoFeedStatus" role="status">
-              <span>GRT live fleet · public GPS feed</span>
+              <span>Live GPS · GRT public feed, gliding along GTFS route shapes between pings</span>
               {(["bus", "ion"] as const).map((mode) => (
                 <span key={mode} className={`geoFeedMode ${mode}`}>
                   {FEED_NAMES[mode]} · {fleet?.feeds[mode] === "current"
@@ -564,9 +717,25 @@ export default function GeospatialMap({
           <button type="button" aria-label="Close vehicle details" onClick={clearDetails}>×</button>
           {vehicle ? (
             <>
-              <strong>{FEED_NAMES[vehicle.mode]} {vehicle.route}</strong>
+              <strong>Live GPS · {FEED_NAMES[vehicle.mode]} {vehicle.route}</strong>
               <span>{vehicle.headsign || `Vehicle ${vehicle.id}`}</span>
               <span>{vehicle.stop ? `${vehicle.stopStatus} · ${vehicle.stop}` : "Stop information unavailable"}</span>
+              <span>
+                {livePose?.terminal
+                  ? "Past the end of its route shape (terminal layover) · showing the raw GPS fix"
+                  : livePose?.detour
+                  ? "Off its route shape (detour?) · showing the raw GPS fix"
+                  : vehicle.shapeId
+                    ? `On GTFS shape ${vehicle.shapeId} · ${vehicle.shapeMatch === "trip" ? "from its trip" : "nearest shape of its route"}`
+                    : "No route shape · showing the raw GPS fix"}
+              </span>
+              <span>
+                GPS fix {new Date(vehicle.timestamp * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                {livePose?.stale ? " · stale" : ""}
+              </span>
+              <button type="button" className="followButton" aria-pressed={follow} onClick={() => setFollow(!follow)}>
+                {follow ? "Stop following" : "Follow"}
+              </button>
             </>
           ) : sumoBus ? (
             <>

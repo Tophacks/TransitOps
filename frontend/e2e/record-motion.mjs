@@ -35,7 +35,7 @@ const browser = await playwright.chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
 await page.goto(base.href);
-await page.waitForFunction(() => window.__transitops?.map?.loaded(), null, { timeout: 90_000 });
+await page.waitForFunction(() => window.__transitops?.map?.isStyleLoaded(), null, { timeout: 90_000 });
 await page.waitForTimeout(2500);
 if (options.mode !== "live") {
   if (options.preset) await page.getByRole("button", { name: options.preset }).click();
@@ -57,8 +57,31 @@ const settle = () => page.evaluate(() => new Promise((resolve) => {
   setTimeout(resolve, 4000);
 }));
 if (options.mode === "live") {
+  await page.waitForFunction(() => window.__transitops.live().length > 0, null, { timeout: 120_000 });
   await page.waitForTimeout(options.warmup ?? 4000);
+  // follow: a vehicle key, or "auto" for a bus moving near `camera.center`.
+  let follow = options.follow;
+  if (follow === "auto") {
+    follow = await page.evaluate(async (centre) => {
+      const near = (p) => Math.hypot((p.centre[0] - centre[0]) * 80_000, (p.centre[1] - centre[1]) * 111_000);
+      for (let i = 0; i < 120; i += 1) {
+        const moving = window.__transitops.live()
+          .filter((p) => p.mode === "bus" && p.s != null && p.speed > 4 && near(p) < 3000)
+          .sort((a, b) => near(a) - near(b));
+        if (moving.length) return moving[0].key;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      return null;
+    }, options.camera.center);
+    console.log(`following ${follow}`);
+  }
   for (let t = 0; t <= (options.to ?? 30); t += options.step ?? 1) {
+    if (follow) {
+      await page.evaluate((key) => {
+        const pose = window.__transitops.live().find((p) => p.key === key);
+        if (pose) window.__transitops.map.jumpTo({ center: pose.centre });
+      }, follow);
+    }
     await page.waitForTimeout((options.step ?? 1) * 1000);
     await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
   }

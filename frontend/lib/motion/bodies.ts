@@ -5,8 +5,17 @@
 // the basemap's extruded buildings, which can therefore hide them.
 
 import { offsetLonLat, type LonLat } from "./path.ts";
-import type { BusPose } from "./playback.ts";
 import type { TrainPose } from "./ion.ts";
+
+/** What a bus body needs: simulated (BusPose) and live poses both fit. */
+export type BodyPose = { id: string; centre: LonLat; heading: number; state?: string };
+
+/**
+ * "sim": gold buses / teal-striped trains from the Python simulator.
+ * "live": GRT's blue bus livery and blue-striped ION trains for real GPS.
+ * "stale": a live vehicle whose last GPS fix is old.
+ */
+export type Livery = "sim" | "live" | "stale";
 
 type Local = [number, number]; // x forward, y left (metres)
 type Feature = GeoJSON.Feature<GeoJSON.Polygon, Record<string, string | number>>;
@@ -36,6 +45,12 @@ const COLORS = {
   ionPanto: "#55626a",
   bellows: "#151b21",
   ionSign: "#86f2cf",
+};
+
+const LIVERY = {
+  sim: { body: COLORS.busBody, shade: COLORS.busBodyShade, sign: COLORS.sign, stripe: COLORS.ionStripe, ionSign: COLORS.ionSign },
+  live: { body: "#2f7ee0", shade: "#235fb0", sign: "#ffb547", stripe: "#3f8cff", ionSign: "#a9cdff" },
+  stale: { body: "#61758f", shade: "#4b5c72", sign: "#b9a57e", stripe: "#6d84a3", ionSign: "#b5c3d6" },
 };
 
 const STATE_BEACON: Record<string, string> = {
@@ -102,7 +117,31 @@ function shade(centre: LonLat, heading: number, ring: Local[], opacity: number, 
 
 export type BodyLayers = { solids: Feature[]; ground: Feature[] };
 
-export function busBody(pose: BusPose, selected: boolean, out: BodyLayers) {
+/**
+ * Scale everything added since `from` by `k` (0..1): a vehicle joining or
+ * leaving the live feed grows out of / sinks into the street.
+ */
+function fadeFrom(out: BodyLayers, solids: number, ground: number, k: number) {
+  if (k >= 1) return;
+  for (let i = solids; i < out.solids.length; i += 1) {
+    const p = out.solids[i].properties;
+    p.base = (p.base as number) * k;
+    p.height = (p.height as number) * k;
+  }
+  for (let i = ground; i < out.ground.length; i += 1) {
+    const p = out.ground[i].properties;
+    p.opacity = (p.opacity as number) * k;
+  }
+}
+
+export function busBody(pose: BodyPose, selected: boolean, out: BodyLayers, livery: Livery = "sim", fade = 1) {
+  const solids = out.solids.length;
+  const ground = out.ground.length;
+  drawBus(pose, selected, out, LIVERY[livery], livery === "sim");
+  fadeFrom(out, solids, ground, fade);
+}
+
+function drawBus(pose: BodyPose, selected: boolean, out: BodyLayers, colors: (typeof LIVERY)["sim"], beacon: boolean) {
   const { centre, heading, id } = pose;
   const L = BUS_LENGTH / 2;
   const W = BUS_WIDTH / 2;
@@ -125,21 +164,29 @@ export function busBody(pose: BusPose, selected: boolean, out: BodyLayers) {
     }
   }
   s.push(part(centre, heading, nosed(-L, L, W - 0.05, 0.42), 0.32, 0.95, COLORS.chassis, id));
-  s.push(part(centre, heading, nosed(-L, L, W, 0.45), 0.95, 1.4, COLORS.busBodyShade, id));
+  s.push(part(centre, heading, nosed(-L, L, W, 0.45), 0.95, 1.4, colors.shade, id));
   s.push(part(centre, heading, nosed(-L + 0.1, L - 0.55, W + 0.02, 0.3), 1.4, 2.45, COLORS.glass, id));
   // Front: cream mask with a light windshield, so the nose reads at a glance.
   s.push(part(centre, heading, nosed(L - 0.7, L, W + 0.01, 0.45, 0), 0.95, 3.02, COLORS.frontMask, id));
   s.push(part(centre, heading, box(L - 0.5, L + 0.03, -W + 0.3, W - 0.3), 1.15, 2.5, COLORS.windshield, id));
-  s.push(part(centre, heading, nosed(-L, L, W, 0.45), 2.45, 3.02, COLORS.busBody, id));
-  s.push(part(centre, heading, box(L - 0.5, L + 0.02, -W + 0.45, W - 0.45), 2.62, 2.92, COLORS.sign, id));
-  s.push(part(centre, heading, box(-2.6, 1.6, -W + 0.45, W - 0.45), 3.02, 3.34, STATE_BEACON[pose.state] ?? COLORS.roof, id));
+  s.push(part(centre, heading, nosed(-L, L, W, 0.45), 2.45, 3.02, colors.body, id));
+  s.push(part(centre, heading, box(L - 0.5, L + 0.02, -W + 0.45, W - 0.45), 2.62, 2.92, colors.sign, id));
+  const roof = beacon ? STATE_BEACON[pose.state ?? ""] ?? COLORS.roof : COLORS.roof;
+  s.push(part(centre, heading, box(-2.6, 1.6, -W + 0.45, W - 0.45), 3.02, 3.34, roof, id));
   for (const side of [1, -1]) {
     s.push(part(centre, heading, box(L - 0.1, L + 0.06, side * (W - 0.75), side * (W - 0.25)), 0.55, 0.82, COLORS.head, id));
     s.push(part(centre, heading, box(-L - 0.06, -L + 0.1, side * (W - 0.75), side * (W - 0.25)), 0.6, 0.9, COLORS.tail, id));
   }
 }
 
-export function trainBody(pose: TrainPose, out: BodyLayers) {
+export function trainBody(pose: TrainPose, out: BodyLayers, livery: Livery = "sim", fade = 1) {
+  const solids = out.solids.length;
+  const ground = out.ground.length;
+  drawTrain(pose, out, LIVERY[livery]);
+  fadeFrom(out, solids, ground, fade);
+}
+
+function drawTrain(pose: TrainPose, out: BodyLayers, colors: (typeof LIVERY)["sim"]) {
   const W = ION_WIDTH / 2;
   const count = pose.sections.length;
   pose.sections.forEach((section, index) => {
@@ -153,7 +200,7 @@ export function trainBody(pose: TrainPose, out: BodyLayers) {
     out.ground.push(shade(centre, heading, box(-L - 0.3, L + 0.3, -W - 0.3, W + 0.3), 0.3, id));
     const s = out.solids;
     s.push(part(centre, heading, outline, 0.32, 1.08, COLORS.ionLower, id));
-    s.push(part(centre, heading, outline, 1.08, 1.28, COLORS.ionStripe, id));
+    s.push(part(centre, heading, outline, 1.08, 1.28, colors.stripe, id));
     s.push(part(centre, heading, outline, 1.28, 2.42, COLORS.glass, id));
     s.push(part(centre, heading, outline, 2.42, 3.28, COLORS.ionUpper, id));
     if (index === 1 || index === 3) {
@@ -164,7 +211,7 @@ export function trainBody(pose: TrainPose, out: BodyLayers) {
     }
     if (first) {
       s.push(part(centre, heading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, COLORS.windshield, id));
-      s.push(part(centre, heading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, COLORS.ionSign, id));
+      s.push(part(centre, heading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, colors.ionSign, id));
       for (const side of [1, -1]) {
         s.push(part(centre, heading, box(L - 0.45, L + 0.05, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.head, id));
       }

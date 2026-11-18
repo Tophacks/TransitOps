@@ -93,3 +93,90 @@ export function lateralOffset(
   const tail = smoothstep(length - blend, length, s);
   return lane + (curb[0] - lane) * lead + (curb[1] - lane) * tail;
 }
+
+/** Closest point on the path to `p`: distance along it and metres off it. */
+export type PathProjection = { s: number; offset: number; point: LonLat };
+
+/**
+ * Every place where `p` projects onto a path segment, nearest first. A route
+ * shape can pass the same street twice (out and back, or a loop), so callers
+ * choose among near-equal candidates using where the vehicle was before.
+ */
+export function projections(path: readonly PathPoint[], p: LonLat): PathProjection[] {
+  const out: PathProjection[] = [];
+  for (let i = 0; i + 1 < path.length; i += 1) {
+    const a = path[i];
+    const b = path[i + 1];
+    const [ax, ay] = deltaMetres(p, [a[0], a[1]]);
+    const [bx, by] = deltaMetres(p, [b[0], b[1]]);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.min(1, Math.max(0, -(ax * dx + ay * dy) / len2)) : 0;
+    const offset = Math.hypot(ax + dx * t, ay + dy * t);
+    out.push({
+      s: a[2] + (b[2] - a[2]) * t,
+      offset,
+      point: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+    });
+  }
+  out.sort((x, y) => x.offset - y.offset);
+  return out;
+}
+
+/** Douglas-Peucker on lon/lat points (tolerance in metres), keeping the ends. */
+export function simplifyLonLat(points: readonly LonLat[], tolerance: number): LonLat[] {
+  if (points.length < 3) return [...points];
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+  const stack: [number, number][] = [[0, points.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop()!;
+    const [dx, dy] = deltaMetres(points[i], points[j]);
+    const len = Math.hypot(dx, dy);
+    let worst = -1;
+    let at = -1;
+    for (let k = i + 1; k < j; k += 1) {
+      const [px, py] = deltaMetres(points[i], points[k]);
+      const d = len > 0 ? Math.abs(px * dy - py * dx) / len : Math.hypot(px, py);
+      if (d > worst) {
+        worst = d;
+        at = k;
+      }
+    }
+    if (worst > tolerance) {
+      keep[at] = 1;
+      stack.push([i, at], [at, j]);
+    }
+  }
+  return points.filter((_, k) => keep[k]);
+}
+
+/** Lon/lat polyline -> [lon, lat, cumulative metres] path. */
+export function encodePath(points: readonly LonLat[]): PathPoint[] {
+  const out: PathPoint[] = [];
+  let s = 0;
+  points.forEach((p, i) => {
+    if (i) s += Math.hypot(...deltaMetres(points[i - 1], p));
+    out.push([Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6, Math.round(s * 10) / 10]);
+  });
+  return out;
+}
+
+/** Drop out-and-back spurs (A -> B -> A) that rail shapes make to touch platforms. */
+export function stripSpurs(points: readonly LonLat[]): LonLat[] {
+  const out = [...points];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 1; i + 1 < out.length; i += 1) {
+      if (Math.hypot(...deltaMetres(out[i - 1], out[i + 1])) < 1.0) {
+        out.splice(i, 2);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return out.filter((p, i) => i === 0 || Math.hypot(...deltaMetres(out[i - 1], p)) > 0.05);
+}
