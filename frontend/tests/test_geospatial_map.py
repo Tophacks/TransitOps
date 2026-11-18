@@ -13,6 +13,11 @@ class MapLayerStaticTests(unittest.TestCase):
   self.assertIn('"vehicle-bodies"',text)
   self.assertIn('"sumo-traffic"',text)
   self.assertIn('map.remove()',text)
+ def test_live_vehicles_are_labelled_live_gps(self):
+  text=(ROOT/'app/components/GeospatialMap.tsx').read_text()
+  self.assertIn('live GPS',text)
+  self.assertIn('Live GPS ·',text)
+  self.assertIn('"live-bodies"',text)
  def test_toggle_and_fallback(self):
   text=(ROOT/'app/page.tsx').read_text()
   self.assertIn('<GeospatialMap',text)

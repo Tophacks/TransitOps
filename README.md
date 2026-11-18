@@ -221,7 +221,7 @@ Fair comparison means both dispatch policies receive the same **seed and scenari
 
 ### Geographic context layers
 
-The dashboard opens on the tilted Waterloo map. Use **Campus** and **Region** to change the view, **3D** to switch to a flat map, or **Schematic** for the simulation diagram. The dark OpenFreeMap basemap uses OpenStreetMap building heights where available.
+The dashboard opens on the tilted Waterloo map. Use **Campus** and **Region** to change the view, **3D** to switch to a flat map, or **Schematic** for the simulation diagram. The dark OpenFreeMap basemap uses OpenStreetMap building heights where available. **ION depot** opens the Dutton Drive train yard in either map mode. The boundary is from [OpenStreetMap way 421343538](https://www.openstreetmap.org/way/421343538).
 
 **Live fleet** shows public GPS positions for GRT buses and ION trains. Select a vehicle for its route, destination, and upcoming or current stop when available. The map checks for updates every 20 seconds and labels each feed independently when it is stale or unavailable. Choose **Simulation** to see the simulated buses, stops, signal phases, and illustrative stop-to-stop corridor again. The vehicle callout follows the selected vehicle. Start the Python simulation and select a bus to see its latest recorded dispatch or priority decision and the reason for it. Dashboard controls and KPIs refer to the simulation.
 
