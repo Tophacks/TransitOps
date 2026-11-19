@@ -9,6 +9,8 @@ on:
       - "backend/waterloo_corridor.json"
       - "frontend/lib/geo/waterloo-corridor.json"
       - "frontend/lib/geo/fairway.json"
+      - "backend/ion_terminals.json"
+      - "frontend/lib/geo/ion-terminals.json"
       - ".github/workflows/geometry-check.yml"
   push:
     branches: [main]
@@ -17,6 +19,8 @@ on:
       - "backend/waterloo_corridor.json"
       - "frontend/lib/geo/waterloo-corridor.json"
       - "frontend/lib/geo/fairway.json"
+      - "backend/ion_terminals.json"
+      - "frontend/lib/geo/ion-terminals.json"
 permissions:
   contents: read
 jobs:
@@ -36,3 +40,5 @@ jobs:
         run: python -I tools/waterloo_geometry/verify_gtfs.py "$RUNNER_TEMP/gtfs" backend/waterloo_corridor.json --frontend-copy frontend/lib/geo/waterloo-corridor.json
       - name: Rebuild the Fairway terminal geometry and compare with the shipped copy
         run: python -I tools/waterloo_geometry/build_fairway.py "$RUNNER_TEMP/gtfs" --check
+      - name: Rebuild the ION terminal layouts and compare with the shipped copies
+        run: python -I tools/waterloo_geometry/build_terminals.py --check

@@ -159,3 +159,25 @@ arrival or departure (the replay arrives straight into platform 1 and leaves
 through crossover 754590785, consistent with the GTFS shapes but not verified
 against operations), dwell and cab-change times, and the layover length (the
 GTFS median is 10 minutes; the replay shortens it).
+
+## ION terminals (`build_terminals.py`)
+
+`build_terminals.py` produces `backend/ion_terminals.json` and an identical
+`frontend/lib/geo/ion-terminals.json`: the trackwork at Fairway and Conestoga
+and every arrival and departure move, with the interlocking resources each
+move occupies. The simulator's station control grants moves from it; the map
+draws the same paths.
+
+```bash
+python3 -I tools/waterloo_geometry/build_terminals.py          # rebuild
+python3 -I tools/waterloo_geometry/build_terminals.py --check  # CI
+```
+
+Sources: `sources/fairway-osm.json` and `sources/conestoga-osm.json`
+(OpenStreetMap API, 2026-11-19, ODbL), and the corridor's GTFS line paths.
+Conestoga's crossover is OSM ways 836238400 and 836238401 around diamond
+node 7805105214, cross-checked with the CartoMetro track diagram (a scissors
+crossover north of two stub platforms; nothing from it is shipped). The
+builder fails if a switch does not have three legs, if the crossover ways do
+not pass through the mapped diamond, or if a move's legs do not join. See
+`docs/ion-terminal-operations.md` for what is modelled.
