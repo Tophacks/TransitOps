@@ -3,7 +3,8 @@ from copy import deepcopy
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from models import Bus, Train
+from ion import IonPlan
+from models import Bus
 from simulation_engine import (
     GEO_LAYOUT,
     INTERSECTION_GEO,
@@ -28,6 +29,7 @@ class SimulationRequest(BaseModel):
     breakdown_minute: int | None = Field(default=None, ge=1, le=59)
     emergency_dispatch_minute: int | None = Field(default=None, ge=1, le=59)
     seed: int = Field(default=17, ge=0, le=1000000)
+    ion_headway: int = Field(default=8, ge=4, le=20)
 
 
 def metrics_to_dict(metrics):
@@ -40,6 +42,11 @@ def metrics_to_dict(metrics):
         "max_queue": metrics.max_queue,
         "buses_staged": metrics.buses_staged,
         "signal_priority_requests": metrics.signal_priority_requests,
+        "ion_transfers": metrics.ion_transfers,
+        "ion_transfers_boarded": metrics.ion_transfers_boarded,
+        "average_transfer_wait": round(metrics.average_transfer_wait_minutes, 2),
+        "ion_trains_peak": metrics.ion_trains_peak,
+        "ion_max_delay": round(metrics.ion_max_delay_minutes, 1),
     }
 
 
@@ -88,30 +95,21 @@ def network_definition():
     }
 
 
+def ion_plan(payload: SimulationRequest):
+    return IonPlan(
+        duration_min=60,
+        headway_min=payload.ion_headway,
+        transfer_demand=payload.passenger_demand,
+        delay_min=payload.train_delay,
+    )
+
+
 def run_case(payload: SimulationRequest, intelligent: bool):
     buses = [Bus(f"B{101 + i}") for i in range(payload.fleet_size)]
 
-    first_wave = round(payload.passenger_demand * 0.56)
-    second_wave = payload.passenger_demand - first_wave
-
-    trains = [
-        Train(
-            train_id="TRAIN-A",
-            scheduled_arrival=12,
-            delay_minutes=payload.train_delay,
-            passengers_for_bus=first_wave,
-        ),
-        Train(
-            train_id="TRAIN-B",
-            scheduled_arrival=32,
-            delay_minutes=max(0, payload.train_delay // 2),
-            passengers_for_bus=second_wave,
-        ),
-    ]
-
     sim = TransitSimulation(
         buses=deepcopy(buses),
-        trains=trains,
+        ion_plan=ion_plan(payload),
         intelligent=intelligent,
         duration=60,
         traffic_multiplier=payload.traffic_multiplier,
@@ -152,11 +150,15 @@ def simulate(payload: SimulationRequest):
         "fewer_left_waiting": (
             baseline["metrics"]["left_waiting"] - smart["metrics"]["left_waiting"]
         ),
+        "transfer_wait_reduction": round(
+            baseline["metrics"]["average_transfer_wait"] - smart["metrics"]["average_transfer_wait"], 2
+        ),
     }
 
     return {
         "scenario": payload.model_dump(),
         "network": network_definition(),
+        "ion": ion_plan(payload).schedule(),
         "baseline": baseline,
         "smart": smart,
         "impact": impact,

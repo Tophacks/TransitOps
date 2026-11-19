@@ -1678,3 +1678,10 @@ footer {
   .simBadge span { display:none; }
   .simBadge span.simBadgeShort { display:block; }
 }
+
+/* ION arrivals at UW and Central marked under the timeline (gold: transfer waves). */
+.timelineTrack { position:relative; flex:1; min-width:0; display:flex; align-items:center; }
+.timelineTrack input { width:100%; }
+.ionTicks { position:absolute; left:8px; right:8px; bottom:-7px; height:6px; pointer-events:none; }
+.ionTicks i { position:absolute; width:2px; height:5px; margin-left:-1px; border-radius:1px; background:#5fa8e6; opacity:.8; }
+.ionTicks i.wave { width:4px; height:7px; margin-left:-2px; background:#ffd36b; opacity:1; }

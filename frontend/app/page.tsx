@@ -8,6 +8,7 @@ import { useSumoStream } from "../lib/useSumoStream";
 import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
 import { corridor } from "../lib/motion/scene.ts";
+import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
 import type {
   Controls,
   Network,
@@ -81,16 +82,18 @@ function Inspector({
   snapshot,
   decision,
   pose,
+  trainPose,
 }: {
   selected: Selection;
   snapshot: Snapshot | null;
   decision?: SimulationEvent;
   pose?: BusPose;
+  trainPose?: TrainPose;
 }) {
   if (!selected) {
     return (
       <div className="inspectorEmpty">
-        Select a bus, station, signal, or staging yard on the map.
+        Select a bus, ION train, station, signal, or staging yard on the map.
       </div>
     );
   }
@@ -163,6 +166,35 @@ function Inspector({
     );
   }
 
+  if (selected.type === "train") {
+    const live = snapshot?.trains?.find((train) => train.id === selected.data.id) ?? selected.data;
+    const ahead = Object.entries(live.transfers_ahead);
+    return (
+      <div className="inspectorBody">
+        <p className="eyebrow">ION TRAIN · PYTHON SIMULATOR</p>
+        <div className="inspectTitle">
+          <h3>{live.id}</h3>
+          <span>{live.direction === "north" ? "Northbound" : "Southbound"}</span>
+        </div>
+        <dl>
+          {/* Position follows the playback clock; delay and riders come from the minute snapshot. */}
+          <div><dt>{(trainPose ? trainPose.station : live.station) ? "At" : "Next station"}</dt>
+            <dd>{trainPose ? trainPose.station ?? trainPose.nextStation : live.station ?? live.next_station}</dd></div>
+          {trainPose && !trainPose.station && <div><dt>Speed</dt><dd>{Math.round(trainPose.speed * 3.6)} km/h</dd></div>}
+          <div><dt>Delay</dt><dd className={live.delay_min > 0 ? "badText" : "goodText"}>{live.delay_min > 0 ? `+${live.delay_min} min · ${live.hold}` : "On time"}</dd></div>
+          <div><dt>Transferring to the bus</dt><dd>{ahead.length
+            ? ahead.map(([stop, riders]) => `${riders} at ${stop === "UW" ? "UW" : "Central"}`).join(", ")
+            : "None still aboard"}</dd></div>
+          <div><dt>Along the line</dt><dd>{((trainPose?.nose ?? live.nose_m) / 1000).toFixed(2)} km from the {live.direction === "north" ? "Fairway" : "Conestoga"} end</dd></div>
+        </dl>
+        {decision && <div className="geoDecision">
+          <strong>{decision.message}</strong>
+          {decision.reason && <span>{decision.reason}</span>}
+        </div>}
+      </div>
+    );
+  }
+
   return (
     <div className="inspectorBody">
       <p className="eyebrow">FLEET STAGING</p>
@@ -190,15 +222,27 @@ export default function Home() {
   const frame = Math.min(Math.floor(seconds / 60), Math.max(0, timeline.length - 1));
   const snapshot = timeline[frame] ?? null;
   const poses = useMemo(() => busPoses(corridor, timeline, seconds), [timeline, seconds]);
+  const timetable = useMemo(() => (data?.ion ? new IonTimetable(corridor.data.ion, data.ion) : null), [data]);
   const network = data?.network ?? FALLBACK_NETWORK;
   const sumoMapSnapshot = sumo.state === "idle" ? null : sumo.snapshot;
   const smart = data?.smart.metrics;
   const baseline = data?.baseline.metrics;
   const selectedBus = selected?.type === "bus" ? selected.data.id : undefined;
-  const decision = selectedBus && snapshot
-    ? data?.smart.events.findLast((event) =>
-        event.bus_id === selectedBus && event.minute <= snapshot.minute && event.reason)
+  const selectedTrainId = selected?.type === "train" ? selected.data.id : undefined;
+  const decision = snapshot
+    ? selectedBus
+      ? data?.smart.events.findLast((event) =>
+          event.bus_id === selectedBus && event.minute <= snapshot.minute && event.reason)
+      : selectedTrainId
+        ? data?.smart.events.findLast((event) =>
+            event.train_id === selectedTrainId && event.minute <= snapshot.minute)
+        : undefined
     : undefined;
+  // ION arrivals at UW and Central on the timeline: where transfer riders join the bus queues.
+  const ionMarks = useMemo(() => (data?.smart.events ?? [])
+    .filter((event) => event.kind === "train" && event.train_id)
+    .map((event) => ({ minute: event.minute, riders: Number(/\+(\d+)/.exec(event.message)?.[1] ?? 0), label: event.message })),
+  [data]);
 
   const visibleEvents = useMemo(() => {
     if (!data || !snapshot) return [];
@@ -303,6 +347,7 @@ export default function Home() {
             sumoSnapshot={sumoMapSnapshot}
             timeline={timeline}
             clock={playback.clock}
+            ionSchedule={data?.ion ?? null}
           />
         ) : (
           <RegionalMap network={network} snapshot={snapshot} poses={poses} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
@@ -360,6 +405,7 @@ export default function Home() {
           <div className="topMetrics">
             <div><span>WAITING</span><strong>{snapshot?.waiting ?? "—"}</strong></div>
             <div><span>ACTIVE BUSES</span><strong>{snapshot ? poses.length : "—"}</strong></div>
+            <div><span>ION TRAINS</span><strong>{snapshot ? snapshot.trains?.length ?? 0 : "—"}</strong></div>
             <div><span>AVG WAIT</span><strong>{smart ? `${smart.average_wait.toFixed(1)}m` : "—"}</strong></div>
             <div><span>TRAFFIC</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
           </div>
@@ -367,19 +413,33 @@ export default function Home() {
 
         <div className="timelineControl">
           <span aria-label="Current simulation time">{formatClock(seconds)}</span>
-          <input
-            aria-label="Simulation timeline"
-            type="range"
-            min="0"
-            step="1"
-            max={Math.max(0, timeline.length - 1) * 60}
-            value={Math.round(seconds)}
-            onChange={(event) => {
-              playback.pause();
-              playback.seek(Number(event.target.value));
-            }}
-            disabled={!data}
-          />
+          <div className="timelineTrack">
+            <input
+              aria-label="Simulation timeline"
+              type="range"
+              min="0"
+              step="1"
+              max={Math.max(0, timeline.length - 1) * 60}
+              value={Math.round(seconds)}
+              onChange={(event) => {
+                playback.pause();
+                playback.seek(Number(event.target.value));
+              }}
+              disabled={!data}
+            />
+            {timeline.length > 1 && (
+              <div className="ionTicks" aria-hidden="true">
+                {ionMarks.map((mark, index) => (
+                  <i
+                    key={`${mark.minute}-${index}`}
+                    className={mark.riders >= 10 ? "wave" : ""}
+                    style={{ left: `${(mark.minute / (timeline.length - 1)) * 100}%` }}
+                    title={`${String(mark.minute).padStart(2, "0")}:00 · ${mark.label}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
           <span>{formatClock(Math.max(0, timeline.length - 1) * 60)}</span>
         </div>
       </section>
@@ -398,6 +458,7 @@ export default function Home() {
           <div><span>Adaptive waiting</span><strong>{smart?.left_waiting ?? "—"}</strong></div>
           <div><span>Completed trips (baseline → adaptive)</span><strong>{baseline?.completed_trips ?? "—"} → {smart?.completed_trips ?? "—"}</strong></div>
           <div><span>Average boarding wait change</span><strong>{data.impact.average_wait_reduction.toFixed(1)} min</strong></div>
+          <div><span>ION transfer wait (baseline → adaptive)</span><strong>{baseline?.average_transfer_wait.toFixed(1)} → {smart?.average_transfer_wait.toFixed(1)} min</strong></div>
         </div>}
         <div className="scenarioInstructions">Selecting a preset sets controls only. Press <strong>Apply &amp; restart</strong> to run both dispatch policies under matching conditions. Positive wait reduction means the adaptive controller improved the result.</div>
       </section>
@@ -465,6 +526,7 @@ export default function Home() {
             snapshot={snapshot}
             decision={decision}
             pose={selected?.type === "bus" ? poses.find((pose) => pose.id === selected.data.id) : undefined}
+            trainPose={selected?.type === "train" ? timetable?.trains(seconds).find((train) => train.id === selected.data.id) : undefined}
           />
         </section>
 
@@ -503,6 +565,9 @@ export default function Home() {
             <div><span>TransitOps avg wait</span><strong>{smart ? `${smart.average_wait.toFixed(1)} min` : "—"}</strong></div>
             <div><span>Pre-stage actions</span><strong>{smart?.buses_staged ?? "—"}</strong></div>
             <div><span>Signal priority</span><strong>{smart?.signal_priority_requests ?? "—"}</strong></div>
+            <div><span>ION transfers to the bus</span><strong>{smart ? `${smart.ion_transfers_boarded} of ${smart.ion_transfers}` : "—"}</strong></div>
+            <div><span>ION transfer wait</span><strong>{smart ? `${smart.average_transfer_wait.toFixed(1)} min` : "—"}</strong></div>
+            <div><span>Latest ION train</span><strong>{smart ? `+${smart.ion_max_delay} min` : "—"}</strong></div>
           </div>
         </section>
       </div>

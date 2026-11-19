@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import corridor  # noqa: E402
-from models import Bus, Train  # noqa: E402
+from ion import IonPlan  # noqa: E402
+from models import Bus  # noqa: E402
 from simulation_engine import ROUTE, TransitSimulation  # noqa: E402
 
 M_PER_DEG = 111_320.0
@@ -36,7 +37,7 @@ def distance_to_path(point, path):
 def simulate(**kwargs):
     sim = TransitSimulation(
         [Bus(f"B{101 + i}") for i in range(4)],
-        [Train("T1", 12, 3, 60), Train("T2", 32, 1, 40)],
+        IonPlan(duration_min=60, headway_min=8, transfer_demand=100, delay_min=3),
         intelligent=True,
         duration=60,
         traffic_multiplier=1.3,

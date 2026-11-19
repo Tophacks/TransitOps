@@ -16,3 +16,6 @@ simulation/sumo/routes/*.rou.xml.gz
 frontend/public/maplibre/
 frontend/e2e-output/
 frontend/tsconfig.tsbuildinfo
+# Written by `next dev` / local npm install, not part of the project
+frontend/AGENTS.md
+frontend/package-lock.json

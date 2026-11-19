@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GeoJSONSource, Map as MapInstance, Popup } from "maplibre-gl";
 
@@ -10,11 +10,11 @@ import { useGrtFleet } from "../../lib/useGrtFleet";
 import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
-import { ION_LENGTH, articulatePath, ionTrains, type TrainPose } from "../../lib/motion/ion.ts";
+import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, emptyBodies, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
 import { LiveTracker, type LivePing, type LivePose } from "../../lib/motion/live.ts";
 import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.ts";
-import { corridor, ion } from "../../lib/motion/scene.ts";
+import { corridor } from "../../lib/motion/scene.ts";
 
 type Props = {
   network: Network;
@@ -27,6 +27,8 @@ type Props = {
   sumoSnapshot?: LiveSumoSnapshot | null;
   timeline: Snapshot[];
   clock: PlaybackClock;
+  /** ION timetable from the Python simulator (null before a run) */
+  ionSchedule?: IonSchedule | null;
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -387,7 +389,16 @@ function liveBody(pose: LivePose, selected: boolean, out: BodyLayers) {
 
 export default function GeospatialMap({
   network, snapshot, decision, selected, onSelect, live, onModeChange, sumoSnapshot = null, timeline, clock,
+  ionSchedule = null,
 }: Props) {
+  // Same timetable and trip model as backend/ion.py: trains sit exactly where
+  // the simulator put them at every minute.
+  const timetable = useMemo(
+    () => (ionSchedule ? new IonTimetable(corridor.data.ion, ionSchedule) : null),
+    [ionSchedule],
+  );
+  const timetableRef = useRef(timetable);
+  timetableRef.current = timetable;
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapInstance | null>(null);
   const popupRef = useRef<Popup | null>(null);
@@ -412,7 +423,9 @@ export default function GeospatialMap({
   // Positions at this render; the animation loop keeps the popup glued to the body.
   const now = clock.time();
   const simPose = simBus ? busPoses(corridor, timeline, now).find((pose) => pose.id === simBus.id) : undefined;
-  const trainPose = simulating && selectedTrain ? ionTrains(ion, now).find((train) => train.id === selectedTrain) : undefined;
+  const trainPose = simulating && selectedTrain && timetable
+    ? timetable.trains(now).find((train) => train.id === selectedTrain) : undefined;
+  const trainState = trainPose ? snapshot?.trains?.find((train) => train.id === trainPose.id) : undefined;
   const focus = vehicle ?? sumoBus;
   const lon = depotSelected ? ION_DEPOT.centre[0] : focus?.lon;
   const lat = depotSelected ? ION_DEPOT.centre[1] : focus?.lat;
@@ -522,7 +535,9 @@ export default function GeospatialMap({
                   current.onSelect(null);
                 } else if (id.startsWith("ION-")) {
                   setSelectedTrain(id);
-                  current.onSelect(null);
+                  // The inspector shows the simulator's view of this train.
+                  const train = current.snapshot?.trains?.find((item) => item.id === id);
+                  current.onSelect(train ? { type: "train", data: train } : null);
                 } else {
                   const data = current.snapshot?.buses.find((item) => item.id === id);
                   if (data) {
@@ -610,7 +625,7 @@ export default function GeospatialMap({
         lastKey = key;
         const scene: Scene = {
           buses: busPoses(corridor, callbacks.current.timeline, t),
-          trains: ionTrains(ion, t),
+          trains: timetableRef.current?.trains(t) ?? [],
         };
         sceneRef.current = scene;
         const bodies = emptyBodies();
@@ -823,8 +838,8 @@ export default function GeospatialMap({
             <div className="simBadge" role="status">
               <strong><i aria-hidden="true" />Simulated · not live vehicles</strong>
               <span>Python simulated bus positions, moving along GRT street paths</span>
-              <span>ION trains follow the real track on an illustrative timetable</span>
-              <span className="simBadgeShort">Python simulator buses · ION on an illustrative timetable</span>
+              <span>ION trains from the same Python simulator, on the real track</span>
+              <span className="simBadgeShort">Python simulator · buses and ION trains</span>
             </div>
           )}
       </div>
@@ -868,7 +883,13 @@ export default function GeospatialMap({
             <>
               <strong>Simulated ION train · {trainPose.direction === "north" ? "northbound" : "southbound"}</strong>
               <span>{trainPose.station ? `At ${trainPose.station}` : `${Math.round(trainPose.speed * 3.6)} km/h`}</span>
-              <span>Illustrative 8-minute headway on the real track</span>
+              {(trainPose.delayMin ?? 0) > 0 && <span>{Math.round(trainPose.delayMin ?? 0)} min late · {trainPose.hold}</span>}
+              {!trainPose.station && trainPose.nextStation && <span>Next · {trainPose.nextStation}</span>}
+              {trainState && Object.keys(trainState.transfers_ahead).length > 0 && (
+                <span>Transferring to the bus · {Object.entries(trainState.transfers_ahead)
+                  .map(([stop, riders]) => `${riders} at ${stop === "UW" ? "UW" : "Central"}`).join(", ")}</span>
+              )}
+              <span>Python simulator · {ionSchedule?.headway_min ?? 8}-minute headway on the real track</span>
               <button type="button" className="followButton" aria-pressed={follow} onClick={() => setFollow(!follow)}>
                 {follow ? "Stop following" : "Follow"}
               </button>
