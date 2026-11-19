@@ -17,6 +17,12 @@ export type Controls = {
   platform_hold_platform?: "1" | "2";
   platform_hold_minute?: number;
   platform_hold_minutes?: number;
+  /** ION track closure (null: none) */
+  closure_track?: "north" | "south" | null;
+  closure_from_station?: string;
+  closure_to_station?: string;
+  closure_from_minute?: number;
+  closure_to_minute?: number;
 };
 
 export type StopState = {

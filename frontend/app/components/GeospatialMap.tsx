@@ -20,7 +20,7 @@ import { corridor } from "../../lib/motion/scene.ts";
 import { runningRails } from "../../lib/motion/railGeometry.ts";
 import FairwayDemo from "./FairwayDemo";
 import DecisionInspector from "./DecisionInspector";
-import { TERMINALS } from "../../lib/motion/railScene.ts";
+import { NETWORK, TERMINALS } from "../../lib/motion/railScene.ts";
 import { lerpPath as lerpAlong, type LonLat } from "../../lib/motion/path.ts";
 import type { RailDecision, RailMetrics } from "../../lib/motion/ion.ts";
 
@@ -54,7 +54,7 @@ type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const SIMULATION_SOURCES = ["route", "stops", "intersections", "buses", "traffic", "yard", "vehicle-solids", "vehicle-ground"];
 const SIMULATION_LAYERS = [
-  "terminal-routes", "terminal-signals",
+  "terminal-routes", "terminal-signals", "ion-closure",
   "route-stroke", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
   "sim-bus-markers", "vehicle-ground", "vehicle-bodies",
 ];
@@ -170,6 +170,7 @@ function ionTracks(): GeoJSON.FeatureCollection {
   return featureCollection([
     ...(["north", "south"] as const).map((direction) => line(paths[direction].map(([lon, lat]) => [lon, lat]), { id: direction })),
     ...terminalPaths().map((p, i) => line(p.map(([lon, lat]) => [lon, lat]), { id: `terminal:${i}` })),
+    ...NETWORK.crossovers.map((c) => line(c.path.map(([lon, lat]) => [lon, lat]), { id: `crossover:${c.way}` })),
   ]);
 }
 
@@ -179,7 +180,30 @@ function ionRunningRails(): GeoJSON.FeatureCollection {
     ...(["north", "south"] as const).flatMap((direction) =>
       runningRails(paths[direction]).map((track, side) => line(track, { id: `${direction}:${side}` }))),
     ...terminalPaths().flatMap((p, i) => runningRails(p).map((track, side) => line(track, { id: `terminal:${i}:${side}` }))),
+    ...NETWORK.crossovers.flatMap((c) => runningRails(c.path).map((track, side) => line(track, { id: `crossover:${c.way}:${side}` }))),
   ]);
+}
+
+/** Crossover markers: enabled ones amber, the disabled one (south of Mill) red. */
+function crossoverPoints(): GeoJSON.FeatureCollection {
+  return featureCollection(NETWORK.crossovers.flatMap((c) => c.ends.map((e) => point(e.lon, e.lat, {
+    kind: c.passenger ? "switch" : "disabled", terminal: "line", label: "", site: c.site,
+  }))));
+}
+
+/** The closed stretch and the diversion trains use, for the run being played. */
+function closureFeatures(schedule: IonSchedule | null): GeoJSON.FeatureCollection {
+  const out: GeoJSON.Feature[] = [];
+  for (const c of schedule?.closures ?? []) {
+    const dir = c.track as "north" | "south";
+    const track = corridor.data.ion[dir];
+    const at = (name: string) => track.stations.find((st) => st.name === name)?.at_m ?? 0;
+    const [a, b] = [at(c.from_station), at(c.to_station)].sort((x, y) => x - y);
+    out.push(line(slicePath(track.path, a, b).map(([lon, lat]) => [lon, lat]), { kind: "closed", id: c.id }));
+    const route = c.diversion ? schedule?.routes?.[c.diversion] : undefined;
+    if (route) out.push(line(route.path.map(([lon, lat]) => [lon, lat]), { kind: "diversion", id: c.id }));
+  }
+  return featureCollection(out);
 }
 
 /** Terminal trackwork (OSM): every edge, and each move's join from the handover onto it. */
@@ -356,6 +380,26 @@ function addLayers(map: MapInstance) {
     attribution: 'ION terminal trackwork © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
   });
   map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
+  map.addSource("ion-closure", { type: "geojson", data: featureCollection([]) });
+  map.addSource("ion-crossover-points", { type: "geojson", data: crossoverPoints() });
+  map.addLayer({
+    id: "ion-closure", type: "line", source: "ion-closure",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["match", ["get", "kind"], "closed", "#ff4b3e", "#ffb21e"],
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, ["match", ["get", "kind"], "closed", 5, 2.5], 19, 26],
+      "line-opacity": ["match", ["get", "kind"], "closed", 0.8, 0.45],
+      "line-dasharray": ["match", ["get", "kind"], "closed", ["literal", [1.2, 0.8]], ["literal", [1, 0]]],
+    },
+  }, firstLabel);
+  map.addLayer({
+    id: "ion-crossover-points", type: "circle", source: "ion-crossover-points", minzoom: 14,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 5],
+      "circle-color": ["match", ["get", "kind"], "disabled", "#ff5a4e", "#ffcf5a"],
+      "circle-stroke-color": "#11161c", "circle-stroke-width": 1.5, "circle-pitch-alignment": "map",
+    },
+  });
   map.addLayer({
     id: "terminal-routes", type: "line", source: "terminal-routes", minzoom: 15,
     layout: { "line-cap": "round", "line-join": "round" },
@@ -849,7 +893,7 @@ export default function GeospatialMap({
         const routes: GeoJSON.Feature[] = [];
         const aspects: Record<string, string> = { fairway: "stop", conestoga: "stop" };
         for (const train of scene.trains) {
-          if (!train.terminal || !train.route || train.s === undefined) continue;
+          if (!train.terminal || train.terminal === "network" || !train.route || train.s === undefined) continue;
           const route = TERMINALS.terminals[train.terminal as "fairway"].routes[train.route];
           if (train.moveEnd !== undefined) {
             const from = Math.max(train.s - ION_LENGTH, route.kind === "arrive" ? (route.home_signal_m ?? 0) - 20 : 0);
@@ -1030,6 +1074,13 @@ export default function GeospatialMap({
     }
   }, [demo, night, ready]);
 
+  // The run's closures: the closed stretch and the diversion path.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    setData(map, "ion-closure", closureFeatures(ionSchedule));
+  }, [ionSchedule, ready]);
+
   function startDemo() {
     clearDetails();
     popupRef.current?.remove();
@@ -1071,6 +1122,20 @@ export default function GeospatialMap({
       if (bus) {
         setSelectedTrain(null);
         onSelect({ type: "bus", data: bus });
+      }
+      return;
+    }
+    if (map && !t && timetable) {
+      // A decision on the line: frame the train where it stood.
+      const train = timetable.trains(decision.t).find((x) => x.id === decision.vehicle_id);
+      if (train) {
+        setFollow(false);
+        const narrow = map.getContainer().clientWidth < 640;
+        map.easeTo({
+          center: train.sections[2].centre, zoom: narrow ? 16.4 : 17.2, pitch: 50, bearing: train.sections[2].heading - 90,
+          padding: narrow ? { top: 90, bottom: Math.round(map.getContainer().clientHeight * 0.5), left: 0, right: 0 } : { top: 60, bottom: 40, left: 0, right: 380 },
+          duration: 1200,
+        });
       }
       return;
     }

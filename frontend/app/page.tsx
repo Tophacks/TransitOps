@@ -9,7 +9,7 @@ import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
 import { corridor } from "../lib/motion/scene.ts";
 import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
-import { TERMINALS } from "../lib/motion/railScene.ts";
+import { NETWORK, TERMINALS } from "../lib/motion/railScene.ts";
 import type {
   Controls,
   Network,
@@ -34,6 +34,11 @@ const DEFAULTS: Controls = {
   platform_hold_platform: "2",
   platform_hold_minute: 20,
   platform_hold_minutes: 12,
+  closure_track: null,
+  closure_from_station: "Grand River Hospital Station",
+  closure_to_station: "Central Station",
+  closure_from_minute: 15,
+  closure_to_minute: 45,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -42,6 +47,7 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...DEFAULTS, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
   { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
   { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
+  { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...DEFAULTS, closure_track: "south" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -546,6 +552,42 @@ export default function Home() {
                 <span>Minutes</span>
                 <input aria-label="ION platform hold minutes" type="number" min="1" max="40" value={controls.platform_hold_minutes}
                   onChange={(event) => update("platform_hold_minutes", Number(event.target.value))} />
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>ION track closure</span><strong>{controls.closure_track
+              ? `${controls.closure_track === "south" ? "Southbound" : "Northbound"} · ${controls.closure_from_minute}–${controls.closure_to_minute} min`
+              : "Off"}</strong></div>
+            <select aria-label="ION track closure track" value={controls.closure_track ?? "off"}
+              onChange={(event) => update("closure_track", event.target.value === "off" ? null : event.target.value as "north" | "south")}>
+              <option value="off">No closure</option><option value="south">Southbound track</option><option value="north">Northbound track</option>
+            </select>
+          </label>
+          {controls.closure_track && (
+            <div className="holdRow">
+              <label>
+                <span>Between</span>
+                <select aria-label="Closure from station" value={controls.closure_from_station}
+                  onChange={(event) => update("closure_from_station", event.target.value)}>
+                  {NETWORK.stations[controls.closure_track].map((st) => <option key={st.name} value={st.name}>{st.name.replace(" Station", "")}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>And</span>
+                <select aria-label="Closure to station" value={controls.closure_to_station}
+                  onChange={(event) => update("closure_to_station", event.target.value)}>
+                  {NETWORK.stations[controls.closure_track].map((st) => <option key={st.name} value={st.name}>{st.name.replace(" Station", "")}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="Closure from minute" type="number" min="0" max="59" value={controls.closure_from_minute}
+                    onChange={(event) => update("closure_from_minute", Number(event.target.value))} />
+                  <input aria-label="Closure to minute" type="number" min="1" max="90" value={controls.closure_to_minute}
+                    onChange={(event) => update("closure_to_minute", Number(event.target.value))} />
+                </span>
               </label>
             </div>
           )}

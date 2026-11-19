@@ -22,7 +22,7 @@ type Props = {
 };
 
 const LEVEL = { vehicle: "Train", station: "Station control", dispatch: "Dispatch" } as const;
-const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW bus stop", central: "Central bus stop" };
+const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW bus stop", central: "Central bus stop", line: "ION line" };
 
 export function clock(t: number) {
   const s = Math.round(t);

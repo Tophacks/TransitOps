@@ -907,11 +907,15 @@ class RailOps:
         if not ok:
             if not getattr(train, "section_logged", None) == cp["section"]:
                 train.section_logged = cp["section"]
-                blocker = opposite_inside[0] if opposite_inside else opposite_waiting[0]["train"].vehicle_id
-                until = holders[opposite_inside[0]]["release"] if opposite_inside else None
-                reason = (f"occupied by {blocker} ({'northbound' if direction == 'south' else 'southbound'}) until its "
-                          f"rear clears the far crossover at {fmt(until)}" if until is not None else
-                          f"{blocker} has been waiting longer for the opposite direction")
+                other_dir = "northbound" if direction == "south" else "southbound"
+                if opposite_inside:
+                    blocker = opposite_inside[0]
+                    until = holders[blocker]["release"]
+                    reason = (f"occupied by {blocker} ({other_dir}) until its rear clears the far crossover"
+                              + (f" at {fmt(until)}" if until is not None else ""))
+                else:
+                    blocker = opposite_waiting[0]["train"].vehicle_id
+                    reason = f"{blocker} ({other_dir}) asked first and goes before this train"
                 options = self.section_options(cp, gate, station, reason)
                 d = self.decide(t, "station", "line", train, trip, f"{what}: single-track section requested", options,
                                 f"hold at {station.replace(' Station', '')} for the single-track section")
@@ -933,8 +937,11 @@ class RailOps:
                  "feasible": False, "reason": "closed", "estimate_s": None},
                 {"option": f"divert: cross at {d['sites'][0]}, single track to {d['sites'][1]}", "feasible": False,
                  "reason": blocked_reason, "estimate_s": None},
+                {"option": f"hold at {station.replace(' Station', '')} for the single-track section", "feasible": True,
+                 "reason": "first come, first served; it goes as soon as the section is free in its direction",
+                 "estimate_s": None},
                 {"option": f"hold at {station.replace(' Station', '')} until the track reopens", "feasible": True,
-                 "reason": f"reopens at {fmt(cp['end'])}", "estimate_s": round(cp["end"], 1)},
+                 "reason": f"reopens at {fmt(cp['end'])}; waiting for the section is expected to be sooner", "estimate_s": round(cp["end"], 1)},
             ]
         return [{"option": "continue on its own track", "feasible": False,
                  "reason": f"now single track shared with diverted trains: {blocked_reason}", "estimate_s": None},

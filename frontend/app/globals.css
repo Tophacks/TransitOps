@@ -1758,3 +1758,5 @@ footer {
   .geoMapShell:has(.decisionInspector:not(.collapsed)) { height:clamp(600px,86svh,780px); }
   .geoMapShell:has(.decisionInspector:not(.collapsed)) .geoVehiclePopup { display:none; }
 }
+.minuteRange { display:flex; gap:4px; }
+.minuteRange input { min-width:0; }
