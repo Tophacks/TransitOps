@@ -179,3 +179,30 @@ test("glides never peak above highway speed: they stretch, or jump if the gap is
   }
   assert.ok(glidePeak({ s0: 0, s1: 300, v0: 0, v1: 15, start: 0, duration: 20 }) > 15, "eased start peaks above the average");
 });
+
+test("on a loop that starts and ends on the same street, a rough progress hint does not put the bus at the far end", () => {
+  // Out along the street and back: the start and the end of the shape coincide,
+  // like GRT route 62's loop. Seen in the live feed: the bus was 100 m into its
+  // trip, the stop-progress hint said ~600 m, and the old snap rule (only
+  // candidates ahead of the hint) put it 10 km away at the end of the loop.
+  const out = street.slice(0, 160).map(([lon, lat]) => [lon, lat]);
+  const loop = encodePath([...out, ...out.slice(0, -1).reverse()]);
+  shapes.set("loop", loop);
+  const length = loop.at(-1)[2];
+  const fix = (s, t) => {
+    const [lon, lat] = pointAt(loop, s, 0.8);
+    return { key: "bus:62", id: "62", mode: "bus", lon, lat, timestamp: T0 + t, shapeId: "loop", progress: 600 / length };
+  };
+  const tracker = new LiveTracker();
+  tracker.update([fix(100, 0)], lookup, 0);
+  assert.ok(Math.abs(tracker.poses(2, T0)[0].s - 100) < 20, "placed near the start, not 5.5 km away at the end of the loop");
+  let previous = -Infinity;
+  const fixes = [[250, 30], [460, 60], [880, 90]];
+  for (let now = 2; now < 200; now += 0.5) {
+    for (const [s, t] of fixes) if (now === t) tracker.update([fix(s, t)], lookup, now);
+    const pose = tracker.poses(now, T0 + now)[0];
+    assert.ok(pose.s >= previous - 1e-9, `backwards at ${now}s: ${previous.toFixed(1)} -> ${pose.s.toFixed(1)}`);
+    previous = pose.s;
+  }
+  assert.ok(Math.abs(previous - snap(loop, pointAt(loop, 880, 0.8), 860).s) < 1e-6, "ends at the last fix");
+});

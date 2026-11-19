@@ -108,17 +108,22 @@ export type LivePose = {
 };
 
 /**
- * Snap a GPS fix onto a route shape. Among projections nearly as close as the
- * best one (a shape that passes the same street twice), prefer the one just
- * ahead of `hint` (where the vehicle was), so it never jumps to the other pass.
+ * Snap a GPS fix onto a route shape. A shape can pass the same street twice
+ * (out and back, or a loop that starts and ends on the same street), so among
+ * projections nearly as close as the best one take the one nearest `hint`.
+ *
+ * `reach` is how far the vehicle can plausibly have gone since `hint` was its
+ * position: candidates from BACK_TOLERANCE_M behind to `reach` ahead are
+ * preferred. Without `reach` the hint is only a rough estimate (from the
+ * trip's stop progress), so a candidate behind it is as good as one ahead.
  */
-export function snap(path: readonly PathPoint[], p: LonLat, hint?: number | null): PathProjection {
+export function snap(path: readonly PathPoint[], p: LonLat, hint?: number | null, reach?: number): PathProjection {
   const all = projections(path, p);
   const best = all[0];
   if (hint == null) return best;
   const close = all.filter((c) => c.offset <= best.offset + 20);
-  const ahead = close.filter((c) => c.s >= hint - BACK_TOLERANCE_M);
-  const pool = ahead.length ? ahead : close;
+  const plausible = reach == null ? [] : close.filter((c) => c.s >= hint - BACK_TOLERANCE_M && c.s <= hint + reach);
+  const pool = plausible.length ? plausible : close;
   return pool.reduce((a, c) => (Math.abs(c.s - hint) < Math.abs(a.s - hint) ? c : a));
 }
 
@@ -270,7 +275,9 @@ export class LiveTracker {
     const hint = newShape
       ? (path && ping.progress != null ? ping.progress * pathLength(path) : null)
       : along?.s ?? track.s;
-    const snapped = path ? snap(path, p, hint) : null;
+    // Same shape: the vehicle can only have moved so far since the last fix.
+    const reach = newShape ? undefined : Math.max(600, MAX_GLIDE_SPEED * Math.max(gap, this.interval(track)) * 1.5);
+    const snapped = path ? snap(path, p, hint, reach) : null;
     const onShape = Boolean(snapped && snapped.offset <= DETOUR_M);
     const duration = Math.min(40, Math.max(4, this.interval(track)));
     track.ping = ping;
