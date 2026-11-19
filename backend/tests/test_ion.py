@@ -39,7 +39,8 @@ class TimetableTests(unittest.TestCase):
     def test_trains_leave_each_terminal_on_the_headway(self):
         plan = IonPlan(headway_min=8, transfer_demand=0)
         for direction, offset in (("north", 0.0), ("south", 240.0)):
-            departures = sorted(t.depart_s for t in plan.trips if t.direction == direction)
+            # Inside the hour (the warm-up before it brings trains into service).
+            departures = sorted(t.depart_s for t in plan.trips if t.direction == direction and 0 <= t.scheduled_s < 3600)
             gaps = {round(b - a, 6) for a, b in zip(departures, departures[1:])}
             self.assertEqual(gaps, {480.0})
             self.assertTrue(any(abs(d - offset) < 1e-9 for d in departures))
@@ -53,7 +54,12 @@ class TimetableTests(unittest.TestCase):
         self.assertEqual(line.stops[-1][0], "Conestoga Station")
         trip = next(t for t in plan.trips if t.direction == "north" and t.depart_s == 0.0)
         for i, (name, nose) in enumerate(line.stops[1:-1], start=1):
-            arrive = trip.depart_s + line.offsets[i]
+            # The first leg leaves the terminal over its real trackwork, so arrival
+            # times come from the run, not the line's leg offsets.
+            arrive = plan.arrival_s(trip, name)
+            if i > 1:
+                self.assertAlmostEqual(arrive - plan.arrival_s(trip, line.stops[i - 1][0]),
+                                       line.offsets[i] - line.offsets[i - 1], places=6)
             # At the arrival instant the leg has just ended; from then on it dwells.
             self.assertAlmostEqual(plan.state(trip, arrive)[0], nose, places=6)
             held = [plan.state(trip, arrive + dt) for dt in (0.1, 10.0, ion.DWELL_S - 0.5)]
@@ -146,10 +152,14 @@ class TransferTests(unittest.TestCase):
         sim = run(plan)
         by_id = {trip.train_id: trip for trip in plan.trips}
         for tick in sim.timeline:
-            expected = {t.train_id for t in plan.trips if plan.state(t, tick["minute"] * 60.0) is not None}
-            self.assertEqual({t["id"] for t in tick["trains"]}, expected)
+            # Trains are physical vehicles; each carries the trip it is running.
+            moving = {t.train_id for t in plan.trips if plan.state(t, tick["minute"] * 60.0) is not None}
+            self.assertTrue(moving <= {t["trip_id"] for t in tick["trains"]})
+            self.assertEqual(len({t["id"] for t in tick["trains"]}), len(tick["trains"]))
             for train in tick["trains"]:
-                self.assertEqual(train["nose_m"], plan.nose(by_id[train["id"]], tick["minute"] * 60.0))
+                self.assertTrue(train["id"].startswith("LRV"))
+                if train["trip_id"] in moving:
+                    self.assertEqual(train["nose_m"], plan.nose(by_id[train["trip_id"]], tick["minute"] * 60.0))
 
     def test_adaptive_controller_names_the_ion_train_it_is_staging_for(self):
         plan = IonPlan(transfer_demand=240, delay_min=4)

@@ -104,12 +104,23 @@ class Line:
 
 @dataclass
 class Trip:
+    """A timetabled trip. `train_id` is the trip ID (ION-N3); the physical train
+    that runs it is `vehicle_id`, chosen by dispatch in rail_ops."""
     train_id: str
     direction: str
     scheduled_s: float  # terminal departure on the timetable
-    depart_s: float     # actual terminal departure (after holds and spacing)
+    depart_s: float     # actual terminal departure (after holds, turnbacks and spacing)
     hold_reason: str = ""
     transfers: dict = field(default_factory=dict)  # bus stop id -> riders transferring there
+    trip_hold_s: float = 0.0  # scenario hold on this trip at its first terminal
+    vehicle_id: str | None = None
+    platform: str | None = None
+    station_times: dict = field(default_factory=dict)  # station name -> arrival (actual)
+    decisions: list = field(default_factory=list)
+
+    @property
+    def trip_id(self):
+        return self.train_id
 
     @property
     def delay_s(self):
@@ -117,23 +128,38 @@ class Trip:
 
 
 class IonPlan:
-    """Every ION trip that is on the line during the simulated hour."""
+    """Every ION trip on the line during the simulated hour, run by physical
+    trains through the terminals (rail_ops.RailOps).
 
-    def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0):
+    The timetable starts well before minute 0 (a warm-up of one full cycle),
+    so the trains on the line at minute 0 got there through real turnbacks.
+    """
+
+    def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0,
+                 platform_hold=None, reassign=True):
+        import rail_ops
         self.headway_s = headway_min * 60.0
         self.duration_s = duration_min * 60.0
         self.lines = {"north": Line("north"), "south": Line("south")}
         self.trips = []
+        cycle = self.lines["north"].trip_seconds + self.lines["south"].trip_seconds + 2 * rail_ops.TURN_S
+        warm = cycle + 2 * self.headway_s
         for direction, offset in (("north", 0.0), ("south", self.headway_s / 2.0)):
-            line = self.lines[direction]
-            first = math.floor((-line.trip_seconds - offset) / self.headway_s)
+            first = math.floor((-warm - offset) / self.headway_s)
             last = math.floor((self.duration_s - offset) / self.headway_s)
             for k in range(first, last + 1):
                 t = offset + k * self.headway_s
                 prefix = "N" if direction == "north" else "S"
                 self.trips.append(Trip(f"ION-{prefix}{k}", direction, t, t))
+        self.platform_hold = platform_hold
         self.events = self._assign_events(transfer_demand, delay_min)
-        self._space_out()
+        self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign).run()
+        for trip in self.trips:
+            if trip.station_times:
+                trip.depart_s = trip.depart_s  # set by RailOps at departure
+                late = trip.depart_s - trip.scheduled_s
+                if late > 1 and not trip.hold_reason:
+                    trip.hold_reason = getattr(trip, "depart_reason", "")
         self._assign_transfers(transfer_demand)
 
     def _assign_events(self, demand, delay_min):
@@ -153,20 +179,11 @@ class IonPlan:
                 continue
             trip = min(candidates, key=lambda t: t.scheduled_s)
             if delay:
-                trip.depart_s += delay * 60.0
+                trip.trip_hold_s = delay * 60.0
                 trip.hold_reason = f"held {delay} min at Fairway"
             riders = round(demand * EVENT_SHARE * share)
             events.append({"trip": trip, "riders": riders, "minute": minute})
         return events
-
-    def _space_out(self):
-        for direction in ("north", "south"):
-            previous = None
-            for trip in sorted((t for t in self.trips if t.direction == direction), key=lambda t: t.scheduled_s):
-                if previous is not None and trip.depart_s < previous.depart_s + MIN_SEPARATION_S:
-                    trip.depart_s = previous.depart_s + MIN_SEPARATION_S
-                    trip.hold_reason = trip.hold_reason or f"held behind late {previous.train_id}"
-                previous = trip
 
     def _assign_transfers(self, demand):
         """Give every transfer rider a hub arrival inside the run.
@@ -204,6 +221,10 @@ class IonPlan:
                 trip.transfers[stop_id] = each + (1 if i < extra else 0)
 
     def arrival_s(self, trip, station):
+        """When `trip` reaches `station` (actual, from the rail run; the
+        timetable offset for trips the run did not reach)."""
+        if station in trip.station_times:
+            return trip.station_times[station]
         return trip.depart_s + self.lines[trip.direction].arrival_offset(station)
 
     def hub_arrivals(self):
@@ -219,30 +240,28 @@ class IonPlan:
     def state(self, trip, t):
         """Where `trip` is `t` seconds into the simulation.
 
-        None before it leaves its terminal or after it reaches the far end;
-        otherwise (nose_m, station it is standing at or None, leg index).
-        A train leaves its first terminal at once and dwells DWELL_S at every
-        later stop before running the next leg.
+        None before its train leaves the first terminal or after it stops at
+        the far one; otherwise (nose_m on the line, station it stands at or
+        None, leg index). In a terminal's trackwork the nose is mapped onto
+        the line (see rail_ops.line_nose).
         """
-        line = self.lines[trip.direction]
-        x = t - trip.depart_s
-        if x < 0 or x > line.trip_seconds:
+        found = self.ops.trip_pose(trip, t)
+        if found is None:
             return None
-        for i, leg in enumerate(line.legs):
-            start = line.offsets[i] + (DWELL_S if i else 0.0)
-            if x < start:
-                return leg.from_m, leg.from_station, i
-            if x <= line.offsets[i + 1]:
-                return leg.from_m + leg.run().distance(x - start), None, i
-        last = line.legs[-1]
-        return last.to_m, last.to_station, len(line.legs) - 1
+        return found["nose_line"], found["station"], found["leg"]
 
     def nose(self, trip, t):
         found = self.state(trip, t)
         return None if found is None else found[0]
 
+    def trains_at(self, t):
+        """Every train in service at t: vehicle, trip and position."""
+        return self.ops.poses(t)
+
     def schedule(self):
-        """Everything the browser needs to reproduce train positions exactly."""
+        """Everything the browser needs to reproduce train positions exactly:
+        the line legs, each physical train's movement plan, and the decisions."""
+        window = [t for t in self.trips if 0 <= t.scheduled_s < self.duration_s]
         return {
             "headway_min": self.headway_s / 60.0,
             "dwell_s": DWELL_S,
@@ -262,9 +281,21 @@ class IonPlan:
                     "depart_s": trip.depart_s,
                     "hold": trip.hold_reason,
                     "transfers": trip.transfers,
+                    "vehicle_id": trip.vehicle_id,
+                    "platform": trip.platform,
+                    "arrival_platform": getattr(trip, "arrival_platform", None),
+                    "dispatch": getattr(trip, "dispatch_note", ""),
+                    "decisions": [d.id for d in trip.decisions],
                 }
                 for trip in self.trips
+                if trip.station_times and min(trip.station_times.values()) < self.duration_s + 600
+                and max(trip.station_times.values()) > -600
             ],
+            "vehicles": self.ops.plans(),
+            "decisions": [d.to_dict() for d in self.ops.decisions if -600 <= d.t <= self.duration_s + 600],
+            "holds": self.ops.holds,
+            "metrics": self.ops.metrics(window),
+            "platform_hold": self.platform_hold,
         }
 
 

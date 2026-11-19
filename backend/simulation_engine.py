@@ -566,33 +566,49 @@ class TransitSimulation:
         self.timeline.append(snapshot)
 
     def _train_snapshot(self):
-        """ION trains on the line at this minute: where, and who is transferring."""
+        """ION trains in service at this minute: physical train, its trip, where,
+        and who is transferring."""
         out = []
         t = self.time * 60.0
-        for trip in self.ion.trips:
-            found = self.ion.state(trip, t)
-            if found is None:
+        for pose in self.ion.trains_at(t):
+            trip = pose["trip"]
+            if trip is None:
                 continue
-            nose, station, leg = found
-            lon, lat = ion.position(trip.direction, nose)
             line = self.ion.lines[trip.direction]
             ahead = [
                 (stop_id, riders) for stop_id, riders in trip.transfers.items()
                 if self.ion.arrival_s(trip, next(n for n, s in ion.HUBS.items() if s == stop_id)) >= t
             ]
+            found = self.ion.state(trip, t)
+            leg = found[2] if found else (0 if pose["route"] and pose["route"].startswith("depart") else len(line.legs) - 1)
+            station = pose["station"]
+            lon, lat = pose["lonlat"]
             out.append({
-                "id": trip.train_id,
+                "id": pose["vehicle_id"],
+                "trip_id": trip.train_id,
                 "direction": trip.direction,
-                "nose_m": nose,
+                "nose_m": pose["nose_line"],
                 "station": station,
-                "next_station": line.legs[leg].to_station if station is None else station,
+                "next_station": station or line.legs[min(leg, len(line.legs) - 1)].to_station,
                 "lon": lon,
                 "lat": lat,
-                "delay_min": round(trip.delay_s / 60.0, 1),
+                "delay_min": round(max(0.0, trip.depart_s - trip.scheduled_s) / 60.0, 1),
                 "hold": trip.hold_reason,
+                "terminal": pose["terminal"],
+                "activity": pose["note"],
                 "transfers_ahead": {stop_id: riders for stop_id, riders in ahead if riders},
             })
         return out
+
+    def _log_rail_decisions(self):
+        """Rail decisions taken during this minute, into the event log."""
+        for d in self.ion.ops.decisions:
+            if math.floor(d.t / 60) == self.time:
+                self.log(f"{d.vehicle_id}{' · ' + d.trip_id if d.trip_id else ''}: {d.trigger} → {d.chosen}",
+                         "rail", train_id=d.vehicle_id,
+                         reason="; ".join(f"{o['option']}: {o['reason']}" for o in d.options if not o["feasible"]) or None)
+                self.events[-1]["decision_id"] = d.id
+                self.events[-1]["level"] = d.level
 
     def run(self):
         self.log("Waterloo Corridor Test Scenario started", "system")
@@ -602,6 +618,7 @@ class TransitSimulation:
             if minute > 0:
                 self._spawn_background_demand()
             self._process_train_arrivals()
+            self._log_rail_decisions()
             self._scenario_events()
             self._dispatch_logic()
             self._advance_buses()

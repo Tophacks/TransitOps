@@ -67,14 +67,25 @@ def traffic_case():
     return {"traffic_multiplier": 1.15, "timeline": frames}
 
 
+HOLD = {"terminal": "fairway", "platform": "2", "minute": 20, "minutes": 12, "reason": "door fault"}
+
+
 def ion_cases():
-    """ION trains: the timetable the API returns, noses every 3.7 s for a few
-    trips, and every train's nose at each whole minute of a simulation run."""
-    plan = IonPlan(duration_min=60, headway_min=8, transfer_demand=110, delay_min=4)
+    """ION trains: the schedule the API returns (with every train's movement
+    plan), each train's nose and centre every 7.3 s, and every train at each
+    whole minute of a simulation run with a platform hold at Fairway."""
+    plan = IonPlan(duration_min=60, headway_min=8, transfer_demand=110, delay_min=4, platform_hold=HOLD)
     samples = []
-    for trip in plan.trips[::5]:
-        times = [round(trip.depart_s + i * 3.7, 1) for i in range(int(plan.lines[trip.direction].trip_seconds / 3.7) + 2)]
-        samples.append({"id": trip.train_id, "times": times, "noses": [plan.nose(trip, t) for t in times]})
+    for train in plan.ops.trains:
+        times = [round(-600.0 + i * 7.3, 1) for i in range(int(4800 / 7.3))]
+        rows = []
+        for t in times:
+            found = plan.ops.where(train, t)
+            if found is None:
+                continue
+            seg, s, _ = found
+            rows.append([t, round(s, 6), list(plan.ops.lonlat(seg, s))])
+        samples.append({"id": train.vehicle_id, "rows": rows[::3] if train.vehicle_id not in ("LRV501", "LRV503") else rows})
     sim = TransitSimulation([Bus(f"B{101 + i}") for i in range(3)], plan, duration=60)
     sim.run()
     minutes = [{"minute": tick["minute"], "trains": {t["id"]: t["nose_m"] for t in tick["trains"]}} for tick in sim.timeline]

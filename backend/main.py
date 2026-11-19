@@ -1,6 +1,8 @@
 from copy import deepcopy
 
 from fastapi import FastAPI
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ion import IonPlan
@@ -30,6 +32,12 @@ class SimulationRequest(BaseModel):
     emergency_dispatch_minute: int | None = Field(default=None, ge=1, le=59)
     seed: int = Field(default=17, ge=0, le=1000000)
     ion_headway: int = Field(default=8, ge=4, le=20)
+    # An extra platform hold at an ION terminal (e.g. a door fault): the train
+    # standing at, or next to stop at, that platform cannot leave until it ends.
+    platform_hold_terminal: Literal["fairway", "conestoga"] | None = None
+    platform_hold_platform: Literal["1", "2"] = "2"
+    platform_hold_minute: int = Field(default=20, ge=0, le=59)
+    platform_hold_minutes: int = Field(default=12, ge=1, le=40)
 
 
 def metrics_to_dict(metrics):
@@ -95,21 +103,39 @@ def network_definition():
     }
 
 
-def ion_plan(payload: SimulationRequest):
+def platform_hold(payload: SimulationRequest):
+    if payload.platform_hold_terminal is None:
+        return None
+    return {
+        "terminal": payload.platform_hold_terminal,
+        "platform": payload.platform_hold_platform,
+        "minute": payload.platform_hold_minute,
+        "minutes": payload.platform_hold_minutes,
+        "reason": "door fault",
+    }
+
+
+def ion_plan(payload: SimulationRequest, reassign: bool = True):
+    """The ION run: physical trains through both terminals. The adaptive case
+    lets dispatch give a threatened trip to another train; the baseline only
+    holds departures."""
     return IonPlan(
         duration_min=60,
         headway_min=payload.ion_headway,
         transfer_demand=payload.passenger_demand,
         delay_min=payload.train_delay,
+        platform_hold=platform_hold(payload),
+        reassign=reassign,
     )
 
 
 def run_case(payload: SimulationRequest, intelligent: bool):
     buses = [Bus(f"B{101 + i}") for i in range(payload.fleet_size)]
+    plan = ion_plan(payload, reassign=intelligent)
 
     sim = TransitSimulation(
         buses=deepcopy(buses),
-        ion_plan=ion_plan(payload),
+        ion_plan=plan,
         intelligent=intelligent,
         duration=60,
         traffic_multiplier=payload.traffic_multiplier,
@@ -126,6 +152,7 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         "metrics": metrics_to_dict(metrics),
         "events": sim.events,
         "timeline": sim.timeline,
+        "ion": plan.schedule(),
     }
 
 
@@ -158,7 +185,8 @@ def simulate(payload: SimulationRequest):
     return {
         "scenario": payload.model_dump(),
         "network": network_definition(),
-        "ion": ion_plan(payload).schedule(),
+        # The map plays the adaptive run; each case also carries its own ION run.
+        "ion": smart["ion"],
         "baseline": baseline,
         "smart": smart,
         "impact": impact,
