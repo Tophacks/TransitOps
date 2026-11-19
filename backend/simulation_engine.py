@@ -299,6 +299,8 @@ class TransitSimulation:
                     )
 
         bus.segment_hold_minutes = signal_delay
+        # At a red light the bus waits behind the cars already queued there.
+        bus.segment_queue_cars = corridor.queue_cars(self.traffic_multiplier) if signal_delay else 0
         congestion = self._congested_minutes(origin, target, base, stop_at_signal=bool(signal_delay))
         return congestion + signal_delay
 
@@ -311,6 +313,7 @@ class TransitSimulation:
         bus.segment_minutes = self._congested_minutes("YARD", "CENTRAL", YARD_BASE_MINUTES)
         bus.segment_progress = 0.0
         bus.segment_hold_minutes = 0
+        bus.segment_queue_cars = 0
         bus.schedule_deviation = 1 if staged else 0
 
         if staged:
@@ -472,7 +475,8 @@ class TransitSimulation:
         if bus.state == BusState.YARD:
             return None
         origin, target = self._segment_ids(bus)
-        run = corridor.bus_run(origin, target, max(1, bus.segment_minutes), bus.segment_hold_minutes)
+        run = corridor.bus_run(origin, target, max(1, bus.segment_minutes), bus.segment_hold_minutes,
+                               bus.segment_queue_cars)
         elapsed = bus.segment_minutes if bus.state == BusState.DWELLING else bus.segment_elapsed
         distance = run.distance(elapsed * 60.0)
         return {
@@ -481,6 +485,7 @@ class TransitSimulation:
             "elapsed": elapsed,
             "minutes": bus.segment_minutes,
             "hold_minutes": bus.segment_hold_minutes,
+            "queue_cars": bus.segment_queue_cars,
             "length_m": run.length,
             "distance_m": round(distance, 1),
         }

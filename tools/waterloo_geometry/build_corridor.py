@@ -502,6 +502,7 @@ def build(gtfs, lanelets=None):
         )
 
     routes = build_context_routes(bus, stops, report)
+    crossings = find_ion_crossings(bus, stops, ion, lrt_shapes, report)
 
     stops_out = {}
     for name, p in stop_points.items():
@@ -524,8 +525,108 @@ def build(gtfs, lanelets=None):
         "segments": segments,
         "ion": ion,
         "routes": routes,
+        "ion_crossings": crossings,
     }
     return data, report
+
+
+CROSSING_MIN_ANGLE = 40     # degrees between track and road
+CROSSING_CLUSTER_M = 40     # crossings this close along the track are one
+STREET_RUNNING_M = 12       # a bus street this close and parallel = street running
+
+
+def find_ion_crossings(bus, stops, ion, lrt_shapes, report):
+    """Where a road crosses the ION track at grade, for the crossing gates.
+
+    A crossing is a GRT bus street cutting across the northbound track at
+    40 degrees or more. Where the track runs along a bus street (King St in
+    Uptown, Charles St), the crossing is a signalised intersection with no
+    gates, so it is dropped. Roads without a bus route are not found; the
+    gates are an illustration on the map, not an inventory.
+    """
+    shapes = load_shapes(bus / "shapes.txt")
+    cells, segs = defaultdict(list), []
+    for pts in shapes.values():
+        for a, c in zip(pts, pts[1:]):
+            if dist(a, c) < 0.5:
+                continue
+            segs.append((a, c))
+            for gx in range(int(min(a[0], c[0]) // 100), int(max(a[0], c[0]) // 100) + 1):
+                for gy in range(int(min(a[1], c[1]) // 100), int(max(a[1], c[1]) // 100) + 1):
+                    cells[(gx, gy)].append(len(segs) - 1)
+
+    def near(p, ring=0):
+        out = set()
+        for gx in range(int(p[0] // 100) - ring, int(p[0] // 100) + ring + 1):
+            for gy in range(int(p[1] // 100) - ring, int(p[1] // 100) + ring + 1):
+                out.update(cells.get((gx, gy), []))
+        return out
+
+    def crossing_angle(h0, h1):
+        a = abs(turn(h0, h1))
+        return min(a, 180 - a)
+
+    track = strip_spurs(list(lrt_shapes[ION_SHAPES["north"]]))
+    cum = cumulative(track)
+    hits = []
+    for k, (p1, p2) in enumerate(zip(track, track[1:])):
+        cand = near(p1) | near(p2)
+        for i in cand:
+            q1, q2 = segs[i]
+            d = (p2[0] - p1[0]) * (q2[1] - q1[1]) - (p2[1] - p1[1]) * (q2[0] - q1[0])
+            if abs(d) < 1e-9:
+                continue
+            t = ((q1[0] - p1[0]) * (q2[1] - q1[1]) - (q1[1] - p1[1]) * (q2[0] - q1[0])) / d
+            u = ((q1[0] - p1[0]) * (p2[1] - p1[1]) - (q1[1] - p1[1]) * (p2[0] - p1[0])) / d
+            angle = crossing_angle(heading(p1, p2), heading(q1, q2))
+            if 0 <= t <= 1 and 0 <= u <= 1 and angle >= CROSSING_MIN_ANGLE:
+                pt = (p1[0] + (p2[0] - p1[0]) * t, p1[1] + (p2[1] - p1[1]) * t)
+                hits.append((cum[k] + dist(p1, pt), pt, heading(q1, q2)))
+    hits.sort(key=lambda h: h[0])
+    clusters = []
+    for hit in hits:
+        if clusters and hit[0] - clusters[-1][-1][0] < CROSSING_CLUSTER_M:
+            clusters[-1].append(hit)
+        else:
+            clusters.append([hit])
+
+    def street_running(s0):
+        for ds in (-40, -20, 20, 40):
+            s = min(cum[-1], max(0.0, s0 + ds))
+            i = min(len(cum) - 2, next(j for j in range(len(cum) - 1) if cum[j + 1] >= s))
+            p, h = point_at(track, cum, s), heading(track[i], track[i + 1])
+            for j in near(p, 1):
+                q1, q2 = segs[j]
+                if crossing_angle(h, heading(q1, q2)) < 20 and project(p, q1, q2)[2] < STREET_RUNNING_M:
+                    return True
+        return False
+
+    stop_points = [(sid, to_xy(float(row["stop_lat"]), float(row["stop_lon"])), row["stop_name"]) for sid, row in stops.items()]
+    out = []
+    for cluster in clusters:
+        s0 = sum(h[0] for h in cluster) / len(cluster)
+        if street_running(s0):
+            continue
+        _, pt, road_heading = cluster[len(cluster) // 2]
+        lat, lon = to_latlon(*pt)
+        at = {}
+        for direction in ("north", "south"):
+            dtrack = [to_xy(la, lo) for lo, la, _ in ion[direction]["path"]]
+            dcum = cumulative(dtrack)
+            s_dir, offset = along(dtrack, dcum, pt)
+            at[direction] = round(s_dir, 1)
+        name = min(stop_points, key=lambda item: dist(item[1], pt))[2]
+        out.append({
+            "id": f"X{len(out) + 1}",
+            "lon": round(lon, 7), "lat": round(lat, 7),
+            "road_bearing": round(road_heading % 180, 1),
+            "at_m": at,
+            "near": name,
+        })
+        report.append(f"ION crossing {out[-1]['id']} near {name}: {lat:.5f},{lon:.5f}, "
+                      f"{at['north']:.0f} m along northbound, road at {road_heading % 180:.0f}°")
+    report.append(f"ION crossings: {len(out)} gated (street-running intersections excluded)")
+    return out
 
 
 def build_context_routes(bus, stops, report):

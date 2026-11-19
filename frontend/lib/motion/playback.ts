@@ -8,6 +8,8 @@ export type SegmentMotion = {
   elapsed: number;
   minutes: number;
   hold_minutes: number;
+  /** cars queued ahead of the bus at a red signal */
+  queue_cars?: number;
   length_m: number;
   distance_m: number;
 };
@@ -31,6 +33,10 @@ export type BusPose = {
   speed: number;
   centre: LonLat;
   heading: number;
+  /** cars queued ahead at a red signal on this segment, and where the bus waits */
+  queueCars: number;
+  holdAt: number | null;
+  holdMinutes: number;
 };
 
 // Axle positions relative to the bus's route distance (metres, + = ahead).
@@ -70,7 +76,7 @@ export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[],
     const e0 = sameSegment(before?.segment, motion) ? before!.segment!.elapsed : 0;
     const e1 = motion.elapsed;
     const elapsed = e0 + (e1 - e0) * frac;
-    const run = corridor.run(motion.from, motion.to, motion.minutes, motion.hold_minutes);
+    const run = corridor.run(motion.from, motion.to, motion.minutes, motion.hold_minutes, motion.queue_cars ?? 0);
     const segment = corridor.segment(motion.from, motion.to);
     const t = elapsed * 60;
     const distance = run.distance(t);
@@ -87,6 +93,9 @@ export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[],
       speed: e1 > e0 ? run.speedAt(t) : 0,
       centre,
       heading: bearing(rear, front),
+      queueCars: motion.queue_cars ?? 0,
+      holdAt: run.holdPosition,
+      holdMinutes: motion.hold_minutes,
     });
   }
   return separate(corridor, poses);

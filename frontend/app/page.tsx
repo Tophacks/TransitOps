@@ -348,6 +348,7 @@ export default function Home() {
             timeline={timeline}
             clock={playback.clock}
             ionSchedule={data?.ion ?? null}
+            trafficMultiplier={data?.scenario.traffic_multiplier ?? controls.traffic_multiplier}
           />
         ) : (
           <RegionalMap network={network} snapshot={snapshot} poses={poses} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>

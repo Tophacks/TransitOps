@@ -25,6 +25,11 @@ CASES = [
     ("CENTRAL", "UW", 28, 0),
     ("YARD", "CENTRAL", 1, 0),
 ]
+# Red-signal holds behind queued cars: (from, to, minutes, hold, cars).
+QUEUE_CASES = [
+    ("UW", "WATERLOO_SQUARE", 9, 1, 2),
+    ("CENTRAL", "UW", 29, 1, 3),
+]
 
 
 def build():
@@ -39,7 +44,27 @@ def build():
             "times": times, "distances": distances,
             "positions": [list(corridor.position(seg, s)) for s in distances[::5]],
         })
-    return {"cases": cases, "ion": ion_cases()}
+    for a, b, minutes, hold, cars in QUEUE_CASES:
+        run = corridor.bus_run(a, b, minutes, hold, cars)
+        times = [round(i * 7.3, 1) for i in range(int(minutes * 60 / 7.3) + 2)]
+        cases.append({"from": a, "to": b, "minutes": minutes, "hold": hold, "queue": cars,
+                      "times": times, "distances": [run.distance(t) for t in times], "positions": []})
+    return {"cases": cases, "ion": ion_cases(), "traffic": traffic_case()}
+
+
+def traffic_case():
+    """A real 60-minute run, trimmed to what the browser's traffic needs: each
+    bus's segment timing and every signal's phase, minute by minute."""
+    sim = TransitSimulation([Bus(f"B{101 + i}") for i in range(3)],
+                            IonPlan(duration_min=60, headway_min=8, transfer_demand=110, delay_min=4),
+                            intelligent=True, duration=60, traffic_multiplier=1.15)
+    sim.run()
+    frames = [{
+        "minute": tick["minute"],
+        "buses": [{"id": b["id"], "state": b["state"], "segment": b["segment"]} for b in tick["buses"]],
+        "phases": {i["id"]: i["phase"] for i in tick["intersections"]},
+    } for tick in sim.timeline]
+    return {"traffic_multiplier": 1.15, "timeline": frames}
 
 
 def ion_cases():

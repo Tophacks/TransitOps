@@ -11,7 +11,9 @@ import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
-import { busBody, emptyBodies, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
+import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
+import { CAR_LENGTH, CAR_WIDTH, TrafficStream, queuedCars, type CarPose } from "../../lib/motion/traffic.ts";
+import { gateStates } from "../../lib/motion/gates.ts";
 import { LiveTracker, type LivePing, type LivePose } from "../../lib/motion/live.ts";
 import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.ts";
 import { corridor } from "../../lib/motion/scene.ts";
@@ -30,6 +32,8 @@ type Props = {
   clock: PlaybackClock;
   /** ION timetable from the Python simulator (null before a run) */
   ionSchedule?: IonSchedule | null;
+  /** the run's traffic multiplier, for the simulated background cars */
+  trafficMultiplier?: number;
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -428,6 +432,7 @@ function liveBody(pose: LivePose, selected: boolean, out: BodyLayers) {
 export default function GeospatialMap({
   network, snapshot, decision, selected, onSelect, live, onModeChange, sumoSnapshot = null, timeline, clock,
   ionSchedule = null,
+  trafficMultiplier = 1,
 }: Props) {
   // Same timetable and trip model as backend/ion.py: trains sit exactly where
   // the simulator put them at every minute.
@@ -437,6 +442,22 @@ export default function GeospatialMap({
   );
   const timetableRef = useRef(timetable);
   timetableRef.current = timetable;
+  // Simulated background cars for the whole run (computed once per run).
+  const traffic = useMemo(() => {
+    if (timeline.length < 2) return null;
+    return new TrafficStream(corridor, timeline, {
+      traffic: trafficMultiplier,
+      phaseAt: (signalId, minute) =>
+        timeline[Math.min(timeline.length - 1, minute)]?.intersections.find((i) => i.id === signalId)?.phase ?? "GREEN",
+    });
+  }, [timeline, trafficMultiplier]);
+  const trafficRef = useRef(traffic);
+  trafficRef.current = traffic;
+  const [night, setNight] = useState(false);
+  const sumoHeadings = useRef(new Map<string, { lon: number; lat: number; heading: number }>());
+  const frameCosts = useRef<number[]>([]);
+  const nightRef = useRef(night);
+  nightRef.current = night;
   const host = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapInstance | null>(null);
   const popupRef = useRef<Popup | null>(null);
@@ -512,6 +533,8 @@ export default function GeospatialMap({
             map: currentMap,
             scene: () => sceneRef.current,
             seek: (seconds: number) => clock.seek(seconds),
+            // Milliseconds spent building each simulation frame (scene + bodies + setData).
+            frameCosts: frameCosts.current,
             live: () => trackerRef.current.poses(performance.now() / 1000)
               .map(({ path: _path, ...pose }) => pose),
           };
@@ -644,8 +667,24 @@ export default function GeospatialMap({
     if (sumoSnapshot) {
       const buses = sumo.filter((item) => item.type.toLowerCase().includes("bus"));
       setData(map, "buses", featureCollection(buses.map((item) => point(item.lon, item.lat, { id: item.id }))));
-      setData(map, "vehicle-solids", featureCollection([]));
-      setData(map, "vehicle-ground", featureCollection([]));
+      // SUMO's cars as 3D bodies, facing the way they last moved.
+      const bodies = emptyBodies();
+      lighting.night = nightRef.current;
+      const seen = sumoHeadings.current;
+      for (const item of traffic) {
+        const last = seen.get(item.id);
+        let heading = last?.heading ?? 0;
+        if (last) {
+          const dx = (item.lon - last.lon) * Math.cos((item.lat * Math.PI) / 180);
+          const dy = item.lat - last.lat;
+          if (Math.hypot(dx, dy) > 2e-6) heading = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+        }
+        seen.set(item.id, { lon: item.lon, lat: item.lat, heading });
+        carBody({ id: item.id, centre: [item.lon, item.lat], heading, speed: item.speed_mps, opacity: 1, kind: "traffic", segment: "", s: 0 },
+          bodies, CAR_LENGTH, CAR_WIDTH);
+      }
+      setData(map, "vehicle-solids", featureCollection(bodies.solids));
+      setData(map, "vehicle-ground", featureCollection(bodies.ground));
     }
   }, [network, snapshot, sumoSnapshot, live, ready]);
 
@@ -658,20 +697,39 @@ export default function GeospatialMap({
     const draw = () => {
       const t = clock.time();
       const state = sceneState.current;
-      const key = `${t}|${state.selectedBus}|${state.animatedFocus}|${state.follow}`;
+      // Redraw twice a second even when paused, so crossing lights flash.
+      const flash = Math.floor(performance.now() / 500);
+      const key = `${t}|${state.selectedBus}|${state.animatedFocus}|${state.follow}|${nightRef.current}|${flash}|${map.getZoom() >= BODY_MIN_ZOOM}`;
       if (key !== lastKey) {
         lastKey = key;
+        const started = performance.now();
         const scene: Scene = {
           buses: busPoses(corridor, callbacks.current.timeline, t),
           trains: timetableRef.current?.trains(t) ?? [],
         };
         sceneRef.current = scene;
         const bodies = emptyBodies();
+        lighting.night = nightRef.current;
         for (const bus of scene.buses) busBody(bus, bus.id === state.selectedBus, bodies);
         for (const train of scene.trains) trainBody(train, bodies);
+        // Simulated cars and crossing gates: street zoom only, and only in view.
+        if (map.getZoom() >= BODY_MIN_ZOOM) {
+          const bounds = map.getBounds();
+          const pad = 0.002;
+          const inView = ([lon, lat]: [number, number]) =>
+            lon > bounds.getWest() - pad && lon < bounds.getEast() + pad && lat > bounds.getSouth() - pad && lat < bounds.getNorth() + pad;
+          const cars: CarPose[] = [...(trafficRef.current?.cars(t) ?? []), ...queuedCars(corridor, scene.buses)];
+          for (const car of cars) if (inView(car.centre)) carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
+          for (const gate of gateStates(corridor.data.ion_crossings ?? [], scene.trains)) {
+            if (inView([gate.crossing.lon, gate.crossing.lat])) gateBodies(gate, performance.now() / 1000, bodies);
+          }
+        }
         setData(map, "vehicle-solids", featureCollection(bodies.solids));
         setData(map, "vehicle-ground", featureCollection(bodies.ground));
         setData(map, "buses", featureCollection(scene.buses.map((bus) => point(bus.centre[0], bus.centre[1], { id: bus.id }))));
+        const costs = frameCosts.current;
+        costs.push(performance.now() - started);
+        if (costs.length > 600) costs.splice(0, costs.length - 600);
         const focusPose = scene.buses.find((bus) => bus.id === state.animatedFocus)?.centre
           ?? scene.trains.find((train) => train.id === state.animatedFocus)?.sections[0].centre;
         const popup = popupRef.current;
@@ -806,6 +864,16 @@ export default function GeospatialMap({
     }
   }
 
+  // Night: darker buildings, and lit windows, headlights and tail-lights on
+  // every vehicle body (lighting.night is read when bodies are built).
+  useEffect(() => {
+    lighting.night = night;
+    const map = mapRef.current;
+    if (!map || !ready || !map.getLayer("corridor-buildings")) return;
+    map.setPaintProperty("corridor-buildings", "fill-extrusion-color", night ? "#252f3b" : "#445363");
+    if (map.getLayer("background")) map.setPaintProperty("background", "background-color", night ? "#05080c" : "rgb(12,12,12)");
+  }, [night, ready]);
+
   function toggleTilt() {
     const map = mapRef.current;
     if (!map) return;
@@ -834,6 +902,7 @@ export default function GeospatialMap({
       <div className="geoMapOverlay">
         <div className="geoMapControls" role="group" aria-label="Map layers">
           <button type="button" aria-pressed={tilted} disabled={!ready} onClick={toggleTilt}>3D</button>
+          <button type="button" aria-pressed={night} disabled={!ready} onClick={() => setNight(!night)}>Night</button>
           <button type="button" disabled={!ready} onClick={() => goTo(campusCamera)}>Campus</button>
           {!live && <button type="button" disabled={!ready} onClick={() => goTo(ionCurveCamera)}>ION curve</button>}
           {!live && <button type="button" disabled={!ready} onClick={() => goTo(ionLineCamera)}>ION line</button>}
@@ -877,7 +946,8 @@ export default function GeospatialMap({
               <strong><i aria-hidden="true" />Simulated · not live vehicles</strong>
               <span>Python simulated bus positions, moving along GRT street paths</span>
               <span>ION trains from the same Python simulator, on the real track</span>
-              <span className="simBadgeShort">Python simulator · buses and ION trains</span>
+              <span>Background cars and ION crossing gates are simulated too{night ? " · night lighting is illustrative" : ""}</span>
+              <span className="simBadgeShort">Python simulator · buses, ION, cars and gates{night ? " · night" : ""}</span>
             </div>
           )}
       </div>

@@ -57,6 +57,8 @@ class Bus:
     segment_elapsed: int = 0
     dwell_minutes: int = 0
     segment_hold_minutes: int = 0
+    # cars queued ahead of the bus at a red signal on this segment
+    segment_queue_cars: int = 0
     onboard: list[Passenger] = field(default_factory=list)
     schedule_deviation: int = 0
 

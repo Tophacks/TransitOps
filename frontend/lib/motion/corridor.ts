@@ -42,7 +42,21 @@ export type CorridorData = {
   segments: CorridorSegment[];
   ion: Record<"north" | "south", IonTrack>;
   routes: ContextRoute[];
+  /** road crossings of the ION track, for the simulated crossing gates */
+  ion_crossings?: import("./gates.ts").IonCrossing[];
 };
+
+/** Mirrors backend/corridor.py: one queued car plus its gap. */
+export const CAR_SPACING_M = 7.0;
+/** Front bumper ahead of the bus's distance-along reference point. */
+export const BUS_FRONT_M = 5.75;
+
+/** Where a bus stops at a red signal: at the stop line, or with its front
+ * bumper just behind `queue` cars that fill the space up to the line. */
+export function holdPosition(segment: CorridorSegment, queue = 0) {
+  if (!queue) return segment.signal.stop_line_m;
+  return Math.max(5.0, segment.signal.stop_line_m - BUS_FRONT_M - queue * CAR_SPACING_M);
+}
 
 export class Corridor {
   readonly data: CorridorData;
@@ -61,13 +75,13 @@ export class Corridor {
   }
 
   /** Same trip model the simulator used for this segment (cached). */
-  run(from: string, to: string, minutes: number, holdMinutes = 0) {
-    const key = `${from}>${to}:${minutes}:${holdMinutes}`;
+  run(from: string, to: string, minutes: number, holdMinutes = 0, queue = 0) {
+    const key = `${from}>${to}:${minutes}:${holdMinutes}:${queue}`;
     let run = this.runs.get(key);
     if (!run) {
       const segment = this.segment(from, to);
       run = new Run(segment.length_m, segment.curves, minutes * 60, {
-        holdAt: holdMinutes ? segment.signal.stop_line_m : null,
+        holdAt: holdMinutes ? holdPosition(segment, queue) : null,
         holdS: holdMinutes * 60,
       });
       this.runs.set(key, run);

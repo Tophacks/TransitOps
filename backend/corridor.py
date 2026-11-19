@@ -239,8 +239,27 @@ def free_flow_minutes(from_id, to_id, stop_at_signal=False):
     return max(1, math.ceil(free_flow_seconds(from_id, to_id, stop_at_signal) / 60.0))
 
 
+CAR_SPACING_M = 7.0  # one queued car: ~4.5 m long plus the gap to the next
+
+
+def queue_cars(traffic_multiplier):
+    """Cars waiting ahead of the bus at a red signal: more in heavier traffic."""
+    return max(1, min(4, round(1 + 1.5 * (traffic_multiplier - 0.5))))
+
+
+BUS_FRONT_M = 5.75   # front bumper ahead of the bus's distance-along reference point
+
+
+def hold_position(seg, queue=0):
+    """Where a bus stops at a red signal: at the stop line, or with its front
+    bumper just behind `queue` cars that fill the space up to the line."""
+    if not queue:
+        return seg["signal"]["stop_line_m"]
+    return max(5.0, seg["signal"]["stop_line_m"] - BUS_FRONT_M - queue * CAR_SPACING_M)
+
+
 @lru_cache(maxsize=256)
-def bus_run(from_id, to_id, minutes, hold_minutes=0):
+def bus_run(from_id, to_id, minutes, hold_minutes=0, queue=0):
     seg = segment(from_id, to_id)
-    hold_at = seg["signal"]["stop_line_m"] if hold_minutes else None
+    hold_at = hold_position(seg, queue) if hold_minutes else None
     return Run(seg["length_m"], tuple(map(tuple, seg["curves"])), minutes * 60.0, hold_at, hold_minutes * 60.0)

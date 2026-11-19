@@ -57,6 +57,15 @@ the Region's Open Data Licence.
    and comes back, which would split it. (At 80.566 W the 201 did, for 120 m
    at the Columbia St / Fischer-Hallman corner.)
 
+7. Finds where roads cross the ION track at grade, for the map's simulated
+   crossing gates (`ion_crossings`): a GRT bus street cutting across the
+   northbound track at 40 degrees or more, with crossings in street-running
+   sections (King St in Uptown, Charles St, central Kitchener) dropped because
+   signals, not gates, control them. Roads without a bus route are missed, so
+   this is an illustration, not an inventory of the Region's crossings.
+   Current output: 8 crossings, including Erb St, University Ave, UW Station,
+   Columbia St and Northfield Dr.
+
 ## Regenerate
 
 ```bash

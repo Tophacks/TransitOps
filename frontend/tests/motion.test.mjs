@@ -16,7 +16,7 @@ const metres = (a, b) => Math.hypot(...deltaMetres(a, b));
 
 test("browser kinematics reproduce the Python simulator exactly", () => {
   for (const c of parity.cases) {
-    const run = corridor.run(c.from, c.to, c.minutes, c.hold);
+    const run = corridor.run(c.from, c.to, c.minutes, c.hold, c.queue ?? 0);
     c.times.forEach((t, i) => {
       assert.ok(Math.abs(run.distance(t) - c.distances[i]) < 1e-9, `${c.from}->${c.to} at ${t}s`);
     });
