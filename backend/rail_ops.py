@@ -204,18 +204,18 @@ class Segment:
     lights: dict = field(default_factory=dict)  # stand: {"off": t, "on": t} for a cab change
 
     def to_dict(self):
-        out = {"kind": self.kind, "t0": round(self.t0, 3), "t1": round(self.t1, 3), "lead": self.lead,
+        out = {"kind": self.kind, "t0": self.t0, "t1": self.t1, "lead": self.lead,
                "trip": self.trip_id}
         if self.kind in ("move", "stand") and self.route:
-            out.update({"terminal": self.terminal, "route": self.route, "s0": round(self.s0, 3), "s1": round(self.s1, 3)})
+            out.update({"terminal": self.terminal, "route": self.route, "s0": self.s0, "s1": self.s1})
         if self.kind == "run" or (self.kind == "stand" and self.line):
-            out.update({"line": self.line, "leg": self.leg, "s0": round(self.s0, 3), "s1": round(self.s1, 3)})
+            out.update({"line": self.line, "leg": self.leg, "s0": self.s0, "s1": self.s1})
         if self.station:
             out["station"] = self.station
         if self.note:
             out["note"] = self.note
         if self.lights:
-            out["lights"] = {k: round(v, 3) for k, v in self.lights.items()}
+            out["lights"] = dict(self.lights)
         return out
 
 
