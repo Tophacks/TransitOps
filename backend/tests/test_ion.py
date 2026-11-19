@@ -110,6 +110,15 @@ class TimetableTests(unittest.TestCase):
             self.assertEqual(on_line, sorted(on_line, reverse=True))
 
 
+class ShortRunTests(unittest.TestCase):
+    def test_a_run_too_short_for_the_transfer_waves_still_delivers_every_rider(self):
+        for minutes in (5, 9, 20, 34):
+            plan = IonPlan(duration_min=minutes, transfer_demand=120, delay_min=4)
+            self.assertLessEqual(len(plan.events), 2)
+            delivered = sum(r for at, _, _, r in plan.hub_arrivals() if at < plan.duration_s)
+            self.assertEqual(delivered, 120 if plan.hub_arrivals() else 0, f"{minutes} min run")
+
+
 class TransferTests(unittest.TestCase):
     def test_every_transfer_rider_arrives_at_uw_or_central(self):
         plan = IonPlan(transfer_demand=110, delay_min=4)
