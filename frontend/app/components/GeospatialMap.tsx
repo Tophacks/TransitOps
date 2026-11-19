@@ -45,6 +45,8 @@ type Props = {
   seconds?: number;
   /** pause and jump the playback (Decision Inspector) */
   onSeek?: (seconds: number) => void;
+  /** bus dispatch decisions (connection holds), shown with the rail decisions */
+  busDecisions?: RailDecision[];
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -548,6 +550,7 @@ export default function GeospatialMap({
   ionBaselineMetrics = null,
   seconds = 0,
   onSeek,
+  busDecisions = [],
 }: Props) {
   // Same timetable and trip model as backend/ion.py: trains sit exactly where
   // the simulator put them at every minute.
@@ -556,6 +559,7 @@ export default function GeospatialMap({
     [ionSchedule],
   );
   const timetableRef = useRef(timetable);
+  const busDecisionsRef = useRef<RailDecision[]>([]);
   timetableRef.current = timetable;
   // Simulated background cars for the whole run (computed once per run).
   const traffic = useMemo(() => {
@@ -603,6 +607,11 @@ export default function GeospatialMap({
   const trainPose = simulating && selectedTrain && timetable
     ? timetable.trains(now).find((train) => train.id === selectedTrain) : undefined;
   const trainState = trainPose ? snapshot?.trains?.find((train) => train.id === trainPose.id) : undefined;
+  busDecisionsRef.current = busDecisions;
+  const allDecisions = useMemo(
+    () => [...(ionSchedule?.decisions ?? []), ...busDecisions].sort((a, b) => a.t - b.t || a.id.localeCompare(b.id)),
+    [ionSchedule, busDecisions],
+  );
   const latestTrainDecision = trainPose && timetable
     ? timetable.decisionsFor(trainPose.id).filter((d) => d.t <= seconds + 0.5).at(-1) : undefined;
   const focus = vehicle ?? sumoBus;
@@ -655,6 +664,7 @@ export default function GeospatialMap({
             seek: (seconds: number) => clock.seek(seconds),
             // The ION run being played: physical trains, plans and decisions.
             ion: () => timetableRef.current?.schedule ?? null,
+            busDecisions: () => busDecisionsRef.current,
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
             frameCosts: frameCosts.current,
             live: () => trackerRef.current.poses(performance.now() / 1000)
@@ -1048,6 +1058,22 @@ export default function GeospatialMap({
       setSelectedTrain(decision.vehicle_id);
       onSelect(null);
     }
+    if (map && decision.location) {
+      // A bus decision at a stop: frame the stop.
+      setFollow(false);
+      const narrow = map.getContainer().clientWidth < 640;
+      map.easeTo({
+        center: decision.location, zoom: narrow ? 17 : 17.6, pitch: 50,
+        padding: narrow ? { top: 90, bottom: Math.round(map.getContainer().clientHeight * 0.5), left: 0, right: 0 } : { top: 60, bottom: 40, left: 0, right: 380 },
+        duration: 1200,
+      });
+      const bus = callbacks.current.snapshot?.buses.find((b) => b.id === decision.vehicle_id);
+      if (bus) {
+        setSelectedTrain(null);
+        onSelect({ type: "bus", data: bus });
+      }
+      return;
+    }
     if (map && t) {
       setFollow(false);
       const narrow = map.getContainer().clientWidth < 640;
@@ -1141,7 +1167,7 @@ export default function GeospatialMap({
       {demo && ready && mapRef.current && <FairwayDemo map={mapRef.current} onExit={exitDemo} />}
       {!demo && simulating && ionSchedule?.decisions && (
         <DecisionInspector
-          decisions={ionSchedule.decisions}
+          decisions={allDecisions}
           now={seconds}
           vehicle={selectedTrain}
           onPick={showDecision}

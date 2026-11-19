@@ -55,6 +55,13 @@ def metrics_to_dict(metrics):
         "average_transfer_wait": round(metrics.average_transfer_wait_minutes, 2),
         "ion_trains_peak": metrics.ion_trains_peak,
         "ion_max_delay": round(metrics.ion_max_delay_minutes, 1),
+        "connection_holds": metrics.connection_holds,
+        "connection_hold_minutes": metrics.connection_hold_minutes,
+        "hold_onboard_rider_minutes": round(metrics.hold_onboard_rider_minutes, 1),
+        "hold_downstream_rider_minutes": round(metrics.hold_downstream_rider_minutes, 1),
+        # every rider's wait, including riders still waiting when the hour ends
+        "total_wait_rider_minutes": round(metrics.cumulative_wait_minutes + metrics.unserved_wait_minutes, 1),
+        "total_transfer_wait_rider_minutes": round(metrics.cumulative_transfer_wait + metrics.unserved_transfer_wait_minutes, 1),
     }
 
 
@@ -153,6 +160,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         "events": sim.events,
         "timeline": sim.timeline,
         "ion": plan.schedule(),
+        # bus dispatch decisions (connection holds at UW and Central)
+        "decisions": sim.decisions,
     }
 
 

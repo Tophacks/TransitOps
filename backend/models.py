@@ -71,6 +71,9 @@ class Bus:
     schedule_deviation: int = 0
     # when the doors opened at the current stop (seconds), while dwelling
     doors_open_s: float | None = None
+    # connection hold at the current stop: already weighed / minutes held
+    hold_evaluated: bool = False
+    held_minutes: int = 0
 
     @property
     def occupancy(self) -> int:
@@ -104,6 +107,14 @@ class SimulationMetrics:
     cumulative_transfer_wait: float = 0
     ion_trains_peak: int = 0
     ion_max_delay_minutes: float = 0.0
+    connection_holds: int = 0
+    connection_hold_minutes: int = 0
+    # rider-minutes the holds cost: riders onboard, and riders waiting downstream
+    hold_onboard_rider_minutes: float = 0.0
+    hold_downstream_rider_minutes: float = 0.0
+    # minutes waited by riders still at a stop when the run ends
+    unserved_wait_minutes: float = 0.0
+    unserved_transfer_wait_minutes: float = 0.0
 
     @property
     def average_transfer_wait_minutes(self) -> float:
