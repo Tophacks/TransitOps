@@ -6,7 +6,8 @@ import { Corridor } from "../lib/motion/corridor.ts";
 import { PlaybackClock } from "../lib/motion/clock.ts";
 import { busPoses } from "../lib/motion/playback.ts";
 import { ION_GAP, ION_SECTIONS, IonTimetable } from "../lib/motion/ion.ts";
-import { deltaMetres } from "../lib/motion/path.ts";
+import { deltaMetres, encodePath } from "../lib/motion/path.ts";
+import { runningRails, STANDARD_GAUGE_M } from "../lib/motion/railGeometry.ts";
 
 const data = JSON.parse(readFileSync(new URL("../lib/geo/waterloo-corridor.json", import.meta.url)));
 const parity = JSON.parse(readFileSync(new URL("./fixtures/kinematics-parity.json", import.meta.url)));
@@ -149,5 +150,18 @@ test("the full ION line passes the Dutton Drive depot", async () => {
   for (const direction of ["north", "south"]) {
     const closest = Math.min(...ION_DEPOT_BOUNDARY.map((p) => projections(data.ion[direction].path, p)[0].offset));
     assert.ok(closest < 25, `${direction} track ${closest.toFixed(1)} m from the yard boundary`);
+  }
+});
+
+test("ION rails stay centred at standard gauge through a bend", () => {
+  const path = encodePath([[-80.54, 43.47], [-80.54, 43.471], [-80.539, 43.472], [-80.538, 43.472]]);
+  const [left, right] = runningRails(path);
+  assert.equal(left.length, path.length);
+  assert.equal(right.length, path.length);
+  for (const [index, [lon, lat]] of path.entries()) {
+    const [a, b] = [left[index], right[index]];
+    assert.ok(Math.abs(Math.hypot(...deltaMetres(a, b)) - STANDARD_GAUGE_M) < 1e-6);
+    assert.ok(Math.abs((a[0] + b[0]) / 2 - lon) < 1e-10);
+    assert.ok(Math.abs((a[1] + b[1]) / 2 - lat) < 1e-10);
   }
 });

@@ -15,6 +15,7 @@ import { busBody, emptyBodies, trainBody, type BodyLayers } from "../../lib/moti
 import { LiveTracker, type LivePing, type LivePose } from "../../lib/motion/live.ts";
 import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.ts";
 import { corridor } from "../../lib/motion/scene.ts";
+import { runningRails } from "../../lib/motion/railGeometry.ts";
 
 type Props = {
   network: Network;
@@ -34,9 +35,9 @@ type Props = {
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
-const SIMULATION_SOURCES = ["route", "ion-track", "stops", "intersections", "buses", "traffic", "yard", "vehicle-solids", "vehicle-ground"];
+const SIMULATION_SOURCES = ["route", "stops", "intersections", "buses", "traffic", "yard", "vehicle-solids", "vehicle-ground"];
 const SIMULATION_LAYERS = [
-  "route-stroke", "ion-track-line", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
+  "route-stroke", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
   "sim-bus-markers", "vehicle-ground", "vehicle-bodies",
 ];
 // Live GPS vehicles drawn as 3D bodies at street zoom.
@@ -119,6 +120,12 @@ function ionTracks(): GeoJSON.FeatureCollection {
     line(corridor.data.ion[direction].path.map(([lon, lat]) => [lon, lat]), { id: direction })));
 }
 
+function ionRunningRails(): GeoJSON.FeatureCollection {
+  return featureCollection((["north", "south"] as const).flatMap((direction) =>
+    runningRails(corridor.data.ion[direction].path).map((track, side) =>
+      line(track, { id: `${direction}:${side}` }))));
+}
+
 function setData(map: MapInstance, id: string, data: GeoJSON.FeatureCollection) {
   map.getSource<GeoJSONSource>(id)?.setData(data);
 }
@@ -199,7 +206,8 @@ function addLayers(map: MapInstance) {
     paint: { "line-color": "#e6bdff", "line-width": 2, "line-dasharray": [3, 2] },
   }, firstLabel);
   setData(map, "route", streetRoutes());
-  setData(map, "ion-track", ionTracks());
+  map.addSource("ion-track", { type: "geojson", data: ionTracks() });
+  map.addSource("ion-running-rails", { type: "geojson", data: ionRunningRails() });
   setData(map, "grt-routes", contextRoutes());
   // Both directions share one GTFS line on most streets: draw them as one.
   map.addLayer({
@@ -217,13 +225,43 @@ function addLayers(map: MapInstance) {
     paint: {
       "line-color": ["interpolate", ["linear"], ["zoom"], 13, "#5fa8e6", 16, "#7d8f9b"],
       "line-width": ["interpolate", ["exponential", 2], ["zoom"], 11, 2.2, 14, 2.6, 19, 9],
-      "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 16, 0.55],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 16, 0.55, 17.5, 0],
     },
   }, firstLabel);
   map.addLayer({
     id: "route-stroke", type: "line", source: "route",
     layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#76e0bd", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 2.5, 19, 20], "line-opacity": ["interpolate", ["linear"], ["zoom"], 14, 0.9, 17, 0.28] },
+  }, firstLabel);
+  // Street detail is on the ground beneath both live and simulated vehicles.
+  // A subdued dashed stroke suggests ties once they can be read at this scale.
+  map.addLayer({
+    id: "ion-track-bed", type: "line", source: "ion-track", minzoom: 16,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": "#242c33",
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 16, 2.5, 18, 8.8, 19.5, 24],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0, 17.5, 0.94],
+    },
+  }, firstLabel);
+  map.addLayer({
+    id: "ion-track-ties", type: "line", source: "ion-track", minzoom: 17.5,
+    layout: { "line-cap": "butt", "line-join": "round" },
+    paint: {
+      "line-color": "#6c6660",
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 17.5, 5, 18, 6.9, 19.5, 19],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 17.5, 0, 18, 0.68, 19.5, 0.85],
+      "line-dasharray": [0.16, 0.5],
+    },
+  }, firstLabel);
+  map.addLayer({
+    id: "ion-rail-heads", type: "line", source: "ion-running-rails", minzoom: 16,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": "#cdd5db",
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 16, 0.7, 18, 1.05, 19.5, 1.8],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0, 17.5, 0.98],
+    },
   }, firstLabel);
   map.addLayer({
     id: "vehicle-ground", type: "fill", source: "vehicle-ground", minzoom: BODY_MIN_ZOOM,
