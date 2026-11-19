@@ -1,0 +1,34 @@
+name: Waterloo geometry vs GTFS
+
+# Checks the generated street and track geometry independently of the builder:
+# against fixtures, then against the archived GRT GTFS it was built from.
+on:
+  pull_request:
+    paths:
+      - "tools/waterloo_geometry/**"
+      - "backend/waterloo_corridor.json"
+      - "frontend/lib/geo/waterloo-corridor.json"
+      - ".github/workflows/geometry-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/waterloo_geometry/**"
+      - "backend/waterloo_corridor.json"
+      - "frontend/lib/geo/waterloo-corridor.json"
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Checker tests (fixtures)
+        run: python -m unittest discover -s tools/waterloo_geometry/tests -p "test_*.py" -v
+      - name: Fetch the GRT GTFS snapshot the geometry was built from
+        run: git clone --depth 1 --branch 2026-07-05_2028-07-03 https://github.com/jason897/grt-gtfs-history "$RUNNER_TEMP/gtfs"
+      - name: Verify the shipped geometry against GTFS
+        run: python -I tools/waterloo_geometry/verify_gtfs.py "$RUNNER_TEMP/gtfs" backend/waterloo_corridor.json --frontend-copy frontend/lib/geo/waterloo-corridor.json

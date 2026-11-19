@@ -56,6 +56,13 @@ function campusCamera(width: number): Camera {
     : { center: [-80.539, 43.4743], zoom: 18.3, pitch: 62, bearing: 20 };
 }
 
+/** The whole ION line, Conestoga to Fairway: across a wide screen, up a phone. */
+function ionLineCamera(width: number): Camera {
+  return width < 640
+    ? { center: [-80.4935, 43.4705], zoom: 10.75, pitch: 0, bearing: -38 }
+    : { center: [-80.4855, 43.4598], zoom: 12.25, pitch: 0, bearing: 52 };
+}
+
 /** Where ION turns from King St onto Erb St at Waterloo Public Square. */
 function ionCurveCamera(width: number): Camera {
   return { center: [-80.52228, 43.46422], zoom: width < 640 ? 17.7 : 18.35, pitch: 60, bearing: 28 };
@@ -90,6 +97,19 @@ function depotFeatures(): GeoJSON.FeatureCollection {
       properties: { id, name },
     },
   ]);
+}
+
+// GRT route colours for the context lines (one per route, both directions).
+const ROUTE_COLORS: Record<string, string> = { "7": "#e7a35a", "31": "#c58df2", "201": "#5fb7f5", "202": "#f07b8c" };
+
+/** GRT routes through campus, Laurier and Uptown (GTFS shapes, simplified). */
+function contextRoutes(): GeoJSON.FeatureCollection {
+  return featureCollection(corridor.data.routes.map((route) => line(route.path.map(([lon, lat]) => [lon, lat]), {
+    id: `${route.route}:${route.direction}`,
+    route: route.route,
+    name: `${route.route} ${route.name}`,
+    color: ROUTE_COLORS[route.route] ?? "#9fb3c8",
+  })));
 }
 
 function ionTracks(): GeoJSON.FeatureCollection {
@@ -163,7 +183,7 @@ function addLayers(map: MapInstance) {
     }, firstLabel);
   }
 
-  for (const id of [...SIMULATION_SOURCES, "grt-vehicles", "live-solids", "live-ground"]) {
+  for (const id of [...SIMULATION_SOURCES, "grt-vehicles", "live-solids", "live-ground", "grt-routes"]) {
     map.addSource(id, { type: "geojson", data: featureCollection([]) });
   }
   map.addSource("ion-depot", {
@@ -178,10 +198,25 @@ function addLayers(map: MapInstance) {
   }, firstLabel);
   setData(map, "route", streetRoutes());
   setData(map, "ion-track", ionTracks());
+  setData(map, "grt-routes", contextRoutes());
+  // Both directions share one GTFS line on most streets: draw them as one.
+  map.addLayer({
+    id: "grt-routes-line", type: "line", source: "grt-routes",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "color"],
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 1.2, 19, 7],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.75, 15, 0.6, 17, 0.3],
+    },
+  }, firstLabel);
   map.addLayer({
     id: "ion-track-line", type: "line", source: "ion-track",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#7d8f9b", "line-width": ["interpolate", ["exponential", 2], ["zoom"], 12, 1, 19, 9], "line-opacity": 0.55 },
+    paint: {
+      "line-color": ["interpolate", ["linear"], ["zoom"], 13, "#5fa8e6", 16, "#7d8f9b"],
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 11, 2.2, 14, 2.6, 19, 9],
+      "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.85, 16, 0.55],
+    },
   }, firstLabel);
   map.addLayer({
     id: "route-stroke", type: "line", source: "route",
@@ -272,6 +307,22 @@ function addLayers(map: MapInstance) {
         "text-optional": true,
       },
       paint: { "text-color": "#e8fff2", "text-halo-color": "#0c1d18", "text-halo-width": 2 },
+    });
+    map.addLayer({
+      id: "grt-routes-label",
+      type: "symbol",
+      source: "grt-routes",
+      minzoom: 14,
+      filter: ["==", ["get", "id"], ["concat", ["get", "route"], ":0"]],
+      layout: {
+        "symbol-placement": "line",
+        "symbol-spacing": 420,
+        "text-field": ["get", "name"],
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 11,
+        "text-optional": true,
+      },
+      paint: { "text-color": ["get", "color"], "text-halo-color": "#0b1520", "text-halo-width": 1.6 },
     });
     map.addLayer({
       id: "grt-route-labels",
@@ -732,6 +783,7 @@ export default function GeospatialMap({
           <button type="button" aria-pressed={tilted} disabled={!ready} onClick={toggleTilt}>3D</button>
           <button type="button" disabled={!ready} onClick={() => goTo(campusCamera)}>Campus</button>
           {!live && <button type="button" disabled={!ready} onClick={() => goTo(ionCurveCamera)}>ION curve</button>}
+          {!live && <button type="button" disabled={!ready} onClick={() => goTo(ionLineCamera)}>ION line</button>}
           <button type="button" disabled={!ready} onClick={() => {
             goTo((width) => ({
               center: ION_DEPOT.centre, zoom: width < 640 ? 15.8 : 16.6,

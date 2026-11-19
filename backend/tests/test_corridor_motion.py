@@ -70,12 +70,47 @@ class CorridorGeometryTests(unittest.TestCase):
                 turn = abs((math.degrees(h1 - h0) + 540) % 360 - 180)
                 self.assertLess(turn, 25, f"{seg['from']}->{seg['to']} has a {turn:.0f}° kink")
 
-    def test_ion_tracks_reach_campus_and_include_the_uptown_curve(self):
+    def test_ion_tracks_run_the_whole_line_and_include_the_uptown_curve(self):
+        for direction, ends in (("north", ("Fairway Station", "Conestoga Station")),
+                                ("south", ("Conestoga Station", "Fairway Station"))):
+            track = corridor.DATA["ion"][direction]
+            names = [station["name"] for station in track["stations"]]
+            self.assertEqual((names[0], names[-1]), ends)
+            self.assertEqual(len(names), 16)
+            for name in ("Central Station", "Allen Station", "University Of Waterloo Station"):
+                self.assertIn(name, names)
+            self.assertGreater(track["length_m"], 15_500)
+            at = [station["at_m"] for station in track["stations"]]
+            self.assertEqual(at, sorted(at))
         north = corridor.DATA["ion"]["north"]
-        names = [station["name"] for station in north["stations"]]
-        self.assertEqual(names[:2], ["Allen Station", "Waterloo Public Square Station"])
-        self.assertIn("University Of Waterloo Station", names)
         self.assertTrue(any(limit < 6 for _, limit in north["curves"]))
+        # The King St -> Erb St curve at Waterloo Public Square is still there.
+        wps = next(s["at_m"] for s in north["stations"] if s["name"] == "Waterloo Public Square Station")
+        self.assertTrue(any(abs(at - wps) < 250 and limit < 6 for at, limit in north["curves"]))
+
+    def test_context_routes_cover_campus_laurier_and_uptown(self):
+        routes = corridor.DATA["routes"]
+        self.assertEqual({(r["route"], r["direction"]) for r in routes},
+                         {(route, d) for route in ("201", "202", "31", "7") for d in (0, 1)})
+        for route in routes:
+            self.assertGreater(route["length_m"], 2_000)
+            # Simplified: a few points per kilometre of straight street.
+            self.assertLess(len(route["path"]), route["length_m"] / 100)
+            for lon, lat, _ in route["path"]:
+                self.assertTrue(43.452 <= lat <= 43.492 and -80.570 <= lon <= -80.505)
+            at = [stop["at_m"] for stop in route["stops"]]
+            self.assertEqual(at, sorted(at))
+            self.assertGreaterEqual(len(at), 5)
+        # Campus (201), Columbia St (31), Laurier on University Ave (202), King St through Uptown (7).
+        served = {r["route"]: {stop["name"] for stop in r["stops"]} for r in routes if r["direction"] == 0}
+        self.assertIn("University Of Waterloo Station", served["201"])
+        self.assertIn("Columbia / Hazel", served["31"])
+        self.assertIn("University Ave. / Wilfrid Laurier University", served["202"])
+        self.assertIn("Waterloo Public Square Station", served["7"])
+
+    def test_geometry_file_stays_small(self):
+        size = (ROOT / "waterloo_corridor.json").stat().st_size
+        self.assertLess(size, 100 * 1024)
 
 
 class KinematicsTests(unittest.TestCase):

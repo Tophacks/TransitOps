@@ -1,0 +1,9 @@
+route_id,trip_id,direction_id,shape_id
+r201,trip-201-0,0,shape-201-0
+r201,trip-201-1,1,shape-201-1
+r202,trip-202-0,0,shape-202-0
+r202,trip-202-1,1,shape-202-1
+r31,trip-31-0,0,shape-31-0
+r31,trip-31-1,1,shape-31-1
+r7,trip-7-0,0,shape-7-0
+r7,trip-7-1,1,shape-7-1

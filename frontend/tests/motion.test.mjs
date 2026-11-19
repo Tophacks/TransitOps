@@ -122,3 +122,12 @@ test("the playback clock pauses, changes speed and seeks without drift", () => {
   assert.equal(clock.time(), 3600);
   assert.equal(clock.playing, false);
 });
+
+test("the full ION line passes the Dutton Drive depot", async () => {
+  const { ION_DEPOT_BOUNDARY } = await import("../lib/geo/ion-depot.ts");
+  const { projections } = await import("../lib/motion/path.ts");
+  for (const direction of ["north", "south"]) {
+    const closest = Math.min(...ION_DEPOT_BOUNDARY.map((p) => projections(data.ion[direction].path, p)[0].offset));
+    assert.ok(closest < 25, `${direction} track ${closest.toFixed(1)} m from the yard boundary`);
+  }
+});
