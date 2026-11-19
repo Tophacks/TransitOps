@@ -46,6 +46,13 @@ class SimulationRequest(BaseModel):
     closure_to_station: str = "Central Station"
     closure_from_minute: int = Field(default=15, ge=0, le=59)
     closure_to_minute: int = Field(default=45, ge=1, le=90)
+    # Dutton yard: a train found faulty on arrival at a terminal from this minute
+    # is withdrawn and returns to the yard; a yard lead can be blocked.
+    fault_terminal: Literal["fairway", "conestoga"] | None = None
+    fault_minute: int = Field(default=15, ge=0, le=59)
+    yard_block_lead: Literal["north", "south"] | None = None
+    yard_block_from_minute: int = Field(default=10, ge=0, le=59)
+    yard_block_to_minute: int = Field(default=50, ge=1, le=90)
 
 
 def metrics_to_dict(metrics):
@@ -146,6 +153,19 @@ def closures(payload: SimulationRequest):
     }]
 
 
+def fault(payload: SimulationRequest):
+    if payload.fault_terminal is None:
+        return None
+    return {"terminal": payload.fault_terminal, "minute": payload.fault_minute}
+
+
+def yard_block(payload: SimulationRequest):
+    if payload.yard_block_lead is None:
+        return None
+    return {"lead": payload.yard_block_lead, "from_minute": payload.yard_block_from_minute,
+            "to_minute": max(payload.yard_block_from_minute + 1, payload.yard_block_to_minute)}
+
+
 def ion_plan(payload: SimulationRequest, reassign: bool = True):
     """The ION run: physical trains through both terminals. The adaptive case
     lets dispatch give a threatened trip to another train; the baseline only
@@ -158,6 +178,8 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
         platform_hold=platform_hold(payload),
         reassign=reassign,
         closures=closures(payload),
+        fault=fault(payload),
+        yard_block=yard_block(payload),
     )
 
 

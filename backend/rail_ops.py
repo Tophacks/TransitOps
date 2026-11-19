@@ -33,8 +33,9 @@ Dispatch (Dispatch)
     departure in the same direction, and, when a train's departure is
     threatened (a platform hold, a late arrival), may give its trip to
     another train already standing at the terminal and ready, under a
-    documented rule (SWAP_GAIN_S). There are no rail spares in this model
-    yet: the Dutton Drive yard is not connected to the simulated track.
+    documented rule (SWAP_GAIN_S). Spares come from the Dutton Drive yard
+    (yard_ops.py): dispatch compares the earliest feasible yard release with
+    reassigning trains already on the line (see docs/ion-yard.md).
 
 Every choice is a decision record (who, which trip, what changed, the options
 considered and why each was rejected, what was chosen, and what happened
@@ -53,12 +54,13 @@ from pathlib import Path
 TERMINALS = json.loads((Path(__file__).resolve().parent / "ion_terminals.json").read_text())["terminals"]
 NETWORK = json.loads((Path(__file__).resolve().parent / "ion_network.json").read_text())
 DIVERSIONS = {d["id"]: d for d in NETWORK["diversions"]}
+YARD_ROUTES = {r["id"]: r for r in NETWORK["yard"]["routes"]}
 
 
 def route_def(terminal, name):
     """A move's route: a terminal layout's, or a line diversion ("network")."""
     if terminal == "network":
-        return DIVERSIONS[name]
+        return DIVERSIONS[name] if name in DIVERSIONS else YARD_ROUTES[name]
     return TERMINALS[terminal]["routes"][name]
 
 # Modelled operating parameters (seconds unless noted).
@@ -321,7 +323,8 @@ class StationControl:
 class RailOps:
     """Runs every trip of an IonPlan with physical trains (see module docstring)."""
 
-    def __init__(self, plan, platform_hold=None, reassign=True, start_s=None, end_s=None, closures=None):
+    def __init__(self, plan, platform_hold=None, reassign=True, start_s=None, end_s=None, closures=None,
+                 yard_block=None, fault=None):
         import ion
         self.ion = ion
         self.plan = plan
@@ -337,6 +340,7 @@ class RailOps:
         self.end_s = end_s if end_s is not None else plan.duration_s + cycle
         self.stations = {key: StationControl(self, key) for key in TERMINALS}
         self.trains = []
+        self.spawned = 0
         self.decisions = []
         self.events = []
         self.queue = []
@@ -361,6 +365,8 @@ class RailOps:
             self.push(trip.scheduled_s, 3, "due", trip=trip)
         if platform_hold:
             self.push(platform_hold["minute"] * 60.0, 0, "hold", spec=platform_hold)
+        import yard_ops
+        self.yard = yard_ops.Yard(self, block=yard_block, fault=fault)
         self.closures = self.resolve_closures(closures)
         for cp in self.closures:
             if cp.get("section"):
@@ -396,7 +402,10 @@ class RailOps:
             if t > self.end_s:
                 break
             self.now = t
-            getattr(self, f"on_{kind}")(t, **data)
+            if kind.startswith("yard_"):
+                getattr(self.yard, f"on_{kind[5:]}")(t, **data)
+            else:
+                getattr(self, f"on_{kind}")(t, **data)
         return self
 
     # --- departures ----------------------------------------------------------
@@ -405,6 +414,11 @@ class RailOps:
 
     def not_before(self, train, trip):
         """Earliest departure for `train` on `trip`, with the reason that binds."""
+        if getattr(trip, "nonrevenue", None):
+            # Out of service: the turnaround and any hold; the platform ahead and
+            # the yard route are checked when it asks to leave.
+            return max([(train.ready_s if train.ready_s is not None else math.inf, "turnaround"),
+                        (train.hold_until, train.hold_reason or "platform hold")], key=lambda x: x[0])
         sep = self.last_departure[trip.direction] + self.ion.MIN_SEPARATION_S
         # Trips leave in timetable order: the one before must have gone.
         before = self.previous_trip(trip)
@@ -440,16 +454,15 @@ class RailOps:
         train = next((tr for tr in self.trains if tr.next_trip is trip), None)
         if train is None:
             # No train assigned: in warm-up a train enters service from the yard.
-            if len(self.trains) < self.fleet:
+            if self.spawned < self.fleet:
                 self.spawn(t, key, trip)
             else:
-                waiting = [tr for tr in self.trains if tr.terminal == key and tr.next_trip is None]
+                waiting = [tr for tr in self.trains if tr.terminal == key and tr.next_trip is None
+                           and not getattr(tr, "withdrawn", False)]
                 if waiting:
                     self.assign(t, waiting[0], trip, "a train standing here had no trip")
                 else:
-                    self.decide(t, "dispatch", key, None, trip, "No train available for this departure",
-                                [{"option": "wait for the next arriving train", "feasible": True, "reason": "", "estimate_s": None}],
-                                "wait for the next arriving train")
+                    self.cover(t, trip, "No train available for this departure")
             return
         self.review(t, train, trip, "scheduled departure time")
 
@@ -497,9 +510,27 @@ class RailOps:
                             "estimate_s": round(est_b, 1)})
             if best is None or est_b < best[1]:
                 best = (other, est_b)
-        options.append({"option": "send a spare train", "feasible": False,
-                        "reason": "no spare: the Dutton Drive yard is not connected to the simulated track yet",
-                        "estimate_s": None})
+        spare = None
+        for opt, yt, est in self.yard.spare_options(t, trip):
+            if opt["feasible"] and est > est_a - SWAP_GAIN_S:
+                opt = dict(opt, feasible=False, reason=opt["reason"] + f": saves under {SWAP_GAIN_S / 60:.0f} min")
+            options.append(opt)
+            if opt["feasible"] and (spare is None or est < spare[1]):
+                spare = (yt, est)
+        if spare is not None and (best is None or spare[1] < best[1]):
+            yt, est_y = spare
+            d = self.decide(t, "dispatch", key, train, trip, f"{trip.train_id} threatened: {why}", options,
+                            f"send {yt.state} spare {yt.vehicle_id} from Dutton")
+            trip.decisions.append(d)
+            for earlier in trip.decisions:
+                if earlier.level == "dispatch" and not earlier.outcome and earlier is not d:
+                    earlier.outcome = f"superseded by {d.id}"
+            train.next_trip = None
+            trip.dispatch_note = f"reassigned from {train.vehicle_id} to spare {yt.vehicle_id} from Dutton"
+            self.yard.dispatch(t, yt, trip, d)
+            if train.terminal == key:
+                self.assign_next(t, train)
+            return
         if best is None:
             d = self.decide(t, "dispatch", key, train, trip, f"{trip.train_id} threatened: {why}", options,
                             f"keep {train.vehicle_id}")
@@ -524,6 +555,122 @@ class RailOps:
         if train.terminal == key:
             est, _ = self.estimate(train, other_trip)
             self.schedule_departure(t, train, est)
+
+    def line_eta(self, train, key):
+        """When a train running towards terminal `key` should stop there (normal running from now on)."""
+        trip = train.trip
+        if train in self.stations[key].approach:
+            if train.waiting_at is not None:
+                return self.expected_arrival(train)
+            st = self.stations[key]
+            pref = st.layout["preference"][0]
+            return train.approach["t0"] + move_profile(key, f"arrive:{pref}", 0.0, st.route(f"arrive:{pref}")["stop_m"]).duration
+        if trip is None or self.terminal_of["south" if trip.direction == "north" else "north"] != key:
+            return math.inf
+        last = train.segments[-1] if train.segments else None
+        if last is None:
+            return math.inf
+        line = self.plan.lines[trip.direction]
+        n = len(line.legs) - 1
+        if last.kind == "run":
+            idx, t0 = last.leg + 1, last.t1 + self.ion.DWELL_S
+        elif last.station and last.station in [name for name, _ in line.stops]:
+            idx = self.stop_index(trip.direction, last.station)
+            t0 = last.t1 if not math.isinf(last.t1) else max(self.now, last.t0 + self.ion.DWELL_S)
+        else:
+            return math.inf
+        st = self.stations[key]
+        pref = st.layout["preference"][0]
+        arrive = move_profile(key, f"arrive:{pref}", 0.0, st.route(f"arrive:{pref}")["stop_m"]).duration
+        return t0 + self.line_seconds(trip.direction, idx, n) + arrive
+
+    def cover(self, t, trip, why):
+        """A trip with no train. Dispatch compares, over this trip and the next
+        one from the same terminal: the trains already on the line taking them in
+        arrival order (one train short), or a spare from Dutton taking either one
+        (the earliest feasible yard release: preparation, yard route, lead)."""
+        key = self.terminal_of[trip.direction]
+        coming = []
+        for tr in self.trains:
+            if getattr(tr, "withdrawn", False) or tr.next_trip is not None or tr.terminal is not None:
+                continue
+            if tr.trip is None or getattr(tr.trip, "nonrevenue", None) == "in":
+                continue
+            eta = self.line_eta(tr, key)
+            if not math.isinf(eta):
+                coming.append((eta, tr))
+        coming.sort(key=lambda x: (x[0], x[1].vehicle_id))
+        taken = {id(tr.next_trip) for tr in self.trains if tr.next_trip is not None}
+        later = sorted((x for x in self.plan.trips if x.direction == trip.direction and x.vehicle_id is None
+                        and x.scheduled_s > trip.scheduled_s and id(x) not in taken),
+                       key=lambda x: (x.scheduled_s, x.train_id))
+        trips = [trip] + later[:1]
+
+        def line_dep(i, x):
+            if i >= len(coming):
+                return math.inf
+            return max(x.scheduled_s, coming[i][0] + TURN_S)
+
+        def late(dep, x):
+            return max(0.0, dep - x.scheduled_s)
+
+        def text(x, dep, who):
+            return f"{x.train_id} {fmt(dep)} by {who} ({plus(dep - x.scheduled_s)})" if not math.isinf(dep) else \
+                f"{x.train_id}: no train in sight"
+
+        plans = []
+        # (a) trains on the line only.
+        deps = [line_dep(i, x) for i, x in enumerate(trips)]
+        plans.append({"name": (f"reassign the next arriving train {coming[0][1].vehicle_id}" if coming
+                               else "wait for the next arriving train"),
+                      "deps": deps, "spare": None, "who": [coming[i][1].vehicle_id if i < len(coming) else "-" for i in range(len(trips))],
+                      "note": "; every later departure runs one train short"})
+        spare_opts = []
+        if self.reassign:
+            for k, x in enumerate(trips):
+                for opt, yt, est in self.yard.spare_options(t, x):
+                    if yt is None or not opt["feasible"]:
+                        if k == 0:
+                            spare_opts.append(opt)
+                        continue
+                    deps = []
+                    who = []
+                    i = 0
+                    for m, y in enumerate(trips):
+                        if m == k:
+                            deps.append(est)
+                            who.append(yt.vehicle_id)
+                        else:
+                            deps.append(line_dep(i, y))
+                            who.append(coming[i][1].vehicle_id if i < len(coming) else "-")
+                            i += 1
+                    name = (f"send {yt.state} spare {yt.vehicle_id} from Dutton for {x.train_id}" if k == 0 else
+                            f"reassign {coming[0][1].vehicle_id if coming else 'the next train'} to {trip.train_id}, "
+                            f"send {yt.state} spare {yt.vehicle_id} from Dutton for {x.train_id}")
+                    plans.append({"name": name, "deps": deps, "spare": (yt, x), "who": who,
+                                  "note": f"; spare: {opt['reason']}"})
+        options = []
+        for plan in plans:
+            total = sum(late(d, x) for d, x in zip(plan["deps"], trips))
+            plan["total"] = total
+            feasible = not math.isinf(total)
+            options.append({"option": plan["name"], "feasible": feasible,
+                            "reason": "; ".join(text(x, d, w) for x, d, w in zip(trips, plan["deps"], plan["who"]))
+                                      + (f"; {total / 60:.1f} min late in all" if feasible else "") + plan["note"],
+                            "estimate_s": round(plan["deps"][0], 1) if not math.isinf(plan["deps"][0]) else None})
+        if not self.reassign:
+            options.append({"option": "send a spare from Dutton", "feasible": False,
+                            "reason": "dispatch policy off (holds only)", "estimate_s": None})
+        options.extend(spare_opts)
+        # Least total lateness; a tie keeps the plan with fewer moves (trains on the line).
+        best = min(plans, key=lambda p: (p["total"], p["spare"] is not None))
+        d = self.decide(t, "dispatch", key, None, trip, f"{trip.train_id} has no train: {why}", options, best["name"])
+        trip.decisions.append(d)
+        if best["spare"] is not None:
+            yt, x = best["spare"]
+            x.decisions.append(d) if x is not trip else None
+            x.dispatch_note = f"covered by spare {yt.vehicle_id} from Dutton"
+            self.yard.dispatch(t, yt, x, d)
 
     def estimate(self, train, trip):
         if train.terminal == self.terminal_of[trip.direction]:
@@ -562,6 +709,20 @@ class RailOps:
             self.push(at, 2, "try_depart", train=train)
             return
         route_name = self.depart_route(train)
+        if getattr(trip, "nonrevenue", None) == "in":
+            # Verify the complete return route into the yard before leaving the terminal.
+            why, retry_at = self.yard.return_ok(t, train)
+            if why is not None:
+                if getattr(train, "logged_return", None) != why:
+                    train.logged_return = why
+                    d = self.decide(t, "station", train.terminal, train, trip, "Return to Dutton requested",
+                                    [{"option": "leave for Dutton", "feasible": False, "reason": why, "estimate_s": None},
+                                     {"option": "stay at the terminal platform", "feasible": True,
+                                      "reason": "a move is enabled only when its whole route is usable", "estimate_s": None}],
+                                    "stay at the terminal platform")
+                    trip.decisions.append(d)
+                self.push(retry_at if retry_at is not None else t + 60.0, 2, "try_depart", train=train)
+                return
         # The first platform on the line must be free when the train gets there.
         holder = self.platform_at.get((trip.direction, 1))
         if holder is not None and holder[0] is not train:
@@ -621,7 +782,10 @@ class RailOps:
         for res in route["resources"]:
             self.push(release(res), 1, "release", terminal=key)
         late = t - trip.scheduled_s
-        if late > 30.0:
+        revenue = not getattr(trip, "nonrevenue", None)
+        if revenue and getattr(train, "state", "in service") != "in service":
+            self.yard.set_state(t, train, "in service", f"{trip.train_id} from {TERMINALS[key]['name']}")
+        if late > 30.0 and revenue:
             d = self.decide(t, "dispatch", key, train, trip, f"{trip.train_id} departure released",
                             [{"option": f"depart at {fmt(trip.scheduled_s)} (timetable)", "feasible": False,
                               "reason": f"held: {reason}", "estimate_s": round(trip.scheduled_s, 1)},
@@ -642,11 +806,12 @@ class RailOps:
         trip.platform = train.platform
         trip.depart_s = t
         trip.depart_reason = reason if late > 1 else "on time"
-        self.last_departure[trip.direction] = max(self.last_departure[trip.direction], t)
-        self.departed.append((trip, t))
+        if revenue:
+            self.last_departure[trip.direction] = max(self.last_departure[trip.direction], t)
+            self.departed.append((trip, t))
 
         train.add(Segment("move", t, t + prof.duration, lead, trip.train_id, key, route_name, s0, route["length_m"],
-                          note=f"departs platform {train.platform}"))
+                          note=f"departs platform {train.platform}" + ("" if revenue else " out of service, for Dutton")))
         for d in trip.decisions:
             if not d.outcome and d.level == "dispatch":
                 d.outcome = f"{train.vehicle_id} left platform {train.platform} at {fmt(t)} on {trip.train_id} ({plus(late)})"
@@ -680,6 +845,9 @@ class RailOps:
         """Leaving a platform on the line: closures first, then the next platform
         must be free when the train gets there (trains never share a stopping point)."""
         line = self.plan.lines[trip.direction]
+        if getattr(trip, "nonrevenue", None) == "in" and index == trip.return_index:
+            self.yard.on_line_stop(t, train, trip, index)
+            return
         if index >= len(line.legs) - 1:
             self.release_platform(t, trip.direction, index, train)
             dest = "conestoga" if trip.direction == "north" else "fairway"
@@ -758,6 +926,12 @@ class RailOps:
     def on_platform_free(self, t, waiter):
         if waiter[0] == "depart":
             self.on_try_depart(t, waiter[1])
+            return
+        if waiter[0] == "yard":
+            self.yard.on_try_out(t, waiter[1])
+            return
+        if waiter[0] == "yard_in":
+            self.on_line_depart(t, *waiter[1:])
             return
         train, trip, index = waiter
         self.run_leg(t, train, trip, index)
@@ -1232,11 +1406,34 @@ class RailOps:
         if spec and getattr(self, "hold_pending", False) and spec["terminal"] == key and spec["platform"] == platform:
             self.hold_pending = False
             self.apply_hold(stop_t, train, spec)
+        fault = self.yard.fault
+        if (self.yard.fault_pending and fault["terminal"] == key and stop_t >= fault["minute"] * 60.0
+                and not getattr(trip, "nonrevenue", None)):
+            self.push(stop_t, 2, "withdraw", train=train, terminal=key)
+            return
         # Dispatch assigns the next outbound trip (first in, first out).
         self.assign_next(stop_t, train)
         for later in st.approach:
             # The trains behind may move up to the signal when they get a route.
             pass
+
+    def on_withdraw(self, t, train, terminal):
+        """Fault on arrival (scenario): the train goes back to Dutton; its trip needs another."""
+        st = self.stations[terminal]
+        if not self.yard.fault_pending:
+            self.assign_next(t, train)
+            return
+        pseudo = self.yard.withdraw(t, train, st)
+        pseudo.return_index = self.stop_index(pseudo.direction, self.yard.return_route(train)[0]["from_station"])
+        est, _ = self.not_before(train, pseudo)
+        self.schedule_departure(t, train, est)
+        # The trip it would have taken (first in, first out).
+        direction = TERMINALS[terminal]["depart_line"]
+        taken = {id(tr.next_trip) for tr in self.trains if tr.next_trip is not None}
+        nxt = sorted((x for x in self.plan.trips if x.direction == direction and x.vehicle_id is None
+                      and id(x) not in taken), key=lambda x: (x.scheduled_s, x.train_id))
+        if nxt:
+            self.cover(t, nxt[0], f"{train.vehicle_id} withdrawn at {st.layout['name']}")
 
     def assign_next(self, t, train):
         if train.next_trip is not None:
@@ -1296,8 +1493,11 @@ class RailOps:
         else:
             self.push(t + 30.0, 3, "due", trip=trip)
             return
-        train = Train(f"LRV{501 + len(self.trains)}", lead="A")
+        train = Train(f"LRV{501 + self.spawned}", lead="A")
+        self.spawned += 1
         self.trains.append(train)
+        train.state = "in service"
+        train.state_log = [{"t": round(t, 1), "state": "in service", "note": "entered service from the yard (warm-up)"}]
         route = st.route(f"depart:{platform}")
         st.reserve_platform(platform, train.vehicle_id, t)
         # Standing at the platform, facing out (the departing cab leads).
@@ -1334,7 +1534,8 @@ class RailOps:
                         "stay at the platform and tell dispatch")
         if trip is not None:
             trip.decisions.append(d)
-            self.review(t, train, trip, f"{train.vehicle_id} held at platform {spec['platform']}")
+            if not getattr(trip, "nonrevenue", None):
+                self.review(t, train, trip, f"{train.vehicle_id} held at platform {spec['platform']}")
         d.outcome = f"released at {fmt(until)}"
 
     # --- results ---------------------------------------------------------------
@@ -1358,13 +1559,20 @@ class RailOps:
             return seg, seg.s0 + run.distance(x), run.speed_at(x) if hasattr(run, "speed_at") else 0.0
         return seg, seg.s0, 0.0
 
+    def state_at(self, train, t):
+        """The fleet state (stored, ready, unavailable, pulling out, in service, returning) at t."""
+        state = "in service"
+        for entry in getattr(train, "state_log", []):
+            if entry["t"] <= t + 1e-6:
+                state = entry["state"]
+        return state
+
     def line_nose(self, seg, s):
         """A path position as a distance along the line (approximate in the trackwork)."""
         if seg.line:
             return s
         if seg.terminal == "network":
-            route = DIVERSIONS[seg.route]
-            return _interp_line_s(route, s)
+            return _interp_line_s(route_def("network", seg.route), s)
         route = TERMINALS[seg.terminal]["routes"][seg.route]
         line = route["line"]
         direction = line["direction"]
@@ -1400,6 +1608,7 @@ class RailOps:
                 "kind": seg.kind, "terminal": seg.terminal, "route": seg.route, "s": s, "speed": speed,
                 "nose_line": self.line_nose(seg, s), "station": station, "note": seg.note,
                 "lonlat": self.lonlat(seg, s), "lead": seg.lead, "trip": trip,
+                "state": self.state_at(train, t),
             })
         return out
 
@@ -1458,14 +1667,14 @@ class RailOps:
 
     def plans(self):
         out = []
-        for train in self.trains:
+        for train in sorted(self.trains, key=lambda tr: tr.vehicle_id):
             segs = []
             for s in train.segments:
                 seg = s.to_dict()
                 if math.isinf(s.t1):
                     seg["t1"] = None
                 segs.append(seg)
-            out.append({"id": train.vehicle_id, "segments": segs})
+            out.append({"id": train.vehicle_id, "segments": segs, "states": getattr(train, "state_log", [])})
         return out
 
 

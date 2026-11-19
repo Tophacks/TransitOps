@@ -752,7 +752,7 @@ class TransitSimulation:
             )
 
         snapshot["trains"] = self._train_snapshot()
-        self.metrics.ion_trains_peak = max(self.metrics.ion_trains_peak, len(snapshot["trains"]))
+        self.metrics.ion_trains_peak = max(self.metrics.ion_trains_peak, sum(1 for x in snapshot["trains"] if x["in_service"]))
         self.timeline.append(snapshot)
 
     def _train_snapshot(self):
@@ -763,6 +763,15 @@ class TransitSimulation:
         for pose in self.ion.trains_at(t):
             trip = pose["trip"]
             if trip is None:
+                # A yard train, or one pulling out or returning (out of service).
+                lon, lat = pose["lonlat"]
+                out.append({
+                    "id": pose["vehicle_id"], "trip_id": pose["trip_id"], "direction": None,
+                    "nose_m": pose["nose_line"], "station": pose["station"],
+                    "next_station": pose["station"] or "Dutton yard", "lon": lon, "lat": lat,
+                    "delay_min": 0.0, "hold": "", "terminal": pose["terminal"], "activity": pose["note"],
+                    "transfers_ahead": {}, "state": pose["state"], "in_service": False,
+                })
                 continue
             line = self.ion.lines[trip.direction]
             ahead = [
@@ -787,6 +796,7 @@ class TransitSimulation:
                 "terminal": pose["terminal"],
                 "activity": pose["note"],
                 "transfers_ahead": {stop_id: riders for stop_id, riders in ahead if riders},
+                "state": pose["state"], "in_service": True,
             })
         return out
 

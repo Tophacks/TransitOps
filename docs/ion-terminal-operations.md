@@ -52,8 +52,8 @@ It gives the trip to another train only if all of these hold:
 - the swap gets the trip out at least 2 minutes earlier (`SWAP_GAIN_S`).
 
 The two trains then exchange trips. The rejected options are recorded with
-their reasons, including "send a spare", which is never feasible yet: the
-Dutton Drive yard is not connected to the simulated track.
+their reasons. Spares from the Dutton Drive yard are listed too, with their
+earliest release time; see [ion-yard.md](ion-yard.md).
 
 ## Terminal trackwork and moves
 
