@@ -106,8 +106,20 @@ for (const [name, viewport] of Object.entries({ desktop: { width: 1440, height: 
   // Zoom out: icons.
   await page.evaluate(() => window.__transitops.map.jumpTo({ center: [-80.518, 43.462], zoom: 13.3, pitch: 48, bearing: -24 }));
   await page.waitForTimeout(2500);
-  const icons = await page.evaluate(() => window.__transitops.map.queryRenderedFeatures({ layers: ["grt-points"] }).length);
-  check(`${name}: icons when zoomed out`, icons > 20, `${icons} icons rendered`);
+  // Every tracked vehicle inside the view gets an icon (fleet size varies through the day).
+  const icons = await page.evaluate(() => {
+    const { map } = window.__transitops;
+    // Project to the screen: with the map pitched, getBounds() also covers off-screen corners.
+    const canvas = map.getCanvas();
+    const inView = window.__transitops.live().filter((p) => {
+      const { x, y } = map.project(p.centre);
+      return p.opacity > 0 && x >= 0 && y >= 0 && x <= canvas.clientWidth && y <= canvas.clientHeight;
+    }).length;
+    const rendered = new Set(map.queryRenderedFeatures({ layers: ["grt-points"] }).map((f) => f.properties.id)).size;
+    return { inView, rendered };
+  });
+  check(`${name}: icons when zoomed out`, icons.inView > 0 && icons.rendered >= icons.inView * 0.9,
+    `${icons.rendered} icons for ${icons.inView} vehicles in view`);
   await page.screenshot({ path: path.join(outDir, `${name}-live-region.png`) });
   check(`${name}: no page errors`, errors.length === 0, errors.slice(0, 3).join(" | "));
   await browser.close();

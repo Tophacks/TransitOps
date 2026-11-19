@@ -12,11 +12,15 @@ The builder:
 2. Routes each simulator segment between the real curb stops served by GRT
    (route 7 on King Street, the UW Station bus loop and Phillip Street).
 3. Rounds intersection corners with tangent arcs sized for a 12 m bus.
-4. Extracts both ION light rail tracks from the GTFS rail shapes and removes the
-   short out-and-back spurs that GTFS uses to touch each platform.
-5. Writes identical JSON to the backend and the frontend, and prints a
+4. Extracts both ION light rail tracks, end to end (Conestoga to Fairway), from
+   the GTFS rail shapes and removes the short out-and-back spurs that GTFS
+   uses to touch each platform. Stations come from the ION timetable.
+5. Adds context routes through campus, Laurier and Uptown (201 iXpress,
+   202 iXpress along University Ave, 31 Columbia, 7 King), clipped to Waterloo
+   and simplified so the file stays small.
+6. Writes identical JSON to the backend and the frontend, and prints a
    verification report. With --lanelets it also measures how far the campus
-   part of the bus path sits from independently surveyed lane centrelines.
+   parts of the bus paths sit from independently surveyed lane centrelines.
 
 Contains information provided by the Regional Municipality of Waterloo under
 the Region's Open Data Licence.
@@ -75,12 +79,23 @@ BUS_LATERAL = 1.4
 ION_LATERAL = 1.0
 CURVE_CAP = 16.0  # constraints above this speed are not stored
 BUS_TURN_RADIUS = 11.0
-ION_STATIONS = {
-    "north": ["6117", "6118", "6119", "6120", "6121"],  # Allen, WPS, Laurier, UW, R&T (northbound)
-    "south": ["6003", "6004", "6005", "6006", "6007"],  # R&T, UW, Laurier, Willis Way, Allen (southbound)
-}
 ION_SHAPES = {"north": "[@1.0.5502541@]11", "south": "[@1.0.5502541@]21"}
-ION_WINDOW = {"north": (43.4595, 43.4840), "south": (43.4595, 43.4840)}
+# The whole line, Fairway to Conestoga. Simplifying to 0.25 m keeps every curve
+# (the speed caps come from the dense track) while dropping straight runs.
+ION_TOLERANCE_M = 0.25
+# GRT routes drawn through campus, Laurier and Uptown: the most frequent shape
+# in each direction, clipped to WATERLOO_BOX.
+CONTEXT_ROUTES = [
+    ("201", "iXpress Fischer-Hallman: Columbia St and campus"),
+    ("202", "iXpress University: University Ave past Laurier and UW"),
+    ("31", "Columbia St"),
+    ("7", "King St through Uptown"),
+]
+# West edge at -80.570: at -80.566 the 201 left the box for ~120 m at the
+# Columbia St / Fischer-Hallman corner and came back, splitting it in two.
+WATERLOO_BOX = (43.452, 43.492, -80.570, -80.505)  # lat0, lat1, lon0, lon1
+ROUTE_TOLERANCE_M = 1.5
+ROUTE_MIN_RUN_M = 300
 
 
 def read_csv(path):
@@ -299,6 +314,71 @@ def curve_limits(dense, lateral):
     return out
 
 
+def trip_stops(stop_times_path, trip_ids):
+    """Stop ids in order for each of `trip_ids` (streams the big stop_times file)."""
+    wanted = set(trip_ids)
+    found = defaultdict(list)
+    with open(stop_times_path, encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if row["trip_id"] in wanted:
+                found[row["trip_id"]].append((int(row["stop_sequence"]), row["stop_id"]))
+    return {trip: [stop for _, stop in sorted(rows)] for trip, rows in found.items()}
+
+
+def clip_runs(points, box, min_length):
+    """Parts of a metre polyline inside the lat/lon box, longest first.
+
+    Segments that cross the edge are cut exactly where they cross it, so a
+    route runs all the way to the edge even where GTFS vertices are sparse.
+    """
+    (x0, y0), (x1, y1) = to_xy(box[0], box[2]), to_xy(box[1], box[3])
+
+    def clip(a, b):
+        lo, hi = 0.0, 1.0
+        for start, end, low, high in ((a[0], b[0], x0, x1), (a[1], b[1], y0, y1)):
+            delta = end - start
+            if delta == 0:
+                if not low <= start <= high:
+                    return None
+                continue
+            t0, t1 = sorted(((low - start) / delta, (high - start) / delta))
+            lo, hi = max(lo, t0), min(hi, t1)
+            if lo > hi:
+                return None
+        at = lambda t: (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        return at(lo), at(hi), hi < 1.0
+
+    runs, run = [], []
+    for a, b in zip(points, points[1:]):
+        piece = clip(a, b)
+        if piece is None:
+            if len(run) > 1:
+                runs.append(run)
+            run = []
+            continue
+        start, end, leaves = piece
+        if not run:
+            run = [start]
+        run.append(end)
+        if leaves:
+            runs.append(run)
+            run = []
+    if len(run) > 1:
+        runs.append(run)
+    runs = [dedupe(r) for r in runs]
+    runs = [r for r in runs if len(r) > 1 and cumulative(r)[-1] >= min_length]
+    return sorted(runs, key=lambda r: -cumulative(r)[-1])
+
+
+def along(track, cum, p):
+    """Distance along `track` of the point nearest p, and how far p is from it."""
+    (t, _, offset_m), i = min(
+        ((project(p, track[i], track[i + 1]), i) for i in range(len(track) - 1)),
+        key=lambda item: item[0][2],
+    )
+    return cum[i] + t * (cum[i + 1] - cum[i]), offset_m
+
+
 def encode(points, cum):
     out = []
     for (x, y), s in zip(points, cum):
@@ -377,32 +457,32 @@ def build(gtfs, lanelets=None):
     ion = {}
     lrt_shapes = {k.split("#")[0]: v for k, v in load_shapes(lrt / "shapes.txt").items()}
     lrt_stops = {row["stop_id"]: row for row in read_csv(lrt / "stops.txt")}
+    lrt_trips = read_csv(lrt / "trips.txt")
+    sample_trip = {}
     for direction, shape_id in ION_SHAPES.items():
-        lat0, lat1 = ION_WINDOW[direction]
-        track = strip_spurs(list(lrt_shapes[shape_id]))
-        inside = [i for i, p in enumerate(track) if lat0 <= to_latlon(*p)[0] <= lat1]
-        track = track[max(0, inside[0] - 1): inside[-1] + 2]
-        dense = resample(track, 2.0)
+        sample_trip[direction] = next(t["trip_id"] for t in lrt_trips if t["shape_id"] == shape_id)
+    ion_stops = trip_stops(lrt / "stop_times.txt", sample_trip.values())
+    for direction, shape_id in ION_SHAPES.items():
+        raw = strip_spurs(list(lrt_shapes[shape_id]))
+        # Curve speed caps need evenly spaced points; the track itself is
+        # simplified from the GTFS vertices so no short corner is shaved off.
+        dense = resample(raw, 2.0)
         curves = curve_limits(dense, ION_LATERAL)
-        track = simplify(dense, 0.08)
+        track = simplify(raw, ION_TOLERANCE_M)
         cum = cumulative(track)
         stations = []
-        for stop_id in ION_STATIONS[direction]:
+        worst = (0.0, "")
+        for stop_id in ion_stops[sample_trip[direction]]:
             row = lrt_stops[stop_id]
-            p = to_xy(float(row["stop_lat"]), float(row["stop_lon"]))
-            best = min(
-                ((project(p, track[i], track[i + 1]), i) for i in range(len(track) - 1)),
-                key=lambda item: item[0][2],
-            )
-            (t, _, offset_m), i = best
-            s = cum[i] + t * (cum[i + 1] - cum[i])
-            stations.append({
-                "id": stop_id,
-                "name": row["stop_name"].replace(" - Northbound", "").replace(" - Southbound", ""),
-                "at_m": round(s, 1),
-            })
-            report.append(f"ION {direction} {row['stop_name']}: platform {offset_m:.1f} m from track")
+            s_at, offset_m = along(track, cum, to_xy(float(row["stop_lat"]), float(row["stop_lon"])))
+            name = row["stop_name"].replace(" - Northbound", "").replace(" - Southbound", "")
+            stations.append({"id": stop_id, "name": name, "at_m": round(s_at, 1)})
+            worst = max(worst, (offset_m, name))
         stations.sort(key=lambda item: item["at_m"])
+        report.append(
+            f"ION {direction}: {len(stations)} stations {stations[0]['name']} -> {stations[-1]['name']}; "
+            f"platforms within {worst[0]:.1f} m of the track (furthest: {worst[1]})"
+        )
         ion[direction] = {
             "shape_id": shape_id,
             "length_m": round(cum[-1], 1),
@@ -410,12 +490,18 @@ def build(gtfs, lanelets=None):
             "curves": curves,
             "path": encode(track, cum),
         }
+        # Measured on the 2 m resampled track: heading change across 20 m.
         sharpest = max(
-            (abs(turn(heading(track[i - 5], track[i]), heading(track[i], track[i + 5]))), i)
-            for i in range(5, len(track) - 5)
+            (abs(turn(heading(dense[i - 5], dense[i]), heading(dense[i], dense[i + 5]))), i)
+            for i in range(5, len(dense) - 5)
         )
-        lat, lon = to_latlon(*track[sharpest[1]])
-        report.append(f"ION {direction}: {cum[-1]:.0f} m; sharpest bend {sharpest[0]:.0f}° per 20 m at {lat:.5f},{lon:.5f}")
+        lat, lon = to_latlon(*dense[sharpest[1]])
+        report.append(
+            f"ION {direction}: {cum[-1]:.0f} m, {len(raw)} GTFS points -> {len(track)} after simplifying to "
+            f"{ION_TOLERANCE_M} m; sharpest bend {sharpest[0]:.0f}° per 20 m at {lat:.5f},{lon:.5f}"
+        )
+
+    routes = build_context_routes(bus, stops, report)
 
     stops_out = {}
     for name, p in stop_points.items():
@@ -425,6 +511,8 @@ def build(gtfs, lanelets=None):
 
     if lanelets:
         report.extend(verify_against_lanelets(segments, lanelets))
+        report.extend(verify_against_lanelets(
+            [{"from": f"route {r['route']}", "to": r["headsign"], "path": r["path"]} for r in routes], lanelets))
 
     data = {
         "version": 1,
@@ -435,8 +523,70 @@ def build(gtfs, lanelets=None):
         "signals": signals_out,
         "segments": segments,
         "ion": ion,
+        "routes": routes,
     }
     return data, report
+
+
+def build_context_routes(bus, stops, report):
+    """GRT routes through campus, Laurier and Uptown, for the map.
+
+    Takes each route's most frequent shape per direction (GTFS shapes already
+    follow the streets), keeps the part inside WATERLOO_BOX and simplifies it.
+    """
+    trips = [t for t in read_csv(bus / "trips.txt") if t["route_id"] in {r for r, _ in CONTEXT_ROUTES}]
+    names = {row["route_id"]: row for row in read_csv(bus / "routes.txt")}
+    shapes = {k.split("#")[0]: v for k, v in load_shapes(bus / "shapes.txt").items()}
+    chosen = {}
+    for route_id, _ in CONTEXT_ROUTES:
+        for direction in ("0", "1"):
+            mine = [t for t in trips if t["route_id"] == route_id and t["direction_id"] == direction]
+            if not mine:
+                continue
+            counts = defaultdict(int)
+            for t in mine:
+                counts[t["shape_id"]] += 1
+            shape_id = max(counts, key=counts.get)
+            chosen[(route_id, direction)] = (shape_id, next(t for t in mine if t["shape_id"] == shape_id))
+    sequences = trip_stops(bus / "stop_times.txt", [trip["trip_id"] for _, trip in chosen.values()])
+    out = []
+    for (route_id, direction), (shape_id, trip) in chosen.items():
+        runs = clip_runs(shapes[shape_id], WATERLOO_BOX, ROUTE_MIN_RUN_M)
+        if not runs:
+            continue
+        if len(runs) > 1:
+            raise RuntimeError(f"route {route_id} direction {direction} leaves and re-enters WATERLOO_BOX")
+        # Simplify the GTFS vertices themselves (resampling first would shave
+        # corners whose vertex falls between samples).
+        track = simplify(runs[0], ROUTE_TOLERANCE_M)
+        cum = cumulative(track)
+        route_stops = []
+        for stop_id in sequences.get(trip["trip_id"], []):
+            row = stops.get(stop_id)
+            if not row:
+                continue
+            p = to_xy(float(row["stop_lat"]), float(row["stop_lon"]))
+            s_at, offset_m = along(track, cum, p)
+            if offset_m < 25 and 0 < s_at < cum[-1]:
+                route_stops.append({"id": stop_id, "name": row["stop_name"], "at_m": round(s_at, 1)})
+        label = dict(CONTEXT_ROUTES)[route_id]
+        out.append({
+            "route": route_id,
+            "name": names[route_id]["route_long_name"],
+            "label": label,
+            "direction": int(direction),
+            "headsign": trip["trip_headsign"],
+            "shape_id": shape_id,
+            "length_m": round(cum[-1], 1),
+            "stops": route_stops,
+            "path": encode(track, cum),
+        })
+        report.append(
+            f"route {route_id} {names[route_id]['route_long_name']} -> {trip['trip_headsign']}: shape {shape_id}, "
+            f"{cum[-1]:.0f} m in Waterloo, {len(runs[0])} GTFS points -> {len(track)} after simplifying to "
+            f"{ROUTE_TOLERANCE_M} m, {len(route_stops)} stops"
+        )
+    return out
 
 
 def verify_against_lanelets(segments, path):

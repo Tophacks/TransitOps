@@ -19,6 +19,19 @@ export type IonTrack = {
   path: PathPoint[];
 };
 
+/** A GRT route through campus, Laurier or Uptown, drawn for context. */
+export type ContextRoute = {
+  route: string;
+  name: string;
+  label: string;
+  direction: number;
+  headsign: string;
+  shape_id: string;
+  length_m: number;
+  stops: { id: string; name: string; at_m: number }[];
+  path: PathPoint[];
+};
+
 export type CorridorData = {
   version: number;
   attribution: string;
@@ -28,6 +41,7 @@ export type CorridorData = {
   signals: Record<string, { name: string; lon: number; lat: number }>;
   segments: CorridorSegment[];
   ion: Record<"north" | "south", IonTrack>;
+  routes: ContextRoute[];
 };
 
 export class Corridor {

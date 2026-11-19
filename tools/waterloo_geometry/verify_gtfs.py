@@ -12,7 +12,7 @@ import sys
 from zipfile import BadZipFile, ZipFile
 
 ROUTES = ("201", "202", "31", "7")
-SOUTH, NORTH, WEST, EAST = 43.452, 43.492, -80.566, -80.505
+SOUTH, NORTH, WEST, EAST = 43.452, 43.492, -80.570, -80.505
 METRES_LAT = 111_320.0
 METRES_LON = METRES_LAT * math.cos(math.radians(43.465))
 ION_DIRECTIONS = {"north": ("Fairway", "Conestoga"), "south": ("Conestoga", "Fairway")}
