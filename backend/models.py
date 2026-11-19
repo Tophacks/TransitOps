@@ -18,6 +18,14 @@ class Passenger:
     completed_time: int | None = None
     # "ion" for riders transferring from an ION train, else "walk-up"
     source: str = "walk-up"
+    # Exact second the rider can board (ION transfers: train stop + walk).
+    # None: from the start of their arrival minute (walk-up riders).
+    eligible_s: float | None = None
+    boarded_s: float | None = None
+
+    @property
+    def ready_s(self) -> float:
+        return self.eligible_s if self.eligible_s is not None else self.arrival_time * 60.0
 
 
 @dataclass
@@ -61,6 +69,8 @@ class Bus:
     segment_queue_cars: int = 0
     onboard: list[Passenger] = field(default_factory=list)
     schedule_deviation: int = 0
+    # when the doors opened at the current stop (seconds), while dwelling
+    doors_open_s: float | None = None
 
     @property
     def occupancy(self) -> int:
@@ -84,14 +94,14 @@ class SimulationMetrics:
     total_passengers_arrived: int = 0
     total_passengers_boarded: int = 0
     completed_trips: int = 0
-    cumulative_wait_minutes: int = 0
+    cumulative_wait_minutes: float = 0
     max_queue: int = 0
     passengers_left_waiting: int = 0
     buses_staged: int = 0
     signal_priority_requests: int = 0
     ion_transfers: int = 0
     ion_transfers_boarded: int = 0
-    cumulative_transfer_wait: int = 0
+    cumulative_transfer_wait: float = 0
     ion_trains_peak: int = 0
     ion_max_delay_minutes: float = 0.0
 

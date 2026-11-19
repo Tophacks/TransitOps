@@ -70,6 +70,15 @@ INTERSECTION_GEO = {
 YARD_GEO = (corridor.STOPS["YARD"]["lon"], corridor.STOPS["YARD"]["lat"])
 
 
+# Rail-to-bus connections are timed in seconds, not whole minutes. A transfer
+# rider can board from the moment their train stops plus the walk to the bus
+# stop; a bus boards everyone already eligible when its doors open, and keeps
+# boarding riders who become eligible while it dwells, until its doors close
+# DOOR_CLOSE_S before it pulls out. Both values are modelled.
+TRANSFER_WALK_S = {"CENTRAL": 60.0, "UW": 60.0}
+DOOR_CLOSE_S = 5.0
+
+
 class TransitSimulation:
     # Adaptive pre-staging rules (only when intelligent). Releasing reserve buses
     # early and together left Central unserved for most of the hour once loops
@@ -156,7 +165,7 @@ class TransitSimulation:
             return self._rng.choice(backward)
         return ROUTE[-1]
 
-    def _spawn_passengers(self, stop_id, count, initial=False, source="walk-up"):
+    def _spawn_passengers(self, stop_id, count, initial=False, source="walk-up", eligible_s=None):
         stop = self.stops[stop_id]
         for _ in range(max(0, count)):
             passenger = Passenger(
@@ -165,6 +174,7 @@ class TransitSimulation:
                 destination=self._destination_for(stop_id),
                 arrival_time=0 if initial else self.time,
                 source=source,
+                eligible_s=eligible_s,
             )
             self._next_passenger += 1
             stop.queue.append(passenger)
@@ -197,17 +207,22 @@ class TransitSimulation:
                     else "ION trains cannot overtake, so the train behind keeps a 3-minute gap.",
                 )
         for at, trip, stop_id, riders in self.hub_arrivals:
-            if math.floor(at / 60) != self.time:
-                continue
-            self._spawn_passengers(stop_id, riders, source="ion")
-            self.metrics.ion_transfers += riders
-            self.metrics.ion_max_delay_minutes = max(self.metrics.ion_max_delay_minutes, trip.delay_s / 60)
-            late = f", {trip.delay_s / 60:.0f} min late" if trip.delay_s else ""
-            self.log(
-                f"{trip.train_id} at {self.stops[stop_id].name}{late}: +{riders} transferring to the bus",
-                "train",
-                train_id=trip.train_id,
-            )
+            if math.floor(at / 60) == self.time:
+                self.metrics.ion_max_delay_minutes = max(self.metrics.ion_max_delay_minutes, trip.delay_s / 60)
+                late = f", {trip.delay_s / 60:.0f} min late" if trip.delay_s else ""
+                ready = at + TRANSFER_WALK_S[stop_id]
+                self.log(
+                    f"{trip.train_id} at {self.stops[stop_id].name}{late}: +{riders} transferring to the bus "
+                    f"(can board from {int(ready // 60):02d}:{int(ready % 60):02d})",
+                    "train",
+                    train_id=trip.train_id,
+                )
+            # Riders join the bus stop queue at the exact second they can board:
+            # the train's stop plus the walk (never rounded down to the minute).
+            ready = at + TRANSFER_WALK_S[stop_id]
+            if math.floor(ready / 60) == self.time:
+                self._spawn_passengers(stop_id, riders, source="ion", eligible_s=ready)
+                self.metrics.ion_transfers += riders
 
     def _scenario_events(self):
         if self.surge_minute is not None and self.time == self.surge_minute:
@@ -380,27 +395,50 @@ class TransitSimulation:
         bus.onboard = staying
 
         stop = self.stops[stop_id]
-        seats = max(0, bus.capacity - bus.occupancy)
-        boarding = stop.queue[:seats]
-        stop.queue = stop.queue[seats:]
-
-        for passenger in boarding:
-            passenger.boarded_time = self.time
-            self.metrics.total_passengers_boarded += 1
-            self.metrics.cumulative_wait_minutes += max(
-                0, self.time - passenger.arrival_time
-            )
-            if passenger.source == "ion":
-                self.metrics.ion_transfers_boarded += 1
-                self.metrics.cumulative_transfer_wait += max(0, self.time - passenger.arrival_time)
-
-        bus.onboard.extend(boarding)
+        bus.doors_open_s = self.time * 60.0
+        boarding = self._board(bus, stop, bus.doors_open_s, bus.doors_open_s)
 
         if alighted or boarding:
             self.log(
                 f"{bus.bus_id} at {stop.name}: {alighted} off / {len(boarding)} on",
                 "boarding",
             )
+
+    def _board(self, bus, stop, until_s, doors_open_s):
+        """Board riders (queue order) who are eligible by `until_s`, up to the
+        free seats. Each boards at max(eligible, doors open)."""
+        seats = max(0, bus.capacity - bus.occupancy)
+        boarding, staying = [], []
+        for passenger in stop.queue:
+            if len(boarding) < seats and passenger.ready_s <= until_s:
+                boarding.append(passenger)
+            else:
+                staying.append(passenger)
+        stop.queue = staying
+        for passenger in boarding:
+            board_s = max(passenger.ready_s, doors_open_s)
+            passenger.boarded_time = math.floor(board_s / 60)
+            passenger.boarded_s = board_s
+            wait_min = max(0.0, board_s - passenger.ready_s) / 60.0
+            self.metrics.total_passengers_boarded += 1
+            self.metrics.cumulative_wait_minutes += wait_min
+            if passenger.source == "ion":
+                self.metrics.ion_transfers_boarded += 1
+                self.metrics.cumulative_transfer_wait += wait_min
+        bus.onboard.extend(boarding)
+        return boarding
+
+    def _board_until_doors_close(self, bus, stop_id):
+        """Riders who became eligible while the bus dwelt board until its doors
+        close, DOOR_CLOSE_S before it departs at this minute."""
+        if bus.doors_open_s is None:
+            return
+        stop = self.stops[stop_id]
+        close_s = self.time * 60.0 - DOOR_CLOSE_S
+        late = self._board(bus, stop, close_s, bus.doors_open_s)
+        if late:
+            self.log(f"{bus.bus_id} at {stop.name}: {len(late)} more on before the doors closed", "boarding")
+        bus.doors_open_s = None
 
     def _advance_buses(self):
         for bus in self.buses:
@@ -415,6 +453,7 @@ class TransitSimulation:
             if bus.state == BusState.DWELLING:
                 bus.dwell_minutes -= 1
                 if bus.dwell_minutes <= 0:
+                    self._board_until_doors_close(bus, ROUTE[bus.target_stop_index])
                     bus.current_stop_index = bus.target_stop_index
                     bus.target_stop_index = (bus.current_stop_index + 1) % len(ROUTE)
                     bus.state = BusState.EN_ROUTE
@@ -566,33 +605,49 @@ class TransitSimulation:
         self.timeline.append(snapshot)
 
     def _train_snapshot(self):
-        """ION trains on the line at this minute: where, and who is transferring."""
+        """ION trains in service at this minute: physical train, its trip, where,
+        and who is transferring."""
         out = []
         t = self.time * 60.0
-        for trip in self.ion.trips:
-            found = self.ion.state(trip, t)
-            if found is None:
+        for pose in self.ion.trains_at(t):
+            trip = pose["trip"]
+            if trip is None:
                 continue
-            nose, station, leg = found
-            lon, lat = ion.position(trip.direction, nose)
             line = self.ion.lines[trip.direction]
             ahead = [
                 (stop_id, riders) for stop_id, riders in trip.transfers.items()
                 if self.ion.arrival_s(trip, next(n for n, s in ion.HUBS.items() if s == stop_id)) >= t
             ]
+            found = self.ion.state(trip, t)
+            leg = found[2] if found else (0 if pose["route"] and pose["route"].startswith("depart") else len(line.legs) - 1)
+            station = pose["station"]
+            lon, lat = pose["lonlat"]
             out.append({
-                "id": trip.train_id,
+                "id": pose["vehicle_id"],
+                "trip_id": trip.train_id,
                 "direction": trip.direction,
-                "nose_m": nose,
+                "nose_m": pose["nose_line"],
                 "station": station,
-                "next_station": line.legs[leg].to_station if station is None else station,
+                "next_station": station or line.legs[min(leg, len(line.legs) - 1)].to_station,
                 "lon": lon,
                 "lat": lat,
-                "delay_min": round(trip.delay_s / 60.0, 1),
+                "delay_min": round(max(0.0, trip.depart_s - trip.scheduled_s) / 60.0, 1),
                 "hold": trip.hold_reason,
+                "terminal": pose["terminal"],
+                "activity": pose["note"],
                 "transfers_ahead": {stop_id: riders for stop_id, riders in ahead if riders},
             })
         return out
+
+    def _log_rail_decisions(self):
+        """Rail decisions taken during this minute, into the event log."""
+        for d in self.ion.ops.decisions:
+            if math.floor(d.t / 60) == self.time:
+                self.log(f"{d.vehicle_id}{' · ' + d.trip_id if d.trip_id else ''}: {d.trigger} → {d.chosen}",
+                         "rail", train_id=d.vehicle_id,
+                         reason="; ".join(f"{o['option']}: {o['reason']}" for o in d.options if not o["feasible"]) or None)
+                self.events[-1]["decision_id"] = d.id
+                self.events[-1]["level"] = d.level
 
     def run(self):
         self.log("Waterloo Corridor Test Scenario started", "system")
@@ -602,6 +657,7 @@ class TransitSimulation:
             if minute > 0:
                 self._spawn_background_demand()
             self._process_train_arrivals()
+            self._log_rail_decisions()
             self._scenario_events()
             self._dispatch_logic()
             self._advance_buses()

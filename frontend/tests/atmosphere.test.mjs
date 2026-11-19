@@ -106,7 +106,8 @@ test("crossing gates lower ahead of a train and rise once it has cleared", () =>
   assert.equal(lowered(at + 5), 1, "down while the train is on the crossing");
   assert.equal(lowered(at + ION_LENGTH + UP_M + 1), 0);
   // With the real timetable, every crossing on the simulated line closes at least once an hour.
-  const timetable = new IonTimetable(data.ion, parity.ion.schedule);
+  const terminals = JSON.parse(readFileSync(new URL("../lib/geo/ion-terminals.json", import.meta.url)));
+  const timetable = new IonTimetable(data.ion, parity.ion.schedule, terminals);
   const closed = new Set();
   for (let t = 0; t <= 3600; t += 4) {
     for (const gate of gateStates(data.ion_crossings, timetable.trains(t))) if (gate.lowered === 1) closed.add(gate.crossing.id);

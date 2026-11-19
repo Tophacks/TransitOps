@@ -9,6 +9,7 @@ import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
 import { corridor } from "../lib/motion/scene.ts";
 import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
+import { TERMINALS } from "../lib/motion/railScene.ts";
 import type {
   Controls,
   Network,
@@ -29,6 +30,10 @@ const DEFAULTS: Controls = {
   breakdown_minute: null,
   emergency_dispatch_minute: null,
   seed: 17,
+  platform_hold_terminal: null,
+  platform_hold_platform: "2",
+  platform_hold_minute: 20,
+  platform_hold_minutes: 12,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -37,6 +42,7 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...DEFAULTS, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
   { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
   { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
+  { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
 const STOP_NAMES: Record<string, string> = {
@@ -173,7 +179,7 @@ function Inspector({
       <div className="inspectorBody">
         <p className="eyebrow">ION TRAIN · PYTHON SIMULATOR</p>
         <div className="inspectTitle">
-          <h3>{live.id}</h3>
+          <h3>{live.id}{(trainPose?.tripId ?? live.trip_id) ? ` · ${trainPose?.tripId ?? live.trip_id}` : ""}</h3>
           <span>{live.direction === "north" ? "Northbound" : "Southbound"}</span>
         </div>
         <dl>
@@ -222,7 +228,7 @@ export default function Home() {
   const frame = Math.min(Math.floor(seconds / 60), Math.max(0, timeline.length - 1));
   const snapshot = timeline[frame] ?? null;
   const poses = useMemo(() => busPoses(corridor, timeline, seconds), [timeline, seconds]);
-  const timetable = useMemo(() => (data?.ion ? new IonTimetable(corridor.data.ion, data.ion) : null), [data]);
+  const timetable = useMemo(() => (data?.ion ? new IonTimetable(corridor.data.ion, data.ion, TERMINALS) : null), [data]);
   const network = data?.network ?? FALLBACK_NETWORK;
   const sumoMapSnapshot = sumo.state === "idle" ? null : sumo.snapshot;
   const smart = data?.smart.metrics;
@@ -349,6 +355,9 @@ export default function Home() {
             clock={playback.clock}
             ionSchedule={data?.ion ?? null}
             trafficMultiplier={data?.scenario.traffic_multiplier ?? controls.traffic_multiplier}
+            ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
+            seconds={seconds}
+            onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />
         ) : (
           <RegionalMap network={network} snapshot={snapshot} poses={poses} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
@@ -510,6 +519,35 @@ export default function Home() {
               <option value="off">Disabled</option><option value="15">Minute 15</option><option value="25">Minute 25</option>
             </select>
           </label>
+          <label>
+            <div className="labelRow"><span>ION platform hold</span><strong>{controls.platform_hold_terminal
+              ? `${controls.platform_hold_terminal === "fairway" ? "Fairway" : "Conestoga"} ${controls.platform_hold_platform} · ${controls.platform_hold_minutes} min`
+              : "Off"}</strong></div>
+            <select aria-label="ION platform hold terminal" value={controls.platform_hold_terminal ?? "off"}
+              onChange={(event) => update("platform_hold_terminal", event.target.value === "off" ? null : event.target.value as "fairway" | "conestoga")}>
+              <option value="off">No extra hold</option><option value="fairway">Fairway</option><option value="conestoga">Conestoga</option>
+            </select>
+          </label>
+          {controls.platform_hold_terminal && (
+            <div className="holdRow">
+              <label>
+                <span>Platform</span>
+                <select aria-label="ION platform hold platform" value={controls.platform_hold_platform} onChange={(event) => update("platform_hold_platform", event.target.value as "1" | "2")}>
+                  <option value="1">1</option><option value="2">2</option>
+                </select>
+              </label>
+              <label>
+                <span>From minute</span>
+                <input aria-label="ION platform hold minute" type="number" min="0" max="59" value={controls.platform_hold_minute}
+                  onChange={(event) => update("platform_hold_minute", Number(event.target.value))} />
+              </label>
+              <label>
+                <span>Minutes</span>
+                <input aria-label="ION platform hold minutes" type="number" min="1" max="40" value={controls.platform_hold_minutes}
+                  onChange={(event) => update("platform_hold_minutes", Number(event.target.value))} />
+              </label>
+            </div>
+          )}
           <button className="runButton" disabled={loading}>
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>
