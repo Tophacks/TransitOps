@@ -23,6 +23,13 @@ export type Controls = {
   closure_to_station?: string;
   closure_from_minute?: number;
   closure_to_minute?: number;
+  /** ION train fault: the first train to stop at this terminal from fault_minute is withdrawn */
+  fault_terminal?: "fairway" | "conestoga" | null;
+  fault_minute?: number;
+  /** a Dutton yard lead blocked (scenario) */
+  yard_block_lead?: "north" | "south" | null;
+  yard_block_from_minute?: number;
+  yard_block_to_minute?: number;
 };
 
 export type StopState = {
@@ -99,7 +106,11 @@ export type TrainState = {
   trip_id?: string;
   terminal?: string | null;
   activity?: string;
-  direction: "north" | "south";
+  /** null for a train out of service (in the Dutton yard, pulling out or returning) */
+  direction: "north" | "south" | null;
+  /** fleet state: stored, ready, unavailable, pulling out, in service, returning */
+  state?: string;
+  in_service?: boolean;
   /** metres along the track of the train's nose */
   nose_m: number;
   /** station it is standing at, if any */

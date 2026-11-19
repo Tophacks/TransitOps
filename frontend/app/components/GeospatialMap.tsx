@@ -165,12 +165,27 @@ function linePaths() {
   return out;
 }
 
+/** Dutton yard (OMSF) track: the yard part of every storage-to-lead route. */
+function yardPaths(): PathPoint[][] {
+  return NETWORK.yard.routes.filter((r) => r.kind === "out").map((r) => slicePath(r.path, 0, r.yard_m + 2));
+}
+
+function yardFeatures(): GeoJSON.FeatureCollection {
+  const y = NETWORK.yard;
+  return featureCollection([
+    ...(["building", "wash"] as const).map((k) => line(y.outline[k].map(([lon, lat]) => [lon, lat]), { kind: k })),
+    ...y.tracks.map((t) => point(t.lon, t.lat, { kind: t.kind, label: `${t.positions} × LRV` })),
+    ...(["north", "south"] as const).map((k) => point(y.leads[k].lon, y.leads[k].lat, { kind: "lead", label: `${k} lead` })),
+  ]);
+}
+
 function ionTracks(): GeoJSON.FeatureCollection {
   const paths = linePaths();
   return featureCollection([
     ...(["north", "south"] as const).map((direction) => line(paths[direction].map(([lon, lat]) => [lon, lat]), { id: direction })),
     ...terminalPaths().map((p, i) => line(p.map(([lon, lat]) => [lon, lat]), { id: `terminal:${i}` })),
     ...NETWORK.crossovers.map((c) => line(c.path.map(([lon, lat]) => [lon, lat]), { id: `crossover:${c.way}` })),
+    ...yardPaths().map((p, i) => line(p.map(([lon, lat]) => [lon, lat]), { id: `yard:${i}` })),
   ]);
 }
 
@@ -181,6 +196,7 @@ function ionRunningRails(): GeoJSON.FeatureCollection {
       runningRails(paths[direction]).map((track, side) => line(track, { id: `${direction}:${side}` }))),
     ...terminalPaths().flatMap((p, i) => runningRails(p).map((track, side) => line(track, { id: `terminal:${i}:${side}` }))),
     ...NETWORK.crossovers.flatMap((c) => runningRails(c.path).map((track, side) => line(track, { id: `crossover:${c.way}:${side}` }))),
+    ...yardPaths().flatMap((p, i) => runningRails(p).map((track, side) => line(track, { id: `yard:${i}:${side}` }))),
   ]);
 }
 
@@ -382,6 +398,22 @@ function addLayers(map: MapInstance) {
   map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-closure", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-crossover-points", { type: "geojson", data: crossoverPoints() });
+  map.addSource("dutton-yard", {
+    type: "geojson", data: yardFeatures(),
+    attribution: 'Dutton yard (OMSF) © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+  });
+  map.addLayer({
+    id: "dutton-yard-outline", type: "line", source: "dutton-yard", filter: ["==", ["geometry-type"], "LineString"], minzoom: 14,
+    paint: { "line-color": "#8fa3b5", "line-width": 1.2, "line-opacity": 0.7, "line-dasharray": ["literal", [2, 1.5]] },
+  }, firstLabel);
+  map.addLayer({
+    id: "dutton-yard-points", type: "circle", source: "dutton-yard", filter: ["==", ["geometry-type"], "Point"], minzoom: 15,
+    paint: {
+      "circle-radius": 3.5,
+      "circle-color": ["match", ["get", "kind"], "lead", "#ffcf5a", "shop", "#c08cff", "#6fd3ff"],
+      "circle-stroke-color": "#11161c", "circle-stroke-width": 1.2, "circle-pitch-alignment": "map",
+    },
+  });
   map.addLayer({
     id: "ion-closure", type: "line", source: "ion-closure",
     layout: { "line-cap": "round", "line-join": "round" },

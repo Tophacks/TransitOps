@@ -39,6 +39,11 @@ const DEFAULTS: Controls = {
   closure_to_station: "Central Station",
   closure_from_minute: 15,
   closure_to_minute: 45,
+  fault_terminal: null,
+  fault_minute: 15,
+  yard_block_lead: null,
+  yard_block_from_minute: 10,
+  yard_block_to_minute: 50,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -48,6 +53,8 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
   { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
   { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...DEFAULTS, closure_track: "south" } },
+  { id: "train-fault", title: "ION train fault", description: "A train arriving at Conestoga from minute 15 is withdrawn to Dutton yard; dispatch can send a spare", controls: { ...DEFAULTS, fault_terminal: "conestoga" } },
+  { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...DEFAULTS, fault_terminal: "conestoga", yard_block_lead: "north" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -186,9 +193,10 @@ function Inspector({
         <p className="eyebrow">ION TRAIN · PYTHON SIMULATOR</p>
         <div className="inspectTitle">
           <h3>{live.id}{(trainPose?.tripId ?? live.trip_id) ? ` · ${trainPose?.tripId ?? live.trip_id}` : ""}</h3>
-          <span>{live.direction === "north" ? "Northbound" : "Southbound"}</span>
+          <span>{live.direction === null ? "Out of service" : live.direction === "north" ? "Northbound" : "Southbound"}</span>
         </div>
         <dl>
+          {live.state && <div><dt>Fleet state</dt><dd>{live.state}{live.in_service === false && live.activity ? ` · ${live.activity}` : ""}</dd></div>}
           {/* Position follows the playback clock; delay and riders come from the minute snapshot. */}
           <div><dt>{(trainPose ? trainPose.station : live.station) ? "At" : "Next station"}</dt>
             <dd>{trainPose ? trainPose.station ?? trainPose.nextStation : live.station ?? live.next_station}</dd></div>
@@ -197,7 +205,7 @@ function Inspector({
           <div><dt>Transferring to the bus</dt><dd>{ahead.length
             ? ahead.map(([stop, riders]) => `${riders} at ${stop === "UW" ? "UW" : "Central"}`).join(", ")
             : "None still aboard"}</dd></div>
-          <div><dt>Along the line</dt><dd>{((trainPose?.nose ?? live.nose_m) / 1000).toFixed(2)} km from the {live.direction === "north" ? "Fairway" : "Conestoga"} end</dd></div>
+          {live.direction !== null && <div><dt>Along the line</dt><dd>{((trainPose?.nose ?? live.nose_m) / 1000).toFixed(2)} km from the {live.direction === "north" ? "Fairway" : "Conestoga"} end</dd></div>}
         </dl>
         {decision && <div className="geoDecision">
           <strong>{decision.message}</strong>
@@ -422,7 +430,7 @@ export default function Home() {
           <div className="topMetrics">
             <div><span>WAITING</span><strong>{snapshot?.waiting ?? "—"}</strong></div>
             <div><span>ACTIVE BUSES</span><strong>{snapshot ? poses.length : "—"}</strong></div>
-            <div><span>ION TRAINS</span><strong>{snapshot ? snapshot.trains?.length ?? 0 : "—"}</strong></div>
+            <div><span>ION TRAINS</span><strong>{snapshot ? snapshot.trains?.filter((train) => train.in_service !== false).length ?? 0 : "—"}</strong></div>
             <div><span>AVG WAIT</span><strong>{smart ? `${smart.average_wait.toFixed(1)}m` : "—"}</strong></div>
             <div><span>TRAFFIC</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
           </div>
@@ -587,6 +595,44 @@ export default function Home() {
                     onChange={(event) => update("closure_from_minute", Number(event.target.value))} />
                   <input aria-label="Closure to minute" type="number" min="1" max="90" value={controls.closure_to_minute}
                     onChange={(event) => update("closure_to_minute", Number(event.target.value))} />
+                </span>
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>ION train fault</span><strong>{controls.fault_terminal
+              ? `${controls.fault_terminal === "conestoga" ? "Conestoga" : "Fairway"} · from ${controls.fault_minute} min` : "Off"}</strong></div>
+            <select aria-label="ION train fault terminal" value={controls.fault_terminal ?? "off"}
+              onChange={(event) => update("fault_terminal", event.target.value === "off" ? null : event.target.value as "fairway" | "conestoga")}>
+              <option value="off">No fault</option><option value="conestoga">Train arriving at Conestoga</option><option value="fairway">Train arriving at Fairway</option>
+            </select>
+          </label>
+          {controls.fault_terminal && (
+            <div className="holdRow">
+              <label>
+                <span>From minute</span>
+                <input aria-label="Fault minute" type="number" min="0" max="59" value={controls.fault_minute}
+                  onChange={(event) => update("fault_minute", Number(event.target.value))} />
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>Dutton yard lead blocked</span><strong>{controls.yard_block_lead
+              ? `${controls.yard_block_lead === "north" ? "North" : "South"} lead · ${controls.yard_block_from_minute}–${controls.yard_block_to_minute} min` : "Off"}</strong></div>
+            <select aria-label="Dutton yard lead blocked" value={controls.yard_block_lead ?? "off"}
+              onChange={(event) => update("yard_block_lead", event.target.value === "off" ? null : event.target.value as "north" | "south")}>
+              <option value="off">Both leads open</option><option value="north">North lead (to Northfield)</option><option value="south">South lead (to Albert St crossover)</option>
+            </select>
+          </label>
+          {controls.yard_block_lead && (
+            <div className="holdRow">
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="Yard block from minute" type="number" min="0" max="59" value={controls.yard_block_from_minute}
+                    onChange={(event) => update("yard_block_from_minute", Number(event.target.value))} />
+                  <input aria-label="Yard block to minute" type="number" min="1" max="90" value={controls.yard_block_to_minute}
+                    onChange={(event) => update("yard_block_to_minute", Number(event.target.value))} />
                 </span>
               </label>
             </div>
