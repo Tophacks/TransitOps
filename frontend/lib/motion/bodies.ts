@@ -137,8 +137,15 @@ function windshield() {
 }
 
 /** Headlight beams on the road ahead and a red glow behind (night only). */
-function lights(centre: LonLat, heading: number, front: number, rear: number, half: number, id: string, out: BodyLayers) {
+function lights(
+  centre: LonLat, heading: number, front: number, rear: number, half: number, id: string, out: BodyLayers,
+  ends: { beams?: boolean; glow?: boolean } = {},
+) {
   if (!lighting.night) return;
+  if (ends.beams === false) {
+    glowBehind(centre, heading, rear, half, id, out);
+    return;
+  }
   const beam = (y: number): Local[] => [[front, y - 0.35], [front + 16, y - 2.6], [front + 16, y + 2.6], [front, y + 0.35]];
   for (const y of [half - 0.5, -(half - 0.5)]) {
     out.ground.push({
@@ -147,6 +154,10 @@ function lights(centre: LonLat, heading: number, front: number, rear: number, ha
       properties: { opacity: 0.2, id, role: "beam", color: BEAM },
     });
   }
+  if (ends.glow !== false) glowBehind(centre, heading, rear, half, id, out);
+}
+
+function glowBehind(centre: LonLat, heading: number, rear: number, half: number, id: string, out: BodyLayers) {
   out.ground.push({
     type: "Feature",
     geometry: { type: "Polygon", coordinates: [place(centre, heading, box(rear - 2.2, rear, -half, half))] },
@@ -247,17 +258,35 @@ function drawTrain(pose: TrainPose, out: BodyLayers, colors: (typeof LIVERY)["si
     if (index === 2) {
       s.push(part(centre, heading, box(-0.9, 0.9, -W + 0.85, W - 0.85), 3.28, 3.95, COLORS.ionPanto, id));
     }
-    if (first) {
-      s.push(part(centre, heading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, windshield(), id));
-      lights(centre, heading, L, -L, W, id, out);
-      s.push(part(centre, heading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, colors.ionSign, id));
-      for (const side of [1, -1]) {
-        s.push(part(centre, heading, box(L - 0.45, L + 0.05, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.head, id));
+    const bidirectional = pose.headlights !== undefined;
+    if (!bidirectional) {
+      if (first) {
+        s.push(part(centre, heading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, windshield(), id));
+        lights(centre, heading, L, -L, W, id, out);
+        s.push(part(centre, heading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, colors.ionSign, id));
+        for (const side of [1, -1]) {
+          s.push(part(centre, heading, box(L - 0.45, L + 0.05, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.head, id));
+        }
       }
-    }
-    if (lastSection) {
+      if (lastSection) {
+        for (const side of [1, -1]) {
+          s.push(part(centre, heading, box(-L - 0.05, -L + 0.45, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.tail, id));
+        }
+      }
+    } else if (first || lastSection) {
+      // A cab at each end. In the cab's own frame its outer end is +x.
+      const cabHeading = first ? heading : (heading + 180) % 360;
+      const leading = pose.headlights === index;
+      s.push(part(centre, cabHeading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, windshield(), id));
+      // Beams ahead of the leading cab; a red glow off the trailing cab's end.
+      if (leading) lights(centre, cabHeading, L, -L, W, id, out, { glow: false });
+      else lights(centre, (cabHeading + 180) % 360, L, -L, W, id, out, { beams: false });
+      if (leading) {
+        s.push(part(centre, cabHeading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, colors.ionSign, id, "sign"));
+      }
       for (const side of [1, -1]) {
-        s.push(part(centre, heading, box(-L - 0.05, -L + 0.45, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.tail, id));
+        s.push(part(centre, cabHeading, box(L - 0.45, L + 0.05, side * W * 0.22, side * W * 0.5), 0.6, 0.85,
+          leading ? COLORS.head : COLORS.tail, id, leading ? "headlight" : "taillight"));
       }
     }
     // Bellows: connect this section's rear face to the next section's front.
