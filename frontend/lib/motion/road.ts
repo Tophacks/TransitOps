@@ -26,11 +26,15 @@ export function followingSpeed(speed: number, cruise: number, gap: number) {
 
 /** A merge needs space now and time for the nearest approaching driver to react. */
 export function canMerge(lane: readonly LaneOccupant[], entrant: LaneOccupant): boolean {
-  return lane.every((other) => {
-    if (other.id === entrant.id) return true;
+  return mergeBlockers(lane, entrant).length === 0;
+}
+
+export function mergeBlockers(lane: readonly LaneOccupant[], entrant: LaneOccupant) {
+  return lane.filter((other) => {
+    if (other.id === entrant.id) return false;
     if (other.front <= entrant.rear) {
-      return entrant.rear - other.front >= ROAD_GAP + MERGE_HEADWAY_S * other.speed;
+      return entrant.rear - other.front < ROAD_GAP + MERGE_HEADWAY_S * other.speed;
     }
-    return other.rear - entrant.front >= ROAD_GAP;
+    return other.rear - entrant.front < ROAD_GAP;
   });
 }

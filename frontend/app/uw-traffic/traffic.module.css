@@ -9,15 +9,17 @@
 .map, .controls { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
 .map { padding: 8px 16px 16px; }
 .map svg { width: 100%; height: clamp(350px, 63vh, 555px); display: block; }
-.map text { fill: #bcd0dc; font-size: 11px; }
-.crossStreet { stroke: #2c3e4a; stroke-width: 24px; }
-.road { stroke: #344a57; stroke-width: 30px; }
-.centreline { fill: none; stroke: #bda879; stroke-width: 1px; stroke-dasharray: 4 5; }
-.approach { fill: none; stroke: #344a57; stroke-width: 11px; stroke-linecap: round; stroke-linejoin: round; }
-.marker { fill: none; stroke: #75e0bd; stroke-width: 1px; }
-.vehicle { transition: transform .22s linear; }
+.map text { fill: #bcd0dc; font-size: 8px; }
+.publicLane, .busLane, .merge { fill: none; stroke-width: 6px; stroke-linecap: round; stroke-linejoin: round; }
+.publicLane { stroke: #344a57; }
+.busLane { stroke: #39857a; }
+.merge { stroke: #d2ad5d; }
 .legend { display: flex; justify-content: center; gap: 18px; color: #add8f6; font-size: .8rem; }
 .legend span:first-child { color: #75e0bd; }
+.legend span:last-child { color: #7cc4b7; }
+.options { display: grid; grid-template-columns: minmax(0, 1fr) 7rem; gap: 12px; margin-top: 18px; }
+.options label { display: grid; gap: 5px; font-size: .86rem; }
+.options select, .options input { width: 100%; padding: 6px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-2); color: var(--text); }
 .controls { padding: 18px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .toolbar output { font-variant-numeric: tabular-nums; }
@@ -34,7 +36,4 @@
 @media (max-width: 730px) {
   .layout { grid-template-columns: 1fr; }
   .controls { grid-row: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .vehicle { transition: none; }
 }

@@ -2,64 +2,78 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { deltaMetres, lerpPath, offsetLonLat, tangentAt } from "../../lib/motion/path.ts";
-import { ROAD_STEP } from "../../lib/motion/road.ts";
-import { corridor } from "../../lib/motion/scene.ts";
-import { CAR_LENGTH } from "../../lib/motion/traffic.ts";
-import { UW_BUS_LENGTH, UW_ROAD, UwTraffic } from "../../lib/motion/uwTraffic.ts";
+import { deltaMetres, lerpPath, type LonLat } from "../../lib/motion/path.ts";
+import { TRAFFIC_SCENARIOS, UwTraffic, type TrafficScenario } from "../../lib/motion/uwTraffic.ts";
+import { UW_BERTH_FRONT, type Lane } from "../../lib/motion/uwLanes.ts";
 import styles from "./traffic.module.css";
 
-const uw = corridor.segment("UW", "WATERLOO_SQUARE");
-// Align the diagram with Phillip. Anchor the exit and stop line to the
-// outgoing GTFS corridor shape, then extend the through lane north.
-const corridorOffset = uw.signal.stop_line_m - UW_ROAD.stopLine;
-const mergeDistance = UW_ROAD.busMerge + corridorOffset;
-const [east, north] = tangentAt(uw.path, mergeDistance + 30);
-const origin = offsetLonLat(lerpPath(uw.path, mergeDistance), -east * UW_ROAD.busMerge, -north * UW_ROAD.busMerge);
-const ROAD_X = 266;
-const TOP = 40;
-const y = (s: number) => TOP + s;
-const busMergeY = y(UW_ROAD.busMerge);
-const accessY = y(UW_ROAD.accessMerge);
-const stopY = y(UW_ROAD.stopLine);
-const dwellY = y(UW_ROAD.dwell);
-const junctionY = stopY + 8;
+type Frame = ReturnType<UwTraffic["frame"]>;
 
-// Station approach is projected from the route. The access approach, dwell,
-// and turning clearances are illustrative scenario geometry.
-const stationPath = uw.path.filter((point) => point[2] <= mergeDistance).map(([lon, lat]) => {
-  const [dx, dy] = deltaMetres(origin, [lon, lat]);
-  return [ROAD_X - (dx * north - dy * east), TOP + dx * east + dy * north];
-});
-const [stationX, stationY] = stationPath[0];
-const approachPath = `M${stationPath.map(([x, y]) => `${x},${y}`).join(" L")} L${ROAD_X},${busMergeY}`;
-const accessPath = `M391,${accessY - 25} L307,${accessY - 25} Q${ROAD_X},${accessY - 25} ${ROAD_X},${accessY}`;
+function TrafficMap({ lanes, scenario, frame }: { lanes: readonly Lane[]; scenario: TrafficScenario; frame: Frame }) {
+  const origin: LonLat = [lanes[0].path[0][0], lanes[0].path[0][1]];
+  const project = (p: LonLat) => {
+    const [x, y] = deltaMetres(origin, p);
+    return [x, -y] as const;
+  };
+  const points = lanes.flatMap(({ path }) => path.map(([lon, lat]) => project([lon, lat])));
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const minX = Math.min(...xs) - 24;
+  const minY = Math.min(...ys) - 33;
+  const width = Math.max(...xs) + 36 - minX;
+  const height = Math.max(...ys) + (scenario === "station" ? 30 : 52) - minY;
 
-const busLabels = {
-  approaching: "Approaching Phillip St",
-  waiting: "Yielding to cars",
-  driving: "On Phillip St",
-  dwelling: "Stopped in the travel lane",
-  departed: "Cleared the junction",
-};
+  const annotations = scenario === "station" ? [
+    { laneId: "phillip-in", distance: 32, text: "Phillip St ↓", dx: 7, dy: -6 },
+    { laneId: "ring-entry", distance: 0, text: "Ring Rd entrance", dx: -13, dy: 16 },
+    { laneId: "berth-1223", distance: UW_BERTH_FRONT - 6.1, text: "Stop 1223", dx: 0, dy: 16 },
+    { laneId: "phillip-right", distance: 1, text: "Bus exit", dx: -46, dy: -8 },
+    { laneId: "phillip-out", distance: lanes.find(({ id }) => id === "phillip-out")!.signalAt!, text: "University Ave", dx: -59, dy: 17 },
+  ] : [
+    { laneId: "fixture-in", distance: 35, text: "Traffic →", dx: -12, dy: -9 },
+    { laneId: scenario === "shared" ? "fixture-out" : "fixture-bay", distance: 30,
+      text: scenario === "shared" ? "Shared stop" : "Separate bay", dx: -18, dy: 19 },
+  ];
 
-function Vehicle({ x, y, bus, angle = 0 }: { x: number; y: number; bus: boolean; angle?: number }) {
-  const length = (bus ? UW_BUS_LENGTH : CAR_LENGTH) * 1.2;
-  const width = bus ? 8 : 5;
   return (
-    <g className={styles.vehicle} style={{ transform: `translate(${x}px, ${y}px) rotate(${angle}deg)` }}>
-      <rect x={-width / 2} y={-length / 2} width={width} height={length} rx={1.7} fill={bus ? "#75e0bd" : "#add8f6"} />
-      <path d={`M${-width / 2 + 1},${length / 2 - 1.5} h${width - 2}`} stroke={bus ? "#123633" : "#324966"} />
-    </g>
+    <svg viewBox={`${minX} ${minY} ${width} ${height}`} role="img" aria-label={`${TRAFFIC_SCENARIOS[scenario]} lane diagram`}>
+      {lanes.map((lane) => {
+        const line = lane.path.map(([lon, lat]) => project([lon, lat]).join(",")).join(" ");
+        const locked = frame.merges.some(({ from }) => from === lane.id);
+        return <polyline key={lane.id} points={line} data-lane={lane.id}
+          className={locked ? styles.merge : lane.access === "bus" ? styles.busLane : styles.publicLane}>
+          <title>{lane.label}</title>
+        </polyline>;
+      })}
+      {annotations.map(({ laneId, distance, text, dx, dy }) => {
+        const lane = lanes.find(({ id }) => id === laneId)!;
+        const [x, y] = project(lerpPath(lane.path, distance));
+        return <text key={text} x={x + dx} y={y + dy}>{text}</text>;
+      })}
+      {lanes.flatMap((lane) => {
+        if (lane.signalAt === undefined) return [];
+        const [x, y] = project(lerpPath(lane.path, lane.signalAt));
+        return <circle key={lane.id} cx={x} cy={y} r={3} fill={frame.red ? "#ff888a" : "#75e0bd"} />;
+      })}
+      {frame.vehicles.map(({ id, kind, nose, tail }) => {
+        const [x1, y1] = project(nose);
+        const [x2, y2] = project(tail);
+        return <line key={id} data-vehicle={id} x1={x1} y1={y1} x2={x2} y2={y2}
+          stroke={kind === "bus" ? "#75e0bd" : "#add8f6"}
+          strokeWidth={kind === "bus" ? 4.4 : 2.8} strokeLinecap="round"><title>{id}</title></line>;
+      })}
+    </svg>
   );
 }
 
 export default function UwTrafficPage() {
-  const engine = useRef<UwTraffic | null>(null);
-  const [frame, setFrame] = useState(() => new UwTraffic().frame());
+  const [scenario, setScenario] = useState<TrafficScenario>("station");
+  const [seed, setSeed] = useState("42");
   const [demand, setDemand] = useState(2.5);
-  const demandRef = useRef(demand);
   const [running, setRunning] = useState(true);
+  const [frame, setFrame] = useState(() => new UwTraffic().frame());
+  const engine = useRef<UwTraffic | null>(null);
+  const demandRef = useRef(demand);
   if (!engine.current) engine.current = new UwTraffic();
 
   useEffect(() => {
@@ -68,59 +82,58 @@ export default function UwTrafficPage() {
     return () => window.clearInterval(timer);
   }, [running]);
 
-  const busProgress = frame.busApproach;
-  const access = frame.accessCar;
+  function restart(nextScenario = scenario) {
+    engine.current = new UwTraffic(nextScenario, Number(seed));
+    setFrame(engine.current.frame());
+  }
+
+  const busStatus = !frame.bus ? "Cleared the road"
+    : frame.waiting ? "Yielding to cars"
+    : frame.dwelling ? "Dwelling"
+    : frame.merges.length ? "Crossing merge"
+    : engine.current.road.lane(frame.bus.laneId).label;
+
   return (
     <main className={styles.page}>
       <Link href="/" className={styles.back}>← Waterloo corridor</Link>
       <header className={styles.header}>
         <h1>UW Station road traffic</h1>
-        <p>Cars and a fixture bus share a modeled southbound lane on Phillip St.</p>
+        <p>{scenario === "station"
+          ? "A fixture bus enters at Ring Road, dwells at stop 1223, and turns right onto Phillip Street."
+          : "Synthetic road layout for testing how cars respond to a dwelling bus."}</p>
       </header>
       <div className={styles.layout}>
         <section className={styles.map} aria-label="Road simulation">
-          <svg viewBox="70 0 350 530" role="img" aria-label="UW Station approach, Phillip Street and University Avenue">
-            <path d={`M88,${junctionY} H412`} className={styles.crossStreet} />
-            <path d={`M${ROAD_X - 7},20 V524`} className={styles.road} />
-            <path d={`M${ROAD_X - 7},20 V524`} className={styles.centreline} />
-            <path d={approachPath} className={styles.approach} />
-            <path d={accessPath} className={styles.approach} />
-            <circle cx={stationX} cy={stationY} r={7} fill="#75e0bd" />
-            <text x={stationX} y={stationY - 18} textAnchor="middle">UW Station</text>
-            <text x={ROAD_X + 22} y={27}>Phillip St ↓</text>
-            <text x={313} y={accessY - 38}>Modeled access</text>
-            <text x={98} y={junctionY + 24}>University Ave</text>
-            <path d={`M${ROAD_X + 12},${dwellY - 10} v20 h32`} className={styles.marker} />
-            <text x={ROAD_X + 49} y={dwellY + 14}>In-lane stop</text>
-            <path d={`M${ROAD_X - 6},${stopY} h14`} stroke="white" strokeWidth={1.5} />
-            <circle cx={ROAD_X + 24} cy={stopY - 7} r={5} fill={frame.red ? "#ff888a" : "#75e0bd"} />
-            {frame.vehicles.map((vehicle) => (
-              <Vehicle key={vehicle.id} x={ROAD_X} y={y(vehicle.s)} bus={vehicle.kind === "bus"} />
-            ))}
-            {busProgress !== null && (
-              <Vehicle
-                key="fixture-bus"
-                x={stationX + (ROAD_X - 8 - stationX) * busProgress}
-                y={stationY + (busMergeY - 8 - stationY) * busProgress}
-                bus
-                angle={-66}
-              />
-            )}
-            {access && <Vehicle key={access.id} x={391 - 109 * access.progress} y={accessY - 25} bus={false} angle={90} />}
-          </svg>
-          <div className={styles.legend}><span>■ Fixture bus</span><span>■ Private car</span></div>
+          <TrafficMap lanes={engine.current.lanes} scenario={scenario} frame={frame} />
+          <div className={styles.legend}><span>■ Fixture bus</span><span>■ Private car</span><span>■ Bus-only lane</span></div>
+          {scenario === "station" && (
+            <a className={styles.back} href="https://www.openstreetmap.org/node/298025663">© OpenStreetMap contributors</a>
+          )}
         </section>
         <section className={styles.controls} aria-label="Traffic controls and results">
           <div className={styles.toolbar}>
             <strong>Simulation · <output aria-label="Simulated time">{frame.time.toFixed(1)} s</output></strong>
             <div>
               <button type="button" onClick={() => setRunning(!running)}>{running ? "Pause" : "Resume"}</button>
-              <button type="button" onClick={() => {
-                engine.current = new UwTraffic();
-                setFrame(engine.current.frame());
-              }}>Restart</button>
+              <button type="button" onClick={() => restart()}>Restart</button>
             </div>
           </div>
+          <div className={styles.options}>
+            <label>Scenario
+              <select value={scenario} onChange={(event) => {
+                const next = event.target.value as TrafficScenario;
+                setScenario(next);
+                restart(next);
+              }}>
+                {Object.entries(TRAFFIC_SCENARIOS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </label>
+            <label>Seed
+              <input type="number" value={seed} step={1} min={0} max={4294967295}
+                onChange={(event) => setSeed(event.target.value)} aria-describedby="seed-help" />
+            </label>
+          </div>
+          <p className={styles.hint} id="seed-help">Restart to apply a new seed or compare traffic levels from the same starting state.</p>
           <label className={styles.demand}>
             <span>Road traffic <strong>{demand.toFixed(2)}×</strong></span>
             <input type="range" min={0.55} max={2.5} step={0.05} value={demand} onChange={(event) => {
@@ -129,14 +142,13 @@ export default function UwTrafficPage() {
             }} />
             <span className={styles.scale}><span>Light</span><span>Heavy</span></span>
           </label>
-          <p className={styles.hint}>When the bus is yielding, lower road traffic to open a gap. After it pulls out, watch cars queue at the in-lane stop.</p>
           <dl className={styles.results}>
-            <div><dt>Fixture bus</dt><dd data-testid="bus-phase">{busLabels[frame.busPhase]}</dd></div>
-            <div><dt>Bus wait for a gap</dt><dd>{frame.waits.bus.toFixed(1)} s</dd></div>
-            <div><dt>Cars queued behind bus</dt><dd data-testid="bus-queue">{frame.carsBehindBus}</dd></div>
-            <div><dt>Time with cars queued behind bus</dt><dd>{frame.waits.behindBus.toFixed(1)} s</dd></div>
-            <div><dt>Phillip / University signal</dt><dd data-testid="signal">{frame.red ? "Red" : "Green"} · {frame.carsAtRed} cars stopped</dd></div>
-            <div><dt>Access lane car</dt><dd>{access ? access.progress === 1 ? "Yielding" : "Approaching" : "Clear"}</dd></div>
+            <div><dt>Fixture bus</dt><dd data-testid="bus-phase">{busStatus}</dd></div>
+            <div><dt>Bus wait for a gap</dt><dd>{frame.busWait.toFixed(1)} s</dd></div>
+            <div><dt>{frame.waiting ? "Blocking vehicles" : "Last blocking vehicles"}</dt><dd data-testid="merge-blockers">{frame.lastBlockers.join(", ") || "—"}</dd></div>
+            <div><dt>Merge reservation</dt><dd>{frame.merges.length ? "Bus rear still crossing" : "Clear"}</dd></div>
+            {scenario !== "station" && <div><dt>Cars queued behind bus</dt><dd data-testid="bus-queue">{frame.carsBehindBus}</dd></div>}
+            {scenario === "station" && <div><dt>Phillip / University signal</dt><dd data-testid="signal">{frame.red ? "Red" : "Green"}</dd></div>}
           </dl>
         </section>
       </div>

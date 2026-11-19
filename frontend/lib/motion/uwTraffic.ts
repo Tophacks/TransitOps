@@ -1,161 +1,113 @@
+import { LaneTraffic, type MergeEvent } from "./laneTraffic.ts";
+import { ROAD_GAP, ROAD_STEP } from "./road.ts";
 import { CAR_LENGTH } from "./traffic.ts";
-import { canMerge, followingSpeed, ROAD_GAP, ROAD_STEP, type LaneOccupant } from "./road.ts";
-
-// Distances from the modeled north entrance of the southbound Phillip lane.
-export const UW_ROAD = {
-  busMerge: 100,
-  accessMerge: 166,
-  dwell: 242,
-  stopLine: 435,
-  end: 468,
-} as const;
+import { fixtureLanes, UW_BERTH_FRONT, UW_BUS_ROUTE, UW_CAR_ROUTE, UW_LANES } from "./uwLanes.ts";
 
 export const UW_BUS_LENGTH = 12.2;
+export const FIXTURE_BUS_ID = "fixture-bus";
+export const TRAFFIC_SCENARIOS = {
+  station: "UW Station",
+  shared: "Synthetic · shared travel lane",
+  bay: "Synthetic · separate pullout bay",
+} as const;
+export type TrafficScenario = keyof typeof TRAFFIC_SCENARIOS;
+
+const DWELL_SECONDS = 30;
 const CRUISE = 11;
-const DWELL_SECONDS = 14;
-const BUS_READY = 12;
-const ACCESS_TRAVEL = 4.5;
-const EPSILON = 0.001;
 
-type BusPhase = "approaching" | "waiting" | "driving" | "dwelling" | "departed";
-type Vehicle = { id: string; kind: "car" | "bus"; s: number; length: number; speed: number };
-type AccessCar = { id: string; arrivedAt: number };
-type Waits = { bus: number; access: number; behindBus: number };
-
-function occupant(vehicle: Vehicle): LaneOccupant {
-  return {
-    id: vehicle.id,
-    front: vehicle.s + vehicle.length / 2,
-    rear: vehicle.s - vehicle.length / 2,
-    speed: vehicle.speed,
-  };
-}
-
-/** Fixture scenario. Time advances in fixed steps and demand changes affect future arrivals. */
+/** Browser and tests use the same seeded arrivals and fixed-step engine. */
 export class UwTraffic {
-  private time = 0;
-  private lane: Vehicle[] = [];
-  private fixtureBus: Vehicle = { id: "fixture-bus", kind: "bus", s: UW_ROAD.busMerge, length: UW_BUS_LENGTH, speed: 0 };
-  private phase: BusPhase = "approaching";
-  private carId = 0;
-  private access: AccessCar | null = null;
-  private nextAccess = 7;
+  readonly road: LaneTraffic;
+  readonly lanes;
+  private readonly carRoute;
+  private readonly stopAt;
+  private seed: number;
+  private carId = 1;
   private demandCredit = 1;
-  private dwellUntil = 0;
-  private hasDwelled = false;
-  private waits: Waits = { bus: 0, access: 0, behindBus: 0 };
-  private behindBus = 0;
-  private redQueue = 0;
+  private nextArrival = 1;
+  private dwellUntil: number | undefined;
+  private busWait = 0;
+  private lastWait?: MergeEvent;
 
-  private get red() {
-    const phase = this.time % 54;
-    return phase >= 11 && phase < 34;
+  readonly scenario: TrafficScenario;
+
+  constructor(scenario: TrafficScenario = "station", seed = 42) {
+    this.scenario = scenario;
+    this.seed = seed >>> 0;
+    this.lanes = scenario === "station" ? UW_LANES : fixtureLanes(scenario === "bay");
+    this.road = new LaneTraffic(this.lanes);
+    this.carRoute = scenario === "station" ? UW_CAR_ROUTE : ["fixture-in", "fixture-out", "fixture-exit"];
+    const route = scenario === "station" ? UW_BUS_ROUTE
+      : scenario === "shared" ? this.carRoute.slice(1)
+        : ["fixture-bay", "fixture-rejoin", "fixture-exit"];
+    this.stopAt = { laneId: scenario === "station" ? "berth-1223" : route[0],
+      front: scenario === "station" ? UW_BERTH_FRONT : 36 };
+    this.road.addVehicle({
+      id: FIXTURE_BUS_ID, kind: "bus", route, length: UW_BUS_LENGTH, speed: 0,
+      front: scenario === "station" ? 0 : this.stopAt.front,
+    });
+    if (scenario !== "station") this.dwellUntil = DWELL_SECONDS;
   }
 
-  private enterAtMerge(vehicle: Vehicle) {
-    if (!canMerge(this.lane.map(occupant), occupant(vehicle))) return false;
-    this.lane.push(vehicle);
-    return true;
+  private get red() {
+    // Representative cycle, independent of the corridor timetable and real timing.
+    const phase = this.road.time % 54;
+    return this.scenario === "station" && phase >= 11 && phase < 34;
   }
 
   step(demand: number) {
-    this.time += ROAD_STEP;
-    // Light to heavy spacing is about 19 to 4 seconds. Credit carries across
-    // control changes. A blocked entrance retains at most one pending arrival.
-    this.demandCredit = Math.min(1, this.demandCredit + ROAD_STEP * Math.max(0, demand) / 10);
-    if (this.demandCredit >= 1) {
-      const entry = { id: `car-${this.carId}`, kind: "car" as const, s: 0, length: CAR_LENGTH, speed: CRUISE };
-      if (this.lane.every((vehicle) => occupant(vehicle).rear - CAR_LENGTH / 2 >= ROAD_GAP)) {
-        this.lane.push(entry);
-        this.carId += 1;
-        this.demandCredit = 0;
-      }
+    this.demandCredit = Math.min(this.nextArrival, this.demandCredit + ROAD_STEP * Math.max(0, demand) / 10);
+    if (demand > 0 && this.demandCredit >= this.nextArrival && this.road.addVehicle({
+      id: `car-${this.carId}`, kind: "car", route: this.carRoute, length: CAR_LENGTH,
+      speed: CRUISE, front: CAR_LENGTH,
+    })) {
+      this.carId += 1;
+      this.demandCredit = 0;
+      this.seed = (Math.imul(1664525, this.seed) + 1013904223) >>> 0;
+      this.nextArrival = 0.64 + 0.72 * this.seed / 4294967296;
     }
 
-    if (this.time >= BUS_READY && (this.phase === "approaching" || this.phase === "waiting")) {
-      this.phase = this.enterAtMerge(this.fixtureBus) ? "driving" : "waiting";
-      if (this.phase === "waiting") this.waits.bus += ROAD_STEP;
+    const leaving = this.dwellUntil !== undefined && this.road.time >= this.dwellUntil;
+    if (this.scenario === "station" && this.road.time < 1) {
+      this.road.setMotion(FIXTURE_BUS_ID, { stopAt: { laneId: "ring-entry", front: 0 } });
+    } else {
+      this.road.setMotion(FIXTURE_BUS_ID, leaving ? {} : { stopAt: this.stopAt });
     }
-    if (!this.access && this.time >= this.nextAccess) {
-      this.access = { id: `car-${this.carId++}`, arrivedAt: this.time };
+    const redAtNextTick = (this.road.time + ROAD_STEP) % 54;
+    this.road.step(this.scenario === "station" && redAtNextTick >= 11 && redAtNextTick < 34
+      ? new Set(["phillip-out"]) : undefined);
+    const state = this.road.frame();
+    const bus = state.vehicles.find(({ id }) => id === FIXTURE_BUS_ID);
+    if (this.dwellUntil === undefined && bus?.laneId === this.stopAt.laneId &&
+      this.stopAt.front - bus.front <= 0.31 + 1e-7 && bus.speed < 0.001) {
+      this.dwellUntil = this.road.time + DWELL_SECONDS;
     }
-    if (this.access && this.time - this.access.arrivedAt >= ACCESS_TRAVEL) {
-      const car = { id: this.access.id, kind: "car" as const, s: UW_ROAD.accessMerge, length: CAR_LENGTH, speed: 0 };
-      if (this.enterAtMerge(car)) {
-        this.access = null;
-        this.nextAccess = this.time + 10;
-      } else {
-        this.waits.access += ROAD_STEP;
-      }
+    const waiting = state.waiting.find(({ vehicleId }) => vehicleId === FIXTURE_BUS_ID);
+    if (waiting) {
+      this.busWait += ROAD_STEP;
+      this.lastWait = waiting;
     }
-    if (this.phase === "dwelling" && this.time >= this.dwellUntil) this.phase = "driving";
-
-    this.lane.sort((a, b) => b.s - a.s);
-    let leader: Vehicle | undefined;
-    let behindBus = 0;
-    let redQueue = 0;
-    let queueCause: "bus" | "red" | null = null;
-    // Advance front to back. Read the leader's starting position to brake, then
-    // cap movement against its updated rear. No overtaking on this lane.
-    let leaderRearBefore = Infinity;
-    for (const vehicle of this.lane) {
-      const body = occupant(vehicle);
-      const signalLimit = this.red && body.front <= UW_ROAD.stopLine
-        ? Math.max(vehicle.s, UW_ROAD.stopLine - vehicle.length / 2 - 0.6)
-        : Infinity;
-      const dwellLimit = vehicle === this.fixtureBus && !this.hasDwelled ? UW_ROAD.dwell : Infinity;
-      const aheadLimit = leader ? occupant(leader).rear - vehicle.length / 2 - ROAD_GAP : Infinity;
-      const followingLimit = leaderRearBefore - vehicle.length / 2 - ROAD_GAP;
-      const gap = Math.min(signalLimit, dwellLimit, followingLimit) - vehicle.s;
-      const speed = this.phase === "dwelling" && vehicle === this.fixtureBus
-        ? 0
-        : followingSpeed(vehicle.speed, vehicle.kind === "bus" ? 9 : CRUISE, gap);
-      const advance = Math.min(speed * ROAD_STEP, Math.max(0, Math.min(signalLimit, dwellLimit, aheadLimit) - vehicle.s));
-      vehicle.speed = advance / ROAD_STEP <= EPSILON ? 0 : advance / ROAD_STEP;
-      vehicle.s += vehicle.speed * ROAD_STEP;
-      // Begin the dwell once the bus settles within the following buffer.
-      if (dwellLimit - vehicle.s <= 0.31) {
-        vehicle.speed = 0;
-        this.hasDwelled = true;
-        this.phase = "dwelling";
-        this.dwellUntil = this.time + DWELL_SECONDS;
-      }
-      if (vehicle.speed <= EPSILON) {
-        if (vehicle === this.fixtureBus && this.phase === "dwelling") queueCause = "bus";
-        else if (signalLimit - vehicle.s <= 0.31) queueCause = "red";
-        else if (followingLimit - vehicle.s > 0.31 || !leader || leader.speed > EPSILON) queueCause = null;
-        if (vehicle.kind === "car" && queueCause === "bus") behindBus += 1;
-        if (vehicle.kind === "car" && queueCause === "red") redQueue += 1;
-      } else {
-        queueCause = null;
-      }
-      leader = vehicle;
-      leaderRearBefore = body.rear;
-    }
-    if (behindBus > 0) this.waits.behindBus += ROAD_STEP;
-    this.behindBus = behindBus;
-    this.redQueue = redQueue;
-    this.lane = this.lane.filter((vehicle) => {
-      if (occupant(vehicle).rear <= UW_ROAD.end) return true;
-      if (vehicle === this.fixtureBus) this.phase = "departed";
-      return false;
-    });
-    return this.frame();
+    return this.frame(state);
   }
 
-  frame() {
-    return {
-      time: this.time,
-      red: this.red,
-      carsBehindBus: this.behindBus,
-      carsAtRed: this.redQueue,
-      busPhase: this.phase,
-      waits: { ...this.waits },
-      lane: this.lane.map(occupant),
-      vehicles: this.lane.map(({ id, s, kind, speed }) => ({ id, s, kind, speed })),
-      busApproach: this.phase === "approaching" || this.phase === "waiting"
-        ? Math.min(1, this.time / BUS_READY) : null,
-      accessCar: this.access && { id: this.access.id, progress: Math.min(1, (this.time - this.access.arrivedAt) / ACCESS_TRAVEL) },
-    };
+  frame(state = this.road.frame()) {
+    const bus = state.vehicles.find(({ id }) => id === FIXTURE_BUS_ID);
+    const waiting = state.waiting.find(({ vehicleId }) => vehicleId === FIXTURE_BUS_ID);
+    const dwelling = this.dwellUntil !== undefined && state.time < this.dwellUntil;
+    let carsBehindBus = 0;
+    if (dwelling && bus && this.scenario === "shared") {
+      const upstreamLength = this.road.lane("fixture-in").length;
+      const cars = [...state.lanes["fixture-out"], ...state.lanes["fixture-in"].map((body) =>
+        ({ ...body, front: body.front - upstreamLength, rear: body.rear - upstreamLength }))];
+      let rear = bus.front - bus.length;
+      for (const car of cars) {
+        if (car.kind !== "car" || car.front > rear) continue;
+        if (car.speed > 0.001 || rear - car.front > ROAD_GAP + 0.32) break;
+        carsBehindBus += 1;
+        rear = car.rear;
+      }
+    }
+    return { ...state, bus, waiting, dwelling, carsBehindBus, busWait: this.busWait,
+      lastBlockers: this.lastWait ? [...this.lastWait.blockers] : [], red: this.red };
   }
 }
