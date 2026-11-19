@@ -7,6 +7,9 @@
 //     "viewport":[960,600],"mode":"simulation"}'
 //
 // mode "live" records the live fleet in real time instead (one frame per `step` seconds).
+// mode "fairway" records the Fairway terminal replay in its own framing
+// (from/to/step in replay seconds; `camera` optional; "next": "garage" for
+// the Not in Service variant).
 // Needs Playwright and ffmpeg.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -37,7 +40,12 @@ const page = await browser.newPage({ viewport: { width, height }, deviceScaleFac
 await page.goto(base.href);
 await page.waitForFunction(() => window.__transitops?.map?.isStyleLoaded(), null, { timeout: 90_000 });
 await page.waitForTimeout(2500);
-if (options.mode !== "live") {
+if (options.mode === "fairway") {
+  await page.getByRole("button", { name: "Fairway", exact: true }).click();
+  await page.waitForFunction(() => window.__transitops.fairway, null, { timeout: 20_000 });
+  if (options.next === "garage") await page.getByRole("button", { name: "Garage", exact: true }).click();
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+} else if (options.mode !== "live") {
   if (options.preset) await page.getByRole("button", { name: options.preset }).click();
   await page.getByRole("button", { name: /Start simulation|Apply & restart/ }).click();
   await page.waitForFunction(() => window.__transitops.scene().buses.length > 0, null, { timeout: 30_000 });
@@ -46,7 +54,7 @@ if (options.mode !== "live") {
 // Let the mode switch's camera ease finish before placing our camera.
 await page.waitForTimeout(500);
 await page.waitForFunction(() => !window.__transitops.map.isMoving(), null, { timeout: 20_000 });
-await page.evaluate((camera) => window.__transitops.map.jumpTo(camera), options.camera);
+if (options.camera) await page.evaluate((camera) => window.__transitops.map.jumpTo(camera), options.camera);
 if (options.setup) await page.evaluate(options.setup);
 const map = page.locator(".geoMapShell");
 let index = 0;
@@ -83,6 +91,13 @@ if (options.mode === "live") {
       }, follow);
     }
     await page.waitForTimeout((options.step ?? 1) * 1000);
+    await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
+  }
+} else if (options.mode === "fairway") {
+  for (let t = options.from ?? 0; t <= (options.to ?? 111); t += options.step ?? 1) {
+    await page.evaluate((value) => window.__transitops.fairway.clock.seek(value), t);
+    await settle();
+    await page.evaluate(() => window.scrollTo(0, 0));
     await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
   }
 } else {
