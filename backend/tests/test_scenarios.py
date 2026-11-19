@@ -2,11 +2,12 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from models import Bus,Train
+from ion import IonPlan
+from models import Bus
 from simulation_engine import TransitSimulation
 class Scenarios(unittest.TestCase):
  def run_case(self, smart=False, **kwargs):
-  s=TransitSimulation([Bus('B101'),Bus('B102'),Bus('B103'),Bus('B104')],[Train('T1',12,0,50)],intelligent=smart,duration=50,**kwargs)
+  s=TransitSimulation([Bus('B101'),Bus('B102'),Bus('B103'),Bus('B104')],IonPlan(duration_min=50,transfer_demand=50),intelligent=smart,duration=50,**kwargs)
   s.run()
   return s
  def test_reproducible(self):

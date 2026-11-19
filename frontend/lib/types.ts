@@ -1,3 +1,5 @@
+import type { IonSchedule } from "./motion/ion.ts";
+
 export type Controls = {
   traffic_multiplier: number;
   train_delay: number;
@@ -9,6 +11,7 @@ export type Controls = {
   breakdown_minute: number | null;
   emergency_dispatch_minute: number | null;
   seed: number;
+  ion_headway?: number;
 };
 
 export type StopState = {
@@ -75,12 +78,30 @@ export type Network = {
   corridor_name?: string;
 };
 
+/** An ION train in a minute snapshot (backend/simulation_engine.py). */
+export type TrainState = {
+  id: string;
+  direction: "north" | "south";
+  /** metres along the track of the train's nose */
+  nose_m: number;
+  /** station it is standing at, if any */
+  station: string | null;
+  next_station: string;
+  lon: number;
+  lat: number;
+  delay_min: number;
+  hold: string;
+  /** riders still to transfer to the bus, by bus stop (CENTRAL / UW) */
+  transfers_ahead: Record<string, number>;
+};
+
 export type Snapshot = {
   minute: number;
   waiting: number;
   stops: StopState[];
   intersections: IntersectionState[];
   buses: BusState[];
+  trains: TrainState[];
 };
 
 export type Metrics = {
@@ -92,6 +113,11 @@ export type Metrics = {
   max_queue: number;
   buses_staged: number;
   signal_priority_requests: number;
+  ion_transfers: number;
+  ion_transfers_boarded: number;
+  average_transfer_wait: number;
+  ion_trains_peak: number;
+  ion_max_delay: number;
 };
 
 export type SimulationEvent = {
@@ -99,6 +125,7 @@ export type SimulationEvent = {
   message: string;
   kind: string;
   bus_id?: string;
+  train_id?: string;
   reason?: string;
 };
 
@@ -111,6 +138,7 @@ export type CaseResult = {
 export type SimulationResponse = {
   scenario: Controls;
   network: Network;
+  ion: IonSchedule;
   baseline: CaseResult;
   smart: CaseResult;
   impact: {
@@ -118,6 +146,7 @@ export type SimulationResponse = {
     additional_completed_trips: number;
     max_queue_reduction: number;
     fewer_left_waiting: number;
+    transfer_wait_reduction: number;
   };
 };
 
@@ -126,6 +155,7 @@ export type Selection =
   | { type: "stop"; data: StopState }
   | { type: "intersection"; data: IntersectionState }
   | { type: "yard"; data: Yard }
+  | { type: "train"; data: TrainState }
   | null;
 
 export type LiveSumoVehicle = {

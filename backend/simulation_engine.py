@@ -2,6 +2,7 @@ import math
 import random
 
 import corridor
+import ion
 from models import BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
@@ -48,7 +49,7 @@ class TransitSimulation:
     def __init__(
         self,
         buses,
-        trains,
+        ion_plan,
         intelligent=True,
         duration=90,
         traffic_multiplier=1.0,
@@ -61,7 +62,10 @@ class TransitSimulation:
         emergency_dispatch_minute=None,
     ):
         self.buses = buses
-        self.trains = sorted(trains, key=lambda t: t.actual_arrival)
+        # ION trains on the real track: their arrivals at Central and UW bring
+        # riders who transfer to the corridor bus (see ion.py).
+        self.ion = ion_plan
+        self.hub_arrivals = ion_plan.hub_arrivals()
         self.intelligent = intelligent
         self.duration = duration
         self.traffic_multiplier = max(0.5, min(float(traffic_multiplier), 3.0))
@@ -93,10 +97,12 @@ class TransitSimulation:
         self._spawn_passengers("UW", 12, initial=True)
         self._spawn_passengers("WATERLOO_SQUARE", 8, initial=True)
 
-    def log(self, message, kind="info", *, bus_id=None, reason=None):
+    def log(self, message, kind="info", *, bus_id=None, reason=None, train_id=None):
         event = {"minute": self.time, "message": message, "kind": kind}
         if bus_id is not None:
             event["bus_id"] = bus_id
+        if train_id is not None:
+            event["train_id"] = train_id
         if reason is not None:
             event["reason"] = reason
         self.events.append(event)
@@ -112,7 +118,7 @@ class TransitSimulation:
             return self._rng.choice(backward)
         return ROUTE[-1]
 
-    def _spawn_passengers(self, stop_id, count, initial=False):
+    def _spawn_passengers(self, stop_id, count, initial=False, source="walk-up"):
         stop = self.stops[stop_id]
         for _ in range(max(0, count)):
             passenger = Passenger(
@@ -120,6 +126,7 @@ class TransitSimulation:
                 origin=stop_id,
                 destination=self._destination_for(stop_id),
                 arrival_time=0 if initial else self.time,
+                source=source,
             )
             self._next_passenger += 1
             stop.queue.append(passenger)
@@ -141,13 +148,28 @@ class TransitSimulation:
                 self._spawn_passengers(stop_id, count)
 
     def _process_train_arrivals(self):
-        for train in self.trains:
-            if train.actual_arrival == self.time:
-                self._spawn_passengers("CENTRAL", train.passengers_for_bus)
+        for trip in self.ion.trips:
+            # Announce a held train when it should have left its terminal.
+            if trip.hold_reason and math.floor(max(0.0, trip.scheduled_s) / 60) == self.time:
                 self.log(
-                    f"{train.train_id} arrived at Central Station +{train.passengers_for_bus} transfers",
-                    "train",
+                    f"{trip.train_id} {trip.hold_reason} (+{trip.delay_s / 60:.0f} min)",
+                    "disruption",
+                    train_id=trip.train_id,
+                    reason="Scenario train delay: this trip carries a transfer wave." if "Fairway" in trip.hold_reason
+                    else "ION trains cannot overtake, so the train behind keeps a 3-minute gap.",
                 )
+        for at, trip, stop_id, riders in self.hub_arrivals:
+            if math.floor(at / 60) != self.time:
+                continue
+            self._spawn_passengers(stop_id, riders, source="ion")
+            self.metrics.ion_transfers += riders
+            self.metrics.ion_max_delay_minutes = max(self.metrics.ion_max_delay_minutes, trip.delay_s / 60)
+            late = f", {trip.delay_s / 60:.0f} min late" if trip.delay_s else ""
+            self.log(
+                f"{trip.train_id} at {self.stops[stop_id].name}{late}: +{riders} transferring to the bus",
+                "train",
+                train_id=trip.train_id,
+            )
 
     def _scenario_events(self):
         if self.surge_minute is not None and self.time == self.surge_minute:
@@ -174,17 +196,25 @@ class TransitSimulation:
             else:
                 self.log("Emergency dispatch requested, but no bus is available", "emergency")
 
+    def _upcoming_transfers(self, lookahead=10):
+        """ION arrivals at Central and UW in the next `lookahead` minutes.
+
+        The controller sees the live ION timetable, delays included.
+        """
+        upcoming = []
+        for at, trip, stop_id, riders in self.hub_arrivals:
+            until = math.floor(at / 60) - self.time
+            if 0 < until <= lookahead and riders:
+                upcoming.append((until, trip, stop_id, riders))
+        return upcoming
+
     def _near_term_hub_demand(self, lookahead=10):
         demand = (
             len(self.stops["CENTRAL"].queue)
             + len(self.stops["UW"].queue)
             + len(self.stops["WATERLOO_SQUARE"].queue)
         )
-        for train in self.trains:
-            until = train.actual_arrival - self.time
-            if 0 < until <= lookahead:
-                demand += train.passengers_for_bus
-        return demand
+        return demand + sum(riders for _, _, _, riders in self._upcoming_transfers(lookahead))
 
     def _segment_base_minutes(self, from_index, to_index):
         if from_index == -1:
@@ -263,11 +293,17 @@ class TransitSimulation:
             )
             threshold = max(70, arriving_capacity + 25)
             if demand > threshold:
+                trains = sorted(self._upcoming_transfers(), key=lambda item: -item[3])
+                ion_note = ""
+                if trains and trains[0][3] >= 10:
+                    until, trip, stop_id, riders = trains[0]
+                    ion_note = (f" Largest ION transfer: {trip.train_id} due at {self.stops[stop_id].name} "
+                                f"in {until} min with {riders} riders.")
                 self._dispatch_bus(
                     yard[0],
                     staged=True,
                     reason=f"Forecast demand of {demand} riders exceeded the staging threshold "
-                           f"of {threshold}, with {arriving_capacity} seats expected to arrive.",
+                           f"of {threshold}, with {arriving_capacity} seats expected to arrive.{ion_note}",
                 )
 
     def _alight_and_board(self, bus, stop_id):
@@ -293,6 +329,9 @@ class TransitSimulation:
             self.metrics.cumulative_wait_minutes += max(
                 0, self.time - passenger.arrival_time
             )
+            if passenger.source == "ion":
+                self.metrics.ion_transfers_boarded += 1
+                self.metrics.cumulative_transfer_wait += max(0, self.time - passenger.arrival_time)
 
         bus.onboard.extend(boarding)
 
@@ -459,7 +498,38 @@ class TransitSimulation:
                 }
             )
 
+        snapshot["trains"] = self._train_snapshot()
+        self.metrics.ion_trains_peak = max(self.metrics.ion_trains_peak, len(snapshot["trains"]))
         self.timeline.append(snapshot)
+
+    def _train_snapshot(self):
+        """ION trains on the line at this minute: where, and who is transferring."""
+        out = []
+        t = self.time * 60.0
+        for trip in self.ion.trips:
+            found = self.ion.state(trip, t)
+            if found is None:
+                continue
+            nose, station, leg = found
+            lon, lat = ion.position(trip.direction, nose)
+            line = self.ion.lines[trip.direction]
+            ahead = [
+                (stop_id, riders) for stop_id, riders in trip.transfers.items()
+                if self.ion.arrival_s(trip, next(n for n, s in ion.HUBS.items() if s == stop_id)) >= t
+            ]
+            out.append({
+                "id": trip.train_id,
+                "direction": trip.direction,
+                "nose_m": nose,
+                "station": station,
+                "next_station": line.legs[leg].to_station if station is None else station,
+                "lon": lon,
+                "lat": lat,
+                "delay_min": round(trip.delay_s / 60.0, 1),
+                "hold": trip.hold_reason,
+                "transfers_ahead": {stop_id: riders for stop_id, riders in ahead if riders},
+            })
+        return out
 
     def run(self):
         self.log("Waterloo Corridor Test Scenario started", "system")

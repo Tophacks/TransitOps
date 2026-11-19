@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { Corridor } from "../lib/motion/corridor.ts";
 import { PlaybackClock } from "../lib/motion/clock.ts";
 import { busPoses } from "../lib/motion/playback.ts";
-import { ION_GAP, ION_SECTIONS, ionService, ionTrains } from "../lib/motion/ion.ts";
+import { ION_GAP, ION_SECTIONS, IonTimetable } from "../lib/motion/ion.ts";
 import { deltaMetres } from "../lib/motion/path.ts";
 
 const data = JSON.parse(readFileSync(new URL("../lib/geo/waterloo-corridor.json", import.meta.url)));
@@ -81,11 +81,31 @@ test("the bus heading follows the corner from Phillip onto University", () => {
   }
 });
 
+const timetable = new IonTimetable(data.ion, parity.ion.schedule);
+
+test("browser ION trains reproduce the Python simulator exactly", () => {
+  const trips = new Map(parity.ion.schedule.trips.map((trip) => [trip.id, trip]));
+  for (const sample of parity.ion.samples) {
+    const trip = trips.get(sample.id);
+    sample.times.forEach((t, i) => {
+      const state = timetable.state(trip, t);
+      if (sample.noses[i] === null) assert.equal(state, null, `${sample.id} at ${t}s`);
+      else assert.ok(Math.abs(state.nose - sample.noses[i]) < 1e-9, `${sample.id} at ${t}s: ${state?.nose} vs ${sample.noses[i]}`);
+    });
+  }
+  // At every whole minute of a run the browser draws exactly the trains the
+  // simulator reported, at exactly the same place.
+  for (const { minute, trains } of parity.ion.minutes) {
+    const drawn = timetable.trains(minute * 60);
+    assert.deepEqual(drawn.map((train) => train.id).sort(), Object.keys(trains).sort(), `minute ${minute}`);
+    for (const train of drawn) assert.ok(Math.abs(train.nose - trains[train.id]) < 1e-9, `${train.id} minute ${minute}`);
+  }
+});
+
 test("ION sections each follow the track and stay joined through the Uptown curve", () => {
-  const service = ionService(data.ion);
   let sawSplitHeading = false;
-  for (let t = 0; t < 900; t += 2) {
-    for (const train of ionTrains(service, t)) {
+  for (let t = 0; t < 3600; t += 2) {
+    for (const train of timetable.trains(t)) {
       assert.equal(train.sections.length, ION_SECTIONS.length);
       for (let i = 0; i + 1 < train.sections.length; i += 1) {
         const gap = metres(train.sections[i].rear, train.sections[i + 1].front);

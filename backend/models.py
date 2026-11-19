@@ -16,6 +16,8 @@ class Passenger:
     arrival_time: int
     boarded_time: int | None = None
     completed_time: int | None = None
+    # "ion" for riders transferring from an ION train, else "walk-up"
+    source: str = "walk-up"
 
 
 @dataclass
@@ -85,6 +87,17 @@ class SimulationMetrics:
     passengers_left_waiting: int = 0
     buses_staged: int = 0
     signal_priority_requests: int = 0
+    ion_transfers: int = 0
+    ion_transfers_boarded: int = 0
+    cumulative_transfer_wait: int = 0
+    ion_trains_peak: int = 0
+    ion_max_delay_minutes: float = 0.0
+
+    @property
+    def average_transfer_wait_minutes(self) -> float:
+        if self.ion_transfers_boarded == 0:
+            return 0.0
+        return self.cumulative_transfer_wait / self.ion_transfers_boarded
 
     @property
     def average_wait_minutes(self) -> float:

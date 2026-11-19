@@ -186,6 +186,32 @@ async function run(name, viewport, record) {
       }
     }
     check(`${name}: scrubbing lands on the simulator's minute positions`, worst < 1.0, `worst ${worst.toFixed(2)} m from the simulator's lon/lat`);
+
+    // ION trains come from the simulator: same trains, same places, every minute.
+    let trainWorst = 0;
+    let trainMismatch = 0;
+    let trainsSeen = 0;
+    for (const minute of [0, 7, 19, 33, 48, 60]) {
+      await seek(page, minute * 60);
+      const drawn = new Map((await scene(page)).trains.map((t) => [t.id, t]));
+      const expected = api[minute].trains ?? [];
+      if (drawn.size !== expected.length) trainMismatch += 1;
+      for (const train of expected) {
+        const pose = drawn.get(train.id);
+        if (!pose) { trainMismatch += 1; continue; }
+        trainWorst = Math.max(trainWorst, Math.abs(pose.nose - train.nose_m));
+        trainsSeen += 1;
+      }
+    }
+    check(`${name}: ION trains match the simulator at each minute`, trainMismatch === 0 && trainsSeen > 20 && trainWorst < 1e-6,
+      `${trainsSeen} train positions compared, worst ${trainWorst.toExponential(1)} m, ${trainMismatch} mismatches`);
+    const ui = await page.evaluate(() => ({
+      ticks: document.querySelectorAll(".ionTicks i").length,
+      waves: document.querySelectorAll(".ionTicks i.wave").length,
+      kpi: [...document.querySelectorAll(".topMetrics div")].find((d) => d.textContent.includes("ION TRAINS"))?.textContent,
+    }));
+    check(`${name}: ION arrivals marked on the timeline and counted in the KPIs`, ui.ticks > 10 && ui.waves >= 2 && /\d/.test(ui.kpi ?? ""),
+      `${ui.ticks} arrival ticks, ${ui.waves} transfer waves, "${ui.kpi}"`);
   }
 
   // Buildings hide a vehicle behind them: look at a bus across a tall building.
