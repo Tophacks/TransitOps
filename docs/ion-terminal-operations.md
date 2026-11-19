@@ -93,27 +93,43 @@ trackwork is drawn from OSM.
 | Vehicle IDs | `LRV501…` | Illustrative, not real fleet assignments |
 | Platform hold | the train at (or next to stop at) the platform cannot leave until the hold ends | Scenario input ("door fault") |
 
+## Rail-to-bus connections (seconds, not minutes)
+
+Transfer riders become eligible to board at the exact second their train
+stops, plus a walk to the bus stop: 60 s at Central and at UW (modelled). A bus
+reaching a stop at minute M:
+
+- opens its doors at M:00;
+- boards everyone already eligible;
+- keeps boarding riders who become eligible while it dwells;
+- closes its doors at M:55 and pulls out at M+1:00 (`DOOR_CLOSE_S` = 5 s).
+
+The simulator no longer rounds a rider's arrival down to the minute. The old
+model did, which let riders board up to 59 s before their train arrived.
+`tests/test_transfer_boarding.py` checks the boundary at 1 s before and 1 s
+after the doors close, the moment of closing itself, riders already waiting,
+and that no transfer rider boards before their train stops.
+
 ## Comparison
 
 `python3 backend/compare_rail.py` uses the page's default scenario: traffic
 1.15×, a 4-minute scenario delay on the transfer-wave trains, 110 transfer
-riders, 3 buses and seed 17. The adaptive bus controller runs in every case,
-so the differences come from the rail run.
+riders, 3 buses and seed 17. The adaptive bus controller runs in every case.
 
 | Hold | Rail policy | Late departures (>1 min) | Missed (>3 min) | Avg / max departure delay | Signal queueing | Trips reassigned | Transfer riders reaching the bus late | Rider-minutes of transfer delay | Avg transfer wait for the bus | Avg boarding wait |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| no hold | holds only | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.59 min | 22.56 min |
-| no hold | dispatch | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.59 min | 22.56 min |
-| Fairway platform 2, 12 min from 20:00 | holds only | 4 | 2 | 68 s / 8.0 min | 100 s | 0 | 3 | 19 | 22.75 min | 22.68 min |
-| Fairway platform 2, 12 min from 20:00 | dispatch | 3 | 2 | 36 s / 4.0 min | 0 s | 1 | 2 | 6 | 22.36 min | 22.53 min |
-| Conestoga platform 1, 14 min from 20:00 | holds only | 5 | 4 | 132 s / 14.0 min | 473 s | 0 | 6 | 54 | 22.06 min | 22.40 min |
-| Conestoga platform 1, 14 min from 20:00 | dispatch | 4 | 3 | 52 s / 4.0 min | 0 s | 2 | 4 | 14 | 22.51 min | 22.40 min |
+| no hold | holds only | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.23 min | 22.18 min |
+| no hold | dispatch | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.23 min | 22.18 min |
+| Fairway platform 2, 12 min from 20:00 | holds only | 4 | 2 | 68 s / 8.0 min | 100 s | 0 | 3 | 19 | 21.50 min | 22.08 min |
+| Fairway platform 2, 12 min from 20:00 | dispatch | 3 | 2 | 36 s / 4.0 min | 0 s | 1 | 2 | 6 | 22.23 min | 22.21 min |
+| Conestoga platform 1, 14 min from 20:00 | holds only | 5 | 4 | 132 s / 14.0 min | 473 s | 0 | 6 | 54 | 21.90 min | 22.08 min |
+| Conestoga platform 1, 14 min from 20:00 | dispatch | 4 | 3 | 52 s / 4.0 min | 0 s | 2 | 4 | 14 | 22.39 min | 22.17 min |
 
-The two "no hold" rows are identical: with no hold, dispatch has nothing to reassign.
+With no hold, dispatch has nothing to reassign, so the two rows are identical.
 
 **A local decision that changes a downstream outcome.** In the Fairway case:
 
-1. LRV501 is held at platform 2 (minute 20).
+1. LRV501 is held at platform 2.
 2. LRV503 arrives on platform 1, because the held platform is occupied.
 3. At 24:00 dispatch gives LRV501's trip ION-N3 to LRV503.
 4. ION-N3 leaves at 27:00 instead of 32:00.
@@ -122,31 +138,44 @@ The two "no hold" rows are identical: with no hold, dispatch has nothing to reas
 In the Conestoga case, two swaps get ION-S2 and ION-S3 to UW and Central
 10.5 and 5.5 minutes earlier.
 
-With dispatch the transfer wait is lower at Fairway and higher at Conestoga.
-Earlier train arrivals do not always meet an earlier bus: buses leave UW and
-Central on their own schedule, in whole simulated minutes.
+The swapped trips carry one transfer rider each, so the effect on bus waits is
+small. It also goes either way, because buses fill in queue order: an earlier
+rider can take a seat that a wave rider would otherwise have had.
+
+### The two transfer waves, at exact times (no hold)
+
+| Wave | Train stops | Riders eligible | Buses at that stop | Outcome |
+| --- | --- | --- | --- | --- |
+| ION-N0 (LRV506) at Central, 30 riders | 21:00.5 | 22:00.5 | B103 doors 20:00–20:55, departs 21:00; next bus B101 at 53:00 | **Missed connection.** The train stops 5.5 s after B103's doors close. The 30 riders wait for B101 at 53:00 |
+| ION-N0 at UW, 13 riders | 30:38.7 | 31:38.7 | B101 doors close 30:55; B102 39:00 (full); B103 50:00 | B101 left before the train arrived; all 13 board B103 |
+| ION-N2 (LRV510) at Central, 24 riders | 35:00.5 | 36:00.5 | B101 at 53:00 (full) | No bus with room within the hour |
+| ION-N2 at UW, 10 riders | 44:38.7 | 45:38.7 | B103 at 50:00 | 3 board, then the bus is full |
 
 ### Against the existing model
 
-The existing ION model on `main` treated every trip as its own train, with no
-terminals. Same scenario, no hold:
+On `main`, the ION-N0 train reached Central at 20:45. The old model rounded its
+riders down to 20:00, so they boarded B103 at 20:00, 45 s before their train
+arrived. The ION-N2 wave was rounded from 34:45 to 34:00 the same way.
 
-| Model | Late / missed departures | Avg / max departure delay | Avg transfer wait for the bus | Avg boarding wait |
-| --- | --- | --- | --- | --- |
-| Existing (`main`, independent trips) | 2 / 1 | 24 s / 4.0 min | 11.47 min | 19.53 min |
-| Physical trains through the terminals | 2 / 1 | 24 s / 4.0 min | 22.59 min | 22.56 min |
+Average transfer wait for the bus, same scenario, no hold:
 
-- **Departures** are identical.
-- **Arrivals** are not. Trains now start from the real platform, 72 m behind
-  the GTFS station point, and cross the interlocking at 25 km/h. They reach
-  Central and UW 15–26 s later.
-- **Bus waits** follow from that. The bus model works in whole minutes, and
-  two transfer waves now arrive just after a minute boundary (20.75 → 21.01
-  min at Central, 34.75 → 35.01 min), so their riders miss a bus and wait
-  about 10 minutes longer.
+| Train times | Old boarding (minute rounding) | Exact boarding, 0 s walk | Exact boarding, 60 s walk |
+| --- | --- | --- | --- |
+| Existing model (`main`) | 11.47 min | 11.11 min | 20.66 min |
+| Physical trains (this branch) | 22.59 min | 22.33 min | **22.23 min** |
 
-Riders and demand are unchanged. This is a real sensitivity of the minute-step
-bus model to train arrival times, and a reason to move bus stops to the
-seconds-based model in Step 2.
+- **Most of the gap was minute rounding.** With exact timing and the modelled
+  walk, the existing model's own train times give 20.66 min, against
+  11.47 min under the old rounding.
+- **The remaining +1.6 min is not a missed connection.** At the default walk,
+  both train timings miss B103 at Central. The difference comes from bus
+  capacity at UW: B102 fills at 39:00, so more of the ION-N0 UW wave waits for
+  B103 at 50:00. B102's queue differs because the terminal moves add about
+  15 s, which moves one small arrival across the end of the hour. That
+  redistributes the share of transfer riders spread over the non-wave trips.
+- **The miss caused by the new geometry.** With no walk, the old train times
+  make B103 (20:45 is before the doors close at 20:55) and the new ones do not
+  (21:00.5). The real platform start, 72 m further back, and 25 km/h through
+  the interlocking add about 16 s, which is enough to miss it.
 
-The existing model cannot represent a platform hold at all.
+Track geometry and train travel times are unchanged by the boarding fix.
