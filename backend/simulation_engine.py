@@ -71,6 +71,17 @@ YARD_GEO = (corridor.STOPS["YARD"]["lon"], corridor.STOPS["YARD"]["lat"])
 
 
 class TransitSimulation:
+    # Adaptive pre-staging rules (only when intelligent). Releasing reserve buses
+    # early and together left Central unserved for most of the hour once loops
+    # took ~40 min, so a pre-staged bus must keep its distance, takes the next
+    # scheduled slot instead of adding one, and never empties the yard.
+    # With the 10-minute schedule a 7-minute gap means a bus can be brought
+    # forward by at most 3 minutes. Over 20 seeds of every preset this beats the
+    # fixed schedule on average in all five; a 5-minute gap still lost rush hour
+    # and the emergency preset.
+    STAGING_MIN_GAP = 7          # minutes since the previous yard release
+    STAGING_PULLS_FORWARD = True  # the next 10-minute release is skipped
+    STAGING_RESERVE = 1           # buses that must stay in the yard
     def __init__(
         self,
         buses,
@@ -106,6 +117,8 @@ class TransitSimulation:
         self.events = []
         self.timeline = []
         self.time = 0
+        self.last_release = None      # minute a bus last left the yard
+        self.pulled_forward_slot = None  # scheduled release already taken by a staged bus
         self._rng = random.Random(seed)
         self._next_passenger = 1
 
@@ -290,6 +303,7 @@ class TransitSimulation:
         return congestion + signal_delay
 
     def _dispatch_bus(self, bus, staged=False, reason=None):
+        self.last_release = self.time
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = -1
         bus.target_stop_index = 3
@@ -313,7 +327,15 @@ class TransitSimulation:
     def _dispatch_logic(self):
         yard = [bus for bus in self.buses if bus.state == BusState.YARD]
         if self.time % 10 == 0 and yard:
-            self._dispatch_bus(yard.pop(0))
+            if self.intelligent and self.pulled_forward_slot == self.time:
+                self.log(
+                    f"Scheduled {self.time:02d}:00 release skipped: its bus already left early",
+                    "decision",
+                    reason=f"A bus was pre-staged at minute {self.last_release}, taking this slot so the "
+                           "buses stay spread out instead of leaving together.",
+                )
+            else:
+                self._dispatch_bus(yard.pop(0))
 
         if self.intelligent and yard:
             demand = self._near_term_hub_demand()
@@ -323,7 +345,10 @@ class TransitSimulation:
                 if bus.state != BusState.YARD and bus.target_stop_index in (0, 1, 3)
             )
             threshold = max(70, arriving_capacity + 25)
-            if demand > threshold:
+            since = None if self.last_release is None else self.time - self.last_release
+            spaced = since is None or since >= self.STAGING_MIN_GAP
+            spare = len(yard) > self.STAGING_RESERVE
+            if demand > threshold and spaced and spare:
                 trains = sorted(self._upcoming_transfers(), key=lambda item: -item[3])
                 ion_note = ""
                 if trains and trains[0][3] >= 10:
@@ -336,6 +361,8 @@ class TransitSimulation:
                     reason=f"Forecast demand of {demand} riders exceeded the staging threshold "
                            f"of {threshold}, with {arriving_capacity} seats expected to arrive.{ion_note}",
                 )
+                if self.STAGING_PULLS_FORWARD and self.time % 10:
+                    self.pulled_forward_slot = (self.time // 10 + 1) * 10
 
     def _alight_and_board(self, bus, stop_id):
         staying = []
