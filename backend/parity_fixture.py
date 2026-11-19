@@ -19,6 +19,11 @@ CASES = [
     ("CENTRAL", "UW", 9, 1),
     ("CENTRAL", "UW", 17, 0),
     ("YARD", "CENTRAL", 7, 0),
+    # Recalibrated segment times (street length at GRT's scheduled speed).
+    ("UW", "WATERLOO_SQUARE", 9, 1),
+    ("WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", 3, 1),
+    ("CENTRAL", "UW", 28, 0),
+    ("YARD", "CENTRAL", 1, 0),
 ]
 
 

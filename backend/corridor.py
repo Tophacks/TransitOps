@@ -222,6 +222,23 @@ class Run:
         return max(0.0, (self.distance(t + eps) - self.distance(t - eps)) / (2 * eps))
 
 
+@lru_cache(maxsize=None)
+def free_flow_seconds(from_id, to_id, stop_at_signal=False):
+    """Fastest comfortable trip: pull away, corners, braking, at most
+    BUS_TOP_SPEED. With stop_at_signal the bus also stops at the stop line
+    (the red-signal wait itself is added separately)."""
+    seg = segment(from_id, to_id)
+    hold_at = seg["signal"]["stop_line_m"] if stop_at_signal else None
+    v = _speed_profile(seg["length_m"], tuple(map(tuple, seg["curves"])), BUS_TOP_SPEED, hold_at, BUS_ACCEL, BUS_DECEL)
+    return _run_time(seg["length_m"], v)
+
+
+def free_flow_minutes(from_id, to_id, stop_at_signal=False):
+    """Fewest whole minutes of driving the simulator may give a segment: never
+    faster than the trip model allows at BUS_TOP_SPEED (~58 km/h)."""
+    return max(1, math.ceil(free_flow_seconds(from_id, to_id, stop_at_signal) / 60.0))
+
+
 @lru_cache(maxsize=256)
 def bus_run(from_id, to_id, minutes, hold_minutes=0):
     seg = segment(from_id, to_id)

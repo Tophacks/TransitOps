@@ -155,6 +155,47 @@ class KinematicsTests(unittest.TestCase):
         self.assertAlmostEqual(run.duration, 360.0, places=6)
 
 
+class SegmentTimeTests(unittest.TestCase):
+    LEGS = [("UW", "WATERLOO_SQUARE"), ("WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL"),
+            ("GRAND_RIVER_HOSPITAL", "CENTRAL"), ("CENTRAL", "UW"), ("YARD", "CENTRAL")]
+
+    def test_minutes_come_from_street_length_and_scheduled_speed(self):
+        import simulation_engine as se
+        for a, b in self.LEGS:
+            length = corridor.segment(a, b)["length_m"]
+            minutes = se.segment_minutes(a, b)
+            implied = length / (minutes * 60) * 3.6
+            # Rounding to whole minutes keeps each leg within 15% of GRT's scheduled speed.
+            self.assertLess(abs(implied - se.SEGMENT_SPEED_KMH[(a, b)]) / se.SEGMENT_SPEED_KMH[(a, b)], 0.15, f"{a}->{b}")
+        # King St legs match GRT route 7's own 4-minute schedule between these stops.
+        self.assertEqual(se.segment_minutes("WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL"), 4)
+        self.assertEqual(se.segment_minutes("GRAND_RIVER_HOSPITAL", "CENTRAL"), 4)
+
+    def test_buses_stay_under_60_kmh_at_any_traffic_level_and_signal(self):
+        import simulation_engine as se
+        sim = TransitSimulation([Bus("B1")], IonPlan(transfer_demand=0), duration=1)
+        for a, b in self.LEGS:
+            base = se.YARD_BASE_MINUTES if a == "YARD" else se.SEGMENT_BASE_MINUTES[ROUTE.index(a)]
+            for tenth in range(5, 31):
+                sim.traffic_multiplier = tenth / 10
+                for hold in (0, 1):
+                    minutes = sim._congested_minutes(a, b, base, stop_at_signal=bool(hold)) + hold
+                    peak = max(corridor.bus_run(a, b, minutes, hold).speed) * 3.6
+                    self.assertLess(peak, 60.0, f"{a}->{b} traffic {tenth / 10} hold {hold}: {peak:.1f} km/h")
+
+    def test_simulated_buses_never_exceed_60_kmh(self):
+        for traffic in (0.5, 1.15, 2.1):
+            sim = TransitSimulation([Bus(f"B{i}") for i in range(5)], IonPlan(transfer_demand=110, delay_min=4),
+                                    intelligent=True, duration=60, traffic_multiplier=traffic, breakdown_minute=20)
+            sim.run()
+            for tick in sim.timeline:
+                for bus in tick["buses"]:
+                    seg = bus["segment"]
+                    if seg:
+                        run = corridor.bus_run(seg["from"], seg["to"], seg["minutes"], seg["hold_minutes"])
+                        self.assertLess(max(run.speed) * 3.6, 60.0)
+
+
 class ParityFixtureTests(unittest.TestCase):
     def test_browser_parity_fixture_is_current(self):
         import parity_fixture

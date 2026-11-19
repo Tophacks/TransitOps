@@ -143,11 +143,15 @@ class IonPlan:
         at_central = north.arrival_offset("Central Station")
         events = []
         for minute, share, delay in ((12, EVENT_SPLIT[0], delay_min), (32, EVENT_SPLIT[1], delay_min // 2)):
-            trip = min(
-                (t for t in self.trips if t.direction == "north" and t.scheduled_s + at_central >= minute * 60.0
-                 and all(t is not e["trip"] for e in events)),
-                key=lambda t: t.scheduled_s,
-            )
+            candidates = [
+                t for t in self.trips if t.direction == "north" and minute * 60.0 <= t.scheduled_s + at_central < self.duration_s
+                and all(t is not e["trip"] for e in events)
+            ]
+            if not candidates:
+                # A run too short to reach this wave: its riders are spread
+                # over the other arrivals instead.
+                continue
+            trip = min(candidates, key=lambda t: t.scheduled_s)
             if delay:
                 trip.depart_s += delay * 60.0
                 trip.hold_reason = f"held {delay} min at Fairway"
@@ -165,18 +169,34 @@ class IonPlan:
                 previous = trip
 
     def _assign_transfers(self, demand):
-        event_riders = {id(e["trip"]): e["riders"] for e in self.events}
+        """Give every transfer rider a hub arrival inside the run.
+
+        An event train's riders are split over the hubs it reaches within the
+        run (the last hub takes the remainder, so rounding never creates or
+        loses a rider). Riders of an event train that reaches neither hub in
+        time, and all other demand, are spread evenly over the other arrivals.
+        """
+        events = {id(e["trip"]): e for e in self.events}
         others = []
         for trip in self.trips:
-            for name, stop_id in HUBS.items():
-                at = self.arrival_s(trip, name)
-                if 0 <= at < self.duration_s:
-                    if id(trip) in event_riders:
-                        riders = round(event_riders[id(trip)] * EVENT_HUB_SPLIT[stop_id])
-                        trip.transfers[stop_id] = riders
-                    else:
+            if id(trip) not in events:
+                for name, stop_id in HUBS.items():
+                    at = self.arrival_s(trip, name)
+                    if 0 <= at < self.duration_s:
                         others.append((at, trip, stop_id))
-        base = demand - sum(e["riders"] for e in self.events)
+        base = demand
+        for event in self.events:
+            trip, riders = event["trip"], event["riders"]
+            reached = [stop_id for name, stop_id in HUBS.items() if 0 <= self.arrival_s(trip, name) < self.duration_s]
+            if not reached:
+                continue
+            share = sum(EVENT_HUB_SPLIT[stop_id] for stop_id in reached)
+            left = riders
+            for stop_id in reached[:-1]:
+                trip.transfers[stop_id] = round(riders * EVENT_HUB_SPLIT[stop_id] / share)
+                left -= trip.transfers[stop_id]
+            trip.transfers[reached[-1]] = left
+            base -= riders
         others.sort(key=lambda item: (item[0], item[1].train_id, item[2]))
         if others:
             each, extra = divmod(max(0, base), len(others))
