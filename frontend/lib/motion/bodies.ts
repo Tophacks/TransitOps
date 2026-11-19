@@ -6,6 +6,8 @@
 
 import { offsetLonLat, type LonLat } from "./path.ts";
 import type { TrainPose } from "./ion.ts";
+import type { CarPose } from "./traffic.ts";
+import type { GateState } from "./gates.ts";
 
 /** What a bus body needs: simulated (BusPose) and live poses both fit. */
 export type BodyPose = { id: string; centre: LonLat; heading: number; state?: string };
@@ -118,6 +120,41 @@ function shade(centre: LonLat, heading: number, ring: Local[], opacity: number, 
 export type BodyLayers = { solids: Feature[]; ground: Feature[] };
 
 /**
+ * Night lighting (illustrative): lit windows, headlight beams and tail-light
+ * glow. Set by the map before it builds the frame's bodies.
+ */
+export const lighting = { night: false };
+const LIT_GLASS = "#f5c86a";
+const LIT_WINDSHIELD = "#ffe7a8";
+const BEAM = "#fff1c2";
+
+function glass() {
+  return lighting.night ? LIT_GLASS : COLORS.glass;
+}
+
+function windshield() {
+  return lighting.night ? LIT_WINDSHIELD : COLORS.windshield;
+}
+
+/** Headlight beams on the road ahead and a red glow behind (night only). */
+function lights(centre: LonLat, heading: number, front: number, rear: number, half: number, id: string, out: BodyLayers) {
+  if (!lighting.night) return;
+  const beam = (y: number): Local[] => [[front, y - 0.35], [front + 16, y - 2.6], [front + 16, y + 2.6], [front, y + 0.35]];
+  for (const y of [half - 0.5, -(half - 0.5)]) {
+    out.ground.push({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [place(centre, heading, beam(y))] },
+      properties: { opacity: 0.2, id, role: "beam", color: BEAM },
+    });
+  }
+  out.ground.push({
+    type: "Feature",
+    geometry: { type: "Polygon", coordinates: [place(centre, heading, box(rear - 2.2, rear, -half, half))] },
+    properties: { opacity: 0.22, id, role: "glow", color: "#ff3b30" },
+  });
+}
+
+/**
  * Scale everything added since `from` by `k` (0..1): a vehicle joining or
  * leaving the live feed grows out of / sinks into the street.
  */
@@ -165,10 +202,11 @@ function drawBus(pose: BodyPose, selected: boolean, out: BodyLayers, colors: (ty
   }
   s.push(part(centre, heading, nosed(-L, L, W - 0.05, 0.42), 0.32, 0.95, COLORS.chassis, id));
   s.push(part(centre, heading, nosed(-L, L, W, 0.45), 0.95, 1.4, colors.shade, id));
-  s.push(part(centre, heading, nosed(-L + 0.1, L - 0.55, W + 0.02, 0.3), 1.4, 2.45, COLORS.glass, id));
+  s.push(part(centre, heading, nosed(-L + 0.1, L - 0.55, W + 0.02, 0.3), 1.4, 2.45, glass(), id));
   // Front: cream mask with a light windshield, so the nose reads at a glance.
   s.push(part(centre, heading, nosed(L - 0.7, L, W + 0.01, 0.45, 0), 0.95, 3.02, COLORS.frontMask, id));
-  s.push(part(centre, heading, box(L - 0.5, L + 0.03, -W + 0.3, W - 0.3), 1.15, 2.5, COLORS.windshield, id));
+  s.push(part(centre, heading, box(L - 0.5, L + 0.03, -W + 0.3, W - 0.3), 1.15, 2.5, windshield(), id));
+  lights(centre, heading, L, -L, W, id, out);
   s.push(part(centre, heading, nosed(-L, L, W, 0.45), 2.45, 3.02, colors.body, id));
   s.push(part(centre, heading, box(L - 0.5, L + 0.02, -W + 0.45, W - 0.45), 2.62, 2.92, colors.sign, id));
   const roof = beacon ? STATE_BEACON[pose.state ?? ""] ?? COLORS.roof : COLORS.roof;
@@ -201,7 +239,7 @@ function drawTrain(pose: TrainPose, out: BodyLayers, colors: (typeof LIVERY)["si
     const s = out.solids;
     s.push(part(centre, heading, outline, 0.32, 1.08, COLORS.ionLower, id));
     s.push(part(centre, heading, outline, 1.08, 1.28, colors.stripe, id));
-    s.push(part(centre, heading, outline, 1.28, 2.42, COLORS.glass, id));
+    s.push(part(centre, heading, outline, 1.28, 2.42, glass(), id));
     s.push(part(centre, heading, outline, 2.42, 3.28, COLORS.ionUpper, id));
     if (index === 1 || index === 3) {
       s.push(part(centre, heading, box(-L + 1.2, L - 1.2, -W + 0.5, W - 0.5), 3.28, 3.62, COLORS.ionRoofGear, id));
@@ -210,7 +248,8 @@ function drawTrain(pose: TrainPose, out: BodyLayers, colors: (typeof LIVERY)["si
       s.push(part(centre, heading, box(-0.9, 0.9, -W + 0.85, W - 0.85), 3.28, 3.95, COLORS.ionPanto, id));
     }
     if (first) {
-      s.push(part(centre, heading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, COLORS.windshield, id));
+      s.push(part(centre, heading, box(L - 0.75, L - 0.05, -W * 0.5, W * 0.5), 1.25, 2.62, windshield(), id));
+      lights(centre, heading, L, -L, W, id, out);
       s.push(part(centre, heading, box(L - 0.6, L + 0.02, -W * 0.38, W * 0.38), 2.62, 2.9, colors.ionSign, id));
       for (const side of [1, -1]) {
         s.push(part(centre, heading, box(L - 0.45, L + 0.05, side * W * 0.22, side * W * 0.5), 0.6, 0.85, COLORS.head, id));
@@ -236,6 +275,70 @@ function drawTrain(pose: TrainPose, out: BodyLayers, colors: (typeof LIVERY)["si
       });
     }
   });
+}
+
+// Car colours: a muted mix so traffic reads as background, not as transit.
+const CAR_PAINT = ["#9aa4ad", "#5d6873", "#c9cdd1", "#3d4651", "#7b3a3a", "#2f4a63", "#b8b0a1"];
+
+function hash(id: string) {
+  let h = 0;
+  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+/** A simulated car: body, cabin, lights. Small enough to read as traffic. */
+export function carBody(pose: CarPose, out: BodyLayers, length: number, width: number) {
+  const solids = out.solids.length;
+  const ground = out.ground.length;
+  const { centre, heading, id } = pose;
+  const L = length / 2;
+  const W = width / 2;
+  const paint = CAR_PAINT[hash(id) % CAR_PAINT.length];
+  out.ground.push(shade(centre, heading, box(-L - 0.3, L + 0.3, -W - 0.3, W + 0.3), 0.25, id));
+  const s = out.solids;
+  s.push(part(centre, heading, nosed(-L, L, W, 0.35, 0.25), 0.18, 0.78, paint, id, "car"));
+  s.push(part(centre, heading, nosed(-L + 1.0, L - 1.2, W - 0.12, 0.25, 0.2), 0.78, 1.42, glass(), id, "car"));
+  s.push(part(centre, heading, box(-L + 1.15, L - 1.35, -W + 0.15, W - 0.15), 1.42, 1.48, paint, id, "car"));
+  for (const side of [1, -1]) {
+    s.push(part(centre, heading, box(L - 0.06, L + 0.04, side * (W - 0.55), side * (W - 0.18)), 0.45, 0.62, COLORS.head, id, "car"));
+    s.push(part(centre, heading, box(-L - 0.04, -L + 0.06, side * (W - 0.55), side * (W - 0.18)), 0.5, 0.66, COLORS.tail, id, "car"));
+  }
+  lights(centre, heading, L, -L, W, id, out);
+  fadeFrom(out, solids, ground, pose.opacity);
+}
+
+const GATE_ARM = 5.6;       // m, across one road approach
+const GATE_ROAD_HALF = 6.2; // m, pivot offset from the road centre
+const GATE_SETBACK = 5.0;   // m, from the track centre along the road
+
+/**
+ * Two gates per crossing, one for each road approach. Each arm is drawn as
+ * a red-and-white bar growing from its post across the lane as it lowers, so
+ * the motion reads at street zoom; the warning lights flash while active.
+ */
+export function gateBodies(gate: GateState, seconds: number, out: BodyLayers) {
+  const { crossing, lowered, active } = gate;
+  const centre: LonLat = [crossing.lon, crossing.lat];
+  const road = crossing.road_bearing;
+  const id = `gate:${crossing.id}`;
+  const flash = active && Math.floor(seconds * 2) % 2 === 0;
+  for (const side of [1, -1]) {
+    // Local frame: x along the road (towards this approach), y across it.
+    const heading = side === 1 ? road : (road + 180) % 360;
+    const post: Local = [GATE_SETBACK, -GATE_ROAD_HALF];
+    // Drawn a little chunkier than life so the gate reads at street zoom.
+    out.solids.push(part(centre, heading, box(post[0] - 0.3, post[0] + 0.3, post[1] - 0.3, post[1] + 0.3), 0, 1.6, "#d9dde0", id, "gate"));
+    out.solids.push(part(centre, heading, box(post[0] - 0.32, post[0] + 0.32, post[1] - 0.95, post[1] - 0.3), 1.35, 1.9,
+      flash ? "#ff2d1e" : "#5a1a16", id, "gate"));
+    const reach = GATE_ARM * lowered;
+    if (reach < 0.25) continue;
+    // Alternating red/white 0.8 m bands along the arm.
+    for (let y = 0; y < reach; y += 0.8) {
+      const end = Math.min(reach, y + 0.8);
+      const band = Math.floor(y / 0.8) % 2 === 0 ? "#e8392e" : "#f4f4f2";
+      out.solids.push(part(centre, heading, box(post[0] - 0.22, post[0] + 0.22, post[1] + y, post[1] + end), 0.95, 1.08, band, id, "gate"));
+    }
+  }
 }
 
 export function emptyBodies(): BodyLayers {

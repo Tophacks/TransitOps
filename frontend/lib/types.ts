@@ -42,6 +42,8 @@ export type SegmentMotion = {
   elapsed: number;
   minutes: number;
   hold_minutes: number;
+  /** cars queued ahead of the bus at a red signal (0 without a hold) */
+  queue_cars?: number;
   length_m: number;
   distance_m: number;
 };

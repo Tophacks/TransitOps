@@ -109,6 +109,21 @@ class CorridorGeometryTests(unittest.TestCase):
         self.assertIn("University Ave. / Wilfrid Laurier University", served["202"])
         self.assertIn("Waterloo Public Square Station", served["7"])
 
+    def test_ion_crossings_lie_on_both_tracks_outside_street_running(self):
+        crossings = corridor.DATA["ion_crossings"]
+        self.assertGreaterEqual(len(crossings), 5)
+        for c in crossings:
+            for direction in ("north", "south"):
+                track = corridor.DATA["ion"][direction]
+                self.assertTrue(0 <= c["at_m"][direction] <= track["length_m"])
+                lon, lat = corridor._lerp_path(track["path"], c["at_m"][direction])
+                # Tracks run up to ~10 m apart where they split round a platform.
+                self.assertLess(metres((lon, lat), (c["lon"], c["lat"])), 12, f"{c['id']} {direction}")
+            # Uptown King St and Charles St are street-running: signals, not gates.
+            self.assertFalse(43.4585 < c["lat"] < 43.4640 and -80.5225 < c["lon"] < -80.4950, c)
+        near = " ".join(c["near"] for c in crossings)
+        self.assertIn("University Of Waterloo", near)
+
     def test_geometry_file_stays_small(self):
         size = (ROOT / "waterloo_corridor.json").stat().st_size
         self.assertLess(size, 100 * 1024)
@@ -180,7 +195,8 @@ class SegmentTimeTests(unittest.TestCase):
                 sim.traffic_multiplier = tenth / 10
                 for hold in (0, 1):
                     minutes = sim._congested_minutes(a, b, base, stop_at_signal=bool(hold)) + hold
-                    peak = max(corridor.bus_run(a, b, minutes, hold).speed) * 3.6
+                    queue = corridor.queue_cars(tenth / 10) if hold else 0
+                    peak = max(corridor.bus_run(a, b, minutes, hold, queue).speed) * 3.6
                     self.assertLess(peak, 60.0, f"{a}->{b} traffic {tenth / 10} hold {hold}: {peak:.1f} km/h")
 
     def test_simulated_buses_never_exceed_60_kmh(self):
@@ -192,8 +208,31 @@ class SegmentTimeTests(unittest.TestCase):
                 for bus in tick["buses"]:
                     seg = bus["segment"]
                     if seg:
-                        run = corridor.bus_run(seg["from"], seg["to"], seg["minutes"], seg["hold_minutes"])
+                        run = corridor.bus_run(seg["from"], seg["to"], seg["minutes"], seg["hold_minutes"], seg["queue_cars"])
                         self.assertLess(max(run.speed) * 3.6, 60.0)
+
+
+class QueueTests(unittest.TestCase):
+    def test_at_a_red_signal_the_bus_waits_behind_the_queued_cars(self):
+        seg = corridor.segment("UW", "WATERLOO_SQUARE")
+        line = seg["signal"]["stop_line_m"]
+        for traffic, cars in ((0.5, 1), (1.15, 2), (2.1, 3), (3.0, 4)):
+            self.assertEqual(corridor.queue_cars(traffic), cars)
+            run = corridor.bus_run("UW", "WATERLOO_SQUARE", 9, 1, cars)
+            self.assertAlmostEqual(run.hold_position, line - corridor.BUS_FRONT_M - cars * corridor.CAR_SPACING_M, delta=1.01)
+            held = [t for t in range(0, 540) if run.distance(t) == run.hold_position]
+            self.assertGreaterEqual(len(held), 59)
+
+    def test_snapshots_report_the_queue_only_on_red_holds(self):
+        sim = simulate()
+        seen = 0
+        for tick in sim.timeline:
+            for bus in tick["buses"]:
+                seg = bus["segment"]
+                if seg:
+                    self.assertEqual(seg["queue_cars"] > 0, seg["hold_minutes"] > 0)
+                    seen += seg["queue_cars"] > 0
+        self.assertGreater(seen, 0)
 
 
 class ParityFixtureTests(unittest.TestCase):
@@ -252,7 +291,7 @@ class SimulatorMotionTests(unittest.TestCase):
         moving = next(bus for tick in sim.timeline for bus in tick["buses"] if bus["state"] == "EN_ROUTE")
         self.assertEqual(
             set(moving["segment"]),
-            {"from", "to", "elapsed", "minutes", "hold_minutes", "length_m", "distance_m"},
+            {"from", "to", "elapsed", "minutes", "hold_minutes", "queue_cars", "length_m", "distance_m"},
         )
 
 
