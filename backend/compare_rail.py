@@ -56,12 +56,13 @@ def main():
                         base = next(t for t in base_plan.trips if t.train_id == d.trip_id)
                         stops = [(s, trip.station_times.get(s), base.station_times.get(s)) for s in ("Central Station", "University Of Waterloo Station")]
                         detail.append((label, d, trip, base, stops))
-    print("| Hold | Rail policy | Late departures (>1 min) | Missed (>3 min) | Avg / max departure delay | Signal queueing | Trips reassigned | Transfer riders reaching the bus late | Rider-minutes of transfer delay | Avg transfer wait for the bus | Avg boarding wait |")
-    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    print("| Hold | Rail policy | Late departures (>1 min) | Missed (>3 min) | Avg / max departure delay | Signal queueing | Trips reassigned | Transfer riders reaching the bus late | Rider-minutes of transfer delay | Transfer riders boarded | Avg transfer wait for the bus | Avg boarding wait |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for label, policy, r, m, late, rm in rows:
         print(f"| {label} | {policy} | {r['late_departures']} | {r['missed_departures']} | "
               f"{r['avg_departure_delay_s']:.0f} s / {r['max_departure_delay_s'] / 60:.1f} min | {r['platform_queue_s']:.0f} s | "
-              f"{r['trip_swaps']} | {late} | {rm:.0f} | {m.average_transfer_wait_minutes:.2f} min | {m.average_wait_minutes:.2f} min |")
+              f"{r['trip_swaps']} | {late} | {rm:.0f} | {m.ion_transfers_boarded} of {m.ion_transfers} | "
+              f"{m.average_transfer_wait_minutes:.2f} min | {m.average_wait_minutes:.2f} min |")
     print()
     for label, d, trip, base, stops in detail:
         print(f"**{label}:** {d.id} at {math.floor(d.t / 60):02d}:{int(d.t % 60):02d}, {d.vehicle_id} held with {d.trip_id}; "

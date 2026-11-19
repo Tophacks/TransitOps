@@ -116,14 +116,16 @@ and that no transfer rider boards before their train stops.
 1.15×, a 4-minute scenario delay on the transfer-wave trains, 110 transfer
 riders, 3 buses and seed 17. The adaptive bus controller runs in every case.
 
-| Hold | Rail policy | Late departures (>1 min) | Missed (>3 min) | Avg / max departure delay | Signal queueing | Trips reassigned | Transfer riders reaching the bus late | Rider-minutes of transfer delay | Avg transfer wait for the bus | Avg boarding wait |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| no hold | holds only | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.23 min | 22.18 min |
-| no hold | dispatch | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 22.23 min | 22.18 min |
-| Fairway platform 2, 12 min from 20:00 | holds only | 4 | 2 | 68 s / 8.0 min | 100 s | 0 | 3 | 19 | 21.50 min | 22.08 min |
-| Fairway platform 2, 12 min from 20:00 | dispatch | 3 | 2 | 36 s / 4.0 min | 0 s | 1 | 2 | 6 | 22.23 min | 22.21 min |
-| Conestoga platform 1, 14 min from 20:00 | holds only | 5 | 4 | 132 s / 14.0 min | 473 s | 0 | 6 | 54 | 21.90 min | 22.08 min |
-| Conestoga platform 1, 14 min from 20:00 | dispatch | 4 | 3 | 52 s / 4.0 min | 0 s | 2 | 4 | 14 | 22.39 min | 22.17 min |
+| Hold | Rail policy | Late departures (>1 min) | Missed (>3 min) | Avg / max departure delay | Signal queueing | Trips reassigned | Transfer riders reaching the bus late | Rider-minutes of transfer delay | Transfer riders boarded | Avg transfer wait for the bus | Avg boarding wait |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| no hold | holds only | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 69 of 110 | 22.23 min | 22.18 min |
+| no hold | dispatch | 2 | 1 | 24 s / 4.0 min | 0 s | 0 | 0 | 0 | 69 of 110 | 22.23 min | 22.18 min |
+| Fairway platform 2, 12 min from 20:00 | holds only | 4 | 2 | 68 s / 8.0 min | 100 s | 0 | 3 | 19 | 71 of 110 | 21.50 min | 22.08 min |
+| Fairway platform 2, 12 min from 20:00 | dispatch | 3 | 2 | 36 s / 4.0 min | 0 s | 1 | 2 | 6 | 69 of 110 | 22.23 min | 22.21 min |
+| Conestoga platform 1, 14 min from 20:00 | holds only | 5 | 4 | 132 s / 14.0 min | 473 s | 0 | 6 | 54 | 69 of 110 | 21.90 min | 22.08 min |
+| Conestoga platform 1, 14 min from 20:00 | dispatch | 4 | 3 | 52 s / 4.0 min | 0 s | 2 | 4 | 14 | 68 of 110 | 22.39 min | 22.17 min |
+
+**Transfer riders boarded (of 110):** 69 with no hold under either policy. At Fairway, dispatch improved rail departures (68 s → 36 s average, 8.0 → 4.0 min worst) but boarding went from 71 to 69. At Conestoga, rail departures improved from 132 s to 52 s, but boarding went from 69 to 68. The trips dispatch sped up carry one transfer rider each, and buses fill in queue order, so an earlier train can put its riders ahead of a later wave in a queue the bus cannot clear. Dispatch here optimises train departures, not bus connections.
 
 With no hold, dispatch has nothing to reassign, so the two rows are identical.
 
