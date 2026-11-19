@@ -26,7 +26,32 @@ INTERSECTION_LAYOUT = {
     "I3": ("King / Victoria", 70.0, 72.0, 2),
 }
 
-SEGMENT_BASE_MINUTES = [5, 5, 5, 8]
+# Average running speed of each leg, stops and signals included, taken from
+# GRT's own timetable (GTFS) for the routes on those streets, measured over the
+# street path. Each leg's minutes follow from its length (see segment_minutes).
+SEGMENT_SPEED_KMH = {
+    # University Ave and Phillip St: 202 iXpress, scheduled 21.6-22.2 km/h.
+    ("UW", "WATERLOO_SQUARE"): 22.0,
+    # King St: route 7 is scheduled 4 min between these exact stops (18.7 km/h).
+    ("WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL"): 18.7,
+    ("GRAND_RIVER_HOSPITAL", "CENTRAL"): 18.7,
+    # Back up King St through Uptown: route 7 northbound, scheduled 18.5 km/h.
+    ("CENTRAL", "UW"): 18.5,
+    ("YARD", "CENTRAL"): 18.7,
+}
+
+
+def segment_minutes(origin, target):
+    """Typical minutes for a leg: street length at its scheduled average speed."""
+    length = corridor.segment(origin, target)["length_m"]
+    return max(1, round(length / (SEGMENT_SPEED_KMH[(origin, target)] / 3.6) / 60.0))
+
+
+SEGMENT_BASE_MINUTES = [segment_minutes(a, b) for a, b in zip(
+    ["UW", "WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", "CENTRAL"],
+    ["WATERLOO_SQUARE", "GRAND_RIVER_HOSPITAL", "CENTRAL", "UW"],
+)]
+YARD_BASE_MINUTES = segment_minutes("YARD", "CENTRAL")
 SEGMENT_INTERSECTIONS = ["I1", "I2", "I3", "I2"]
 
 # Real GRT curb stops and signalised intersections on the street path
@@ -216,9 +241,14 @@ class TransitSimulation:
         )
         return demand + sum(riders for _, _, _, riders in self._upcoming_transfers(lookahead))
 
+    def _congested_minutes(self, origin, target, base, stop_at_signal=False):
+        """Traffic stretches a leg, but light traffic never squeezes it below
+        free flow (including a stop at a red signal), so buses stay under ~58 km/h."""
+        return max(corridor.free_flow_minutes(origin, target, stop_at_signal), round(base * self.traffic_multiplier))
+
     def _segment_base_minutes(self, from_index, to_index):
         if from_index == -1:
-            return 6
+            return YARD_BASE_MINUTES
         return SEGMENT_BASE_MINUTES[from_index % len(SEGMENT_BASE_MINUTES)]
 
     def _intersection_for_segment(self, from_index, to_index):
@@ -228,7 +258,7 @@ class TransitSimulation:
 
     def _travel_minutes(self, bus):
         base = self._segment_base_minutes(bus.current_stop_index, bus.target_stop_index)
-        congestion = max(1, round(base * self.traffic_multiplier))
+        origin, target = self._segment_ids(bus)
         intersection_id = self._intersection_for_segment(
             bus.current_stop_index, bus.target_stop_index
         )
@@ -256,14 +286,15 @@ class TransitSimulation:
                     )
 
         bus.segment_hold_minutes = signal_delay
-        return max(2, congestion + signal_delay)
+        congestion = self._congested_minutes(origin, target, base, stop_at_signal=bool(signal_delay))
+        return congestion + signal_delay
 
     def _dispatch_bus(self, bus, staged=False, reason=None):
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = -1
         bus.target_stop_index = 3
         bus.segment_elapsed = 0
-        bus.segment_minutes = max(3, round(6 * self.traffic_multiplier))
+        bus.segment_minutes = self._congested_minutes("YARD", "CENTRAL", YARD_BASE_MINUTES)
         bus.segment_progress = 0.0
         bus.segment_hold_minutes = 0
         bus.schedule_deviation = 1 if staged else 0

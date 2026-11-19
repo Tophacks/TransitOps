@@ -173,19 +173,29 @@ async function run(name, viewport, record) {
       const response = await fetch("/api/simulate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       return (await response.json()).smart.timeline;
     }, { traffic_multiplier: 1.15, train_delay: 4, passenger_demand: 110, fleet_size: 3, demand_multiplier: 1, surge_passengers: 0, seed: 17 });
+    // Compare distance along the street (exact), except where the display
+    // deliberately queues a bus behind another that the simulator let bunch
+    // onto the same spot; at a dwell the two sides name adjacent segments,
+    // so compare map positions there.
     let worst = 0;
+    let worstDwell = 0;
+    let queued = 0;
     for (const minute of [5, 12, 23, 31, 44]) {
       await seek(page, minute * 60);
       const drawn = (await scene(page)).buses;
       for (const bus of api[minute].buses) {
         const pose = drawn.find((b) => b.id === bus.id);
         if (!pose || !bus.segment) continue;
-        // Compare map positions: at a dwell the simulator reports the end of the
-        // finished leg and playback the start of the next one, the same curb.
-        worst = Math.max(worst, metres(pose.centre, [bus.lon, bus.lat]));
+        const bunched = api[minute].buses.some((other) => other.id !== bus.id && metres([other.lon, other.lat], [bus.lon, bus.lat]) < 13.5);
+        if (bunched) { queued += 1; continue; }
+        const same = pose.from === bus.segment.from && pose.to === bus.segment.to;
+        if (same) worst = Math.max(worst, Math.abs(pose.distance - bus.segment.distance_m));
+        else worstDwell = Math.max(worstDwell, metres(pose.centre, [bus.lon, bus.lat]));
       }
     }
-    check(`${name}: scrubbing lands on the simulator's minute positions`, worst < 1.0, `worst ${worst.toFixed(2)} m from the simulator's lon/lat`);
+    check(`${name}: scrubbing lands on the simulator's minute positions`, worst < 0.1 && worstDwell < 1.0,
+      `worst ${worst.toFixed(3)} m along the street, ${worstDwell.toFixed(2)} m at a dwell`
+      + (queued ? `; ${queued} bunched bus(es) drawn queued behind the leader` : ""));
 
     // ION trains come from the simulator: same trains, same places, every minute.
     let trainWorst = 0;
