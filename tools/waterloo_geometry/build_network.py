@@ -32,6 +32,10 @@ second crossover, to the first station after it. Each route is one path (GTFS
 line joined onto the OSM track where they agree within 2.5 m and 6 degrees),
 with its stops, its speed zones and the shared section it occupies.
 
+Dutton yard. The OMSF's track graph, storage positions and the routes between
+each storage track and the running line are built by yard.py (see its
+docstring and docs/ion-yard.md).
+
 Contains information provided by the Regional Municipality of Waterloo under
 the Region's Open Data Licence. Map data © OpenStreetMap contributors (ODbL).
 """
@@ -332,6 +336,10 @@ def build():
                 out.append({"station": st["name"], "valid": False,
                             "reason": f"no enabled crossover behind it takes {back}bound trains from the {d} track to the {other} track"})
         turnbacks[d] = out
+    from yard import build_yard
+    yard = build_yard(net, pts, cums, index, stations, crossovers, gtfs,
+                      {"encode": encode, "cut": cut, "locate": locate, "curve_caps": curve_caps, "point_at": point_at},
+                      report)
     return {
         "attribution": "ION track and crossovers © OpenStreetMap contributors (ODbL); line paths and stations from GRT GTFS: "
                        "contains information provided by the Regional Municipality of Waterloo under the Region's Open Data Licence.",
@@ -341,6 +349,7 @@ def build():
         "crossovers": crossovers,
         "diversions": diversions,
         "turnbacks": turnbacks,
+        "yard": yard,
     }, report
 
 
