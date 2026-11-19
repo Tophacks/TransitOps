@@ -1,0 +1,40 @@
+.page { max-width: 1030px; margin: 0 auto; padding: 24px clamp(16px, 4vw, 36px) 36px; }
+.back { color: var(--accent); font-size: .9rem; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.header { margin: 20px 0; }
+.header h1 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.55rem); letter-spacing: -.04em; }
+.header p, .hint { color: var(--muted); line-height: 1.5; }
+.header p { margin: 7px 0 0; }
+.layout { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; align-items: start; }
+.map, .controls { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.map { padding: 8px 16px 16px; }
+.map svg { width: 100%; height: clamp(350px, 63vh, 555px); display: block; }
+.map text { fill: #bcd0dc; font-size: 11px; }
+.crossStreet { stroke: #2c3e4a; stroke-width: 24px; }
+.road { stroke: #344a57; stroke-width: 30px; }
+.centreline { fill: none; stroke: #bda879; stroke-width: 1px; stroke-dasharray: 4 5; }
+.approach { fill: none; stroke: #344a57; stroke-width: 11px; stroke-linecap: round; stroke-linejoin: round; }
+.marker { fill: none; stroke: #75e0bd; stroke-width: 1px; }
+.vehicle { transition: transform .22s linear; }
+.legend { display: flex; justify-content: center; gap: 18px; color: #add8f6; font-size: .8rem; }
+.legend span:first-child { color: #75e0bd; }
+.controls { padding: 18px; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.toolbar output { font-variant-numeric: tabular-nums; }
+.toolbar button { padding: 6px 9px; margin-left: 5px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-2); color: var(--text); cursor: pointer; }
+.demand { display: grid; gap: 6px; margin-top: 24px; }
+.demand > span { display: flex; justify-content: space-between; }
+.demand input { width: 100%; margin: 0; accent-color: var(--accent); }
+.scale { color: var(--muted); font-size: .75rem; }
+.hint { margin: 16px 0; font-size: .88rem; }
+.results { margin: 0; font-size: .88rem; }
+.results div { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
+.results dt { color: var(--muted); }
+.results dd { margin: 0; text-align: right; font-weight: 650; }
+@media (max-width: 730px) {
+  .layout { grid-template-columns: 1fr; }
+  .controls { grid-row: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vehicle { transition: none; }
+}

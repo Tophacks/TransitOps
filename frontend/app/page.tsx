@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
@@ -339,6 +340,7 @@ export default function Home() {
           <div className="mapViewButtons" role="group" aria-label="Map view">
             <button type="button" aria-pressed={mapView === "geographic"} onClick={() => setMapView("geographic")}>Geographic map</button>
             <button type="button" aria-pressed={mapView === "schematic"} onClick={() => setMapView("schematic")}>Schematic</button>
+            <Link href="/uw-traffic">UW Station traffic</Link>
           </div>
         </div>
         {mapView === "geographic" ? (

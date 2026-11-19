@@ -17,14 +17,11 @@ import { BUS_FRONT_M, CAR_SPACING_M, holdPosition, type Corridor, type CorridorS
 import { busPoses, type BusPose, type TimelineFrame } from "./playback.ts";
 import { pointAt, tangentAt, type LonLat } from "./path.ts";
 
+import { followingSpeed, ROAD_GAP as MIN_GAP, ROAD_STEP as STEP } from "./road.ts";
+
 export const CAR_LENGTH = 4.6;
 export const CAR_WIDTH = 1.85;
 const LANE_M = 1.9;           // cars keep to the lane centre, right of the street centreline
-const MIN_GAP = 2.4;          // bumper to bumper when stopped
-const HEADWAY_S = 1.3;        // following time gap
-const ACCEL = 1.8;            // m/s^2
-const BRAKE = 4.0;            // m/s^2, comfortable maximum
-const STEP = 0.5;             // s, integration step of the precomputed stream
 const FADE_M = 25;            // metres over which a car turns off the street
 const BUS_REAR = 6.45;        // bus rear behind its distance-along reference point
 
@@ -146,13 +143,7 @@ export class TrafficStream {
             if (bus.distance > car.s) gap = Math.min(gap, bus.distance - BUS_REAR - car.s - CAR_LENGTH / 2 - MIN_GAP);
           }
           if (red && car.s < line - 1) gap = Math.min(gap, line - car.s - CAR_LENGTH / 2 - 0.6);
-          // Gipps-style safe speed: never faster than the car can stop from
-          // within the gap, and keep a time headway when following.
-          const b = BRAKE * 0.85;
-          const safe = -b * STEP + Math.sqrt(Math.max(0, (b * STEP) ** 2 + 2 * b * Math.max(0, gap - 0.3)));
-          const want = Math.max(0, Math.min(cruise, safe, Math.max(0, gap - 0.3) / HEADWAY_S + 1.5));
-          const dv = Math.max(-BRAKE * STEP, Math.min(ACCEL * STEP, want - car.v));
-          car.v = Math.max(0, car.v + dv);
+          car.v = followingSpeed(car.v, cruise, gap);
           car.s += car.v * STEP;
           // A bus closing in from behind, or a bus queue's space ahead: turn off.
           const busBehind = onSegment.some((bus) => bus.distance < car.s && car.s - CAR_LENGTH / 2 - (bus.distance + BUS_FRONT_M) < 1.5);
