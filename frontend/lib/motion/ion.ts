@@ -155,6 +155,13 @@ export type TrainPose = {
   delayMin?: number;
   hold?: string;
   sections: SectionPose[];
+  /**
+   * Bidirectional trains (the Fairway turnback): index of the cab with its
+   * headlights on, or null while the operator changes ends (tail lights at
+   * both ends). Sections stay in physical order, so section 0 is always the
+   * same cab. Unset: section 0 leads, as on the simulated line.
+   */
+  headlights?: number | null;
 };
 
 /**

@@ -8,6 +8,7 @@ on:
       - "tools/waterloo_geometry/**"
       - "backend/waterloo_corridor.json"
       - "frontend/lib/geo/waterloo-corridor.json"
+      - "frontend/lib/geo/fairway.json"
       - ".github/workflows/geometry-check.yml"
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - "tools/waterloo_geometry/**"
       - "backend/waterloo_corridor.json"
       - "frontend/lib/geo/waterloo-corridor.json"
+      - "frontend/lib/geo/fairway.json"
 permissions:
   contents: read
 jobs:
@@ -32,3 +34,5 @@ jobs:
         run: git clone --depth 1 --branch 2026-07-05_2028-07-03 https://github.com/jason897/grt-gtfs-history "$RUNNER_TEMP/gtfs"
       - name: Verify the shipped geometry against GTFS
         run: python -I tools/waterloo_geometry/verify_gtfs.py "$RUNNER_TEMP/gtfs" backend/waterloo_corridor.json --frontend-copy frontend/lib/geo/waterloo-corridor.json
+      - name: Rebuild the Fairway terminal geometry and compare with the shipped copy
+        run: python -I tools/waterloo_geometry/build_fairway.py "$RUNNER_TEMP/gtfs" --check
