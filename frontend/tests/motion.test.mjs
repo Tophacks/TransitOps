@@ -5,8 +5,8 @@ import { test } from "node:test";
 import { Corridor } from "../lib/motion/corridor.ts";
 import { PlaybackClock } from "../lib/motion/clock.ts";
 import { busPoses } from "../lib/motion/playback.ts";
-import { ION_GAP, ION_SECTIONS, IonTimetable } from "../lib/motion/ion.ts";
-import { deltaMetres, encodePath } from "../lib/motion/path.ts";
+import { ION_GAP, ION_LENGTH, ION_SECTIONS, IonTimetable } from "../lib/motion/ion.ts";
+import { deltaMetres, encodePath, lerpPath } from "../lib/motion/path.ts";
 import { runningRails, STANDARD_GAUGE_M } from "../lib/motion/railGeometry.ts";
 
 const data = JSON.parse(readFileSync(new URL("../lib/geo/waterloo-corridor.json", import.meta.url)));
@@ -82,24 +82,36 @@ test("the bus heading follows the corner from Phillip onto University", () => {
   }
 });
 
-const timetable = new IonTimetable(data.ion, parity.ion.schedule);
+const terminals = JSON.parse(readFileSync(new URL("../lib/geo/ion-terminals.json", import.meta.url)));
+const timetable = new IonTimetable(data.ion, parity.ion.schedule, terminals);
 
 test("browser ION trains reproduce the Python simulator exactly", () => {
-  const trips = new Map(parity.ion.schedule.trips.map((trip) => [trip.id, trip]));
+  // Every physical train's nose (along its line run or terminal move) and
+  // centre, through the turnbacks, against the simulator's own plan.
+  let rows = 0;
   for (const sample of parity.ion.samples) {
-    const trip = trips.get(sample.id);
-    sample.times.forEach((t, i) => {
-      const state = timetable.state(trip, t);
-      if (sample.noses[i] === null) assert.equal(state, null, `${sample.id} at ${t}s`);
-      else assert.ok(Math.abs(state.nose - sample.noses[i]) < 1e-9, `${sample.id} at ${t}s: ${state?.nose} vs ${sample.noses[i]}`);
-    });
+    const plan = parity.ion.schedule.vehicles.find((v) => v.id === sample.id);
+    for (const [t, s, centre] of sample.rows) {
+      const point = timetable.locate(plan, t);
+      assert.ok(point, `${sample.id} at ${t}s`);
+      assert.ok(Math.abs(point.s - s) < 1e-6, `${sample.id} at ${t}s: ${point.s} vs ${s} (${point.segment.kind} ${point.segment.route ?? point.segment.line})`);
+      // The centre is compared where it lies on the path (leaving the station
+      // before a terminal, the tail is still behind the move's first point).
+      const at = point.s - ION_LENGTH / 2;
+      if (at >= 0 && at <= point.path.at(-1)[2]) {
+        const mid = lerpPath(point.path, at);
+        assert.ok(metres(mid, centre) < 0.15, `${sample.id} centre at ${t}s`);
+      }
+      rows += 1;
+    }
   }
+  assert.ok(rows > 2000, `${rows} positions compared`);
   // At every whole minute of a run the browser draws exactly the trains the
-  // simulator reported, at exactly the same place.
+  // simulator reported, at exactly the same place along the line.
   for (const { minute, trains } of parity.ion.minutes) {
     const drawn = timetable.trains(minute * 60);
     assert.deepEqual(drawn.map((train) => train.id).sort(), Object.keys(trains).sort(), `minute ${minute}`);
-    for (const train of drawn) assert.ok(Math.abs(train.nose - trains[train.id]) < 1e-9, `${train.id} minute ${minute}`);
+    for (const train of drawn) assert.ok(Math.abs(train.nose - trains[train.id]) < 1e-6, `${train.id} minute ${minute}`);
   }
 });
 

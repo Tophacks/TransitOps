@@ -1718,3 +1718,43 @@ footer {
   .fairwayControls input[type="range"] { flex-basis:100%; order:-1; }
   .fairwayDemo button.fairwayExit { margin-left:0; }
 }
+
+/* Decision Inspector: ION terminal decisions (vehicle, station control, dispatch). */
+.decisionInspector { position:absolute; z-index:3; top:112px; right:14px; width:min(330px, calc(100% - 28px)); max-height:calc(100% - 150px); overflow:auto;
+  background:#0c1a24f2; border:1px solid #4b6470; border-radius:9px; color:#e3eff4; box-shadow:0 6px 24px #0007; font-size:.72rem; line-height:1.4; }
+.decisionInspector header { position:sticky; top:0; background:#0c1a24; border-bottom:1px solid #2c4350; }
+.decisionInspector .inspectorToggle { all:unset; cursor:pointer; display:grid; gap:1px; width:100%; padding:9px 12px; box-sizing:border-box; }
+.decisionInspector .inspectorToggle strong { font-size:.8rem; color:#ffd27a; }
+.decisionInspector .inspectorToggle span { color:#9db4bf; font-size:.66rem; }
+.decisionInspector.collapsed { max-height:none; }
+.decisionScenario { margin:8px 12px 0; padding:6px 8px; border-radius:6px; background:#3b1d1d; border:1px solid #c76a5f66; color:#ffd0c8; }
+.decisionCard { display:grid; gap:5px; margin:8px 12px; padding:9px 10px; border:1px solid #36505c; border-radius:8px; background:#10222d; }
+.decisionCard p { margin:0; } .decisionCard p em { display:block; font-style:normal; color:#8fb0bf; font-size:.62rem; text-transform:uppercase; letter-spacing:.04em; }
+.decisionMeta { display:flex; justify-content:space-between; gap:8px; color:#9db4bf; font-size:.66rem; }
+.decisionLevel { padding:1px 7px; border-radius:999px; font-weight:700; }
+.decisionLevel.level-vehicle { background:#1f3d52; color:#9fd2ff; } .decisionLevel.level-station { background:#2e3d1f; color:#cbe98f; } .decisionLevel.level-dispatch { background:#4a3611; color:#ffd27a; }
+.decisionOptions { list-style:none; margin:0; padding:0; display:grid; gap:4px; }
+.decisionOptions li { display:grid; grid-template-columns:16px 1fr; gap:0 6px; padding:4px 6px; border-radius:5px; background:#0c1a24; }
+.decisionOptions li small { grid-column:2; color:#9db4bf; font-size:.64rem; }
+.decisionOptions li.rejected b { color:#ff7a6c; } .decisionOptions li.feasible b { color:#7fd6a8; }
+.decisionOptions li.chosen { background:#1d3a2c; outline:1px solid #4be08a88; } .decisionOptions li.chosen b { color:#4be08a; }
+.decisionNav { display:flex; gap:6px; } .decisionNav button, .decisionList button { border:1px solid #4b6470; border-radius:6px; background:#162a35; color:#e3eff4; cursor:pointer; padding:4px 8px; font-size:.68rem; font-weight:700; }
+.decisionNav button:nth-child(2) { flex:1; }
+.decisionList { list-style:none; margin:0 12px 6px; padding:0; display:grid; gap:3px; }
+.decisionList button { width:100%; text-align:left; font-weight:500; }
+.decisionList button[aria-pressed="true"] { border-color:#ffb21e; }
+.decisionList button span { color:#ffd27a; font-variant-numeric:tabular-nums; }
+.decisionFilter { display:flex; align-items:center; gap:6px; margin:0 12px 8px; color:#9db4bf; font-size:.66rem; }
+.decisionEmpty { margin:8px 12px; color:#9db4bf; }
+.decisionMetrics { margin:0 12px 10px; width:calc(100% - 24px); border-collapse:collapse; font-size:.66rem; }
+.decisionMetrics th, .decisionMetrics td { padding:3px 4px; border-top:1px solid #2c4350; text-align:right; }
+.decisionMetrics th:first-child, .decisionMetrics td:first-child { text-align:left; color:#9db4bf; }
+.holdRow { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+.holdRow label { display:grid; gap:4px; font-size:.7rem; color:#a9c2bd; }
+.holdRow input, .holdRow select { width:100%; padding:7px; background:#152a35; color:#e1efea; border:1px solid #38555d; border-radius:7px; }
+@media (max-width:560px) {
+  .decisionInspector { top:auto; bottom:28px; right:8px; left:8px; width:auto; max-height:46%; }
+  /* With the inspector open: a taller map, and the inspector stands in for the vehicle popup. */
+  .geoMapShell:has(.decisionInspector:not(.collapsed)) { height:clamp(600px,86svh,780px); }
+  .geoMapShell:has(.decisionInspector:not(.collapsed)) .geoVehiclePopup { display:none; }
+}

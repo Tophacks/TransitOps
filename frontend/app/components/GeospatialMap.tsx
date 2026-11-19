@@ -19,6 +19,10 @@ import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.
 import { corridor } from "../../lib/motion/scene.ts";
 import { runningRails } from "../../lib/motion/railGeometry.ts";
 import FairwayDemo from "./FairwayDemo";
+import DecisionInspector from "./DecisionInspector";
+import { TERMINALS } from "../../lib/motion/railScene.ts";
+import { lerpPath as lerpAlong, type LonLat } from "../../lib/motion/path.ts";
+import type { RailDecision, RailMetrics } from "../../lib/motion/ion.ts";
 
 type Props = {
   network: Network;
@@ -35,6 +39,12 @@ type Props = {
   ionSchedule?: IonSchedule | null;
   /** the run's traffic multiplier, for the simulated background cars */
   trafficMultiplier?: number;
+  /** rail service of the holds-only baseline run, for the Decision Inspector */
+  ionBaselineMetrics?: RailMetrics | null;
+  /** playback time for the panels (seconds; the map itself reads the clock) */
+  seconds?: number;
+  /** pause and jump the playback (Decision Inspector) */
+  onSeek?: (seconds: number) => void;
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -42,6 +52,7 @@ type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const SIMULATION_SOURCES = ["route", "stops", "intersections", "buses", "traffic", "yard", "vehicle-solids", "vehicle-ground"];
 const SIMULATION_LAYERS = [
+  "terminal-routes", "terminal-signals",
   "route-stroke", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
   "sim-bus-markers", "vehicle-ground", "vehicle-bodies",
 ];
@@ -53,6 +64,8 @@ const BODY_MIN_ZOOM = 15;
 const REGION_CAMERA = { center: [-80.518, 43.462] as [number, number], zoom: 13.35 };
 const STREET_CAMERA = { pitch: 48, bearing: -24 };
 const FEED_NAMES = { bus: "GRT bus", ion: "ION train" };
+// Camera moves reset any padding left by a Decision Inspector framing.
+const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
 
 /** Close-up over the Phillip St / University Ave corner and the UW Station bus loop. */
 function campusCamera(width: number): Camera {
@@ -120,15 +133,81 @@ function contextRoutes(): GeoJSON.FeatureCollection {
   })));
 }
 
+/** The part of a path between distances a and b, as an encoded path. */
+function slicePath(path: PathPoint[], a: number, b: number): PathPoint[] {
+  const pts: LonLat[] = [lerpAlong(path, a)];
+  for (const p of path) if (p[2] > a && p[2] < b) pts.push([p[0], p[1]]);
+  pts.push(lerpAlong(path, b));
+  return encodePath(pts);
+}
+
+/**
+ * The GTFS line paths between the terminal handovers: inside each terminal
+ * the trains run on the mapped trackwork instead (terminalTrack).
+ */
+function linePaths() {
+  const out = {} as Record<"north" | "south", PathPoint[]>;
+  for (const direction of ["north", "south"] as const) {
+    const path = corridor.data.ion[direction].path;
+    let a = 0;
+    let b = path[path.length - 1][2];
+    for (const t of Object.values(TERMINALS.terminals)) {
+      for (const route of Object.values(t.routes)) {
+        if (route.line.direction !== direction) continue;
+        if (route.kind === "depart") a = Math.max(a, route.line.handover_m);
+        else b = Math.min(b, route.line.handover_m);
+      }
+    }
+    out[direction] = slicePath(path, a, b);
+  }
+  return out;
+}
+
 function ionTracks(): GeoJSON.FeatureCollection {
-  return featureCollection((["north", "south"] as const).map((direction) =>
-    line(corridor.data.ion[direction].path.map(([lon, lat]) => [lon, lat]), { id: direction })));
+  const paths = linePaths();
+  return featureCollection([
+    ...(["north", "south"] as const).map((direction) => line(paths[direction].map(([lon, lat]) => [lon, lat]), { id: direction })),
+    ...terminalPaths().map((p, i) => line(p.map(([lon, lat]) => [lon, lat]), { id: `terminal:${i}` })),
+  ]);
 }
 
 function ionRunningRails(): GeoJSON.FeatureCollection {
-  return featureCollection((["north", "south"] as const).flatMap((direction) =>
-    runningRails(corridor.data.ion[direction].path).map((track, side) =>
-      line(track, { id: `${direction}:${side}` }))));
+  const paths = linePaths();
+  return featureCollection([
+    ...(["north", "south"] as const).flatMap((direction) =>
+      runningRails(paths[direction]).map((track, side) => line(track, { id: `${direction}:${side}` }))),
+    ...terminalPaths().flatMap((p, i) => runningRails(p).map((track, side) => line(track, { id: `terminal:${i}:${side}` }))),
+  ]);
+}
+
+/** Terminal trackwork (OSM): every edge, and each move's join from the handover onto it. */
+function terminalPaths(): PathPoint[][] {
+  const out: PathPoint[][] = [];
+  for (const t of Object.values(TERMINALS.terminals)) {
+    for (const edge of Object.values(t.edges)) out.push(edge.path);
+    const arrive = t.routes[`arrive:${t.preference[0]}`];
+    const depart = t.routes[`depart:${t.preference[0]}`];
+    out.push(slicePath(arrive.path, arrive.line.line_part_m ?? 0, arrive.switch_m));
+    out.push(slicePath(depart.path, depart.switch_m, depart.line.line_start_m ?? depart.length_m));
+  }
+  return out;
+}
+
+/** Switches, diamonds, track ends and home signals, for the terminal markers. */
+function terminalPoints(): GeoJSON.FeatureCollection {
+  const out: GeoJSON.Feature[] = [];
+  for (const [key, t] of Object.entries(TERMINALS.terminals)) {
+    for (const sw of t.switches) out.push(point(sw.lon, sw.lat, { kind: "switch", terminal: key, label: "" }));
+    out.push(point(t.diamond.lon, t.diamond.lat, { kind: "diamond", terminal: key, label: "" }));
+    for (const end of t.track_ends) out.push(point(end.lon, end.lat, { kind: "buffer", terminal: key, label: `Platform ${end.platform}` }));
+  }
+  return featureCollection(out);
+}
+
+function homeSignal(key: string) {
+  const t = TERMINALS.terminals[key as "fairway"];
+  const route = t.routes[`arrive:${t.preference[0]}`];
+  return lerpAlong(route.path, route.home_signal_m ?? 0);
 }
 
 function setData(map: MapInstance, id: string, data: GeoJSON.FeatureCollection) {
@@ -268,6 +347,38 @@ function addLayers(map: MapInstance) {
       "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0, 17.5, 0.98],
     },
   }, firstLabel);
+  // Terminal interlocking: routes in use (granted moves) and the markers.
+  map.addSource("terminal-routes", { type: "geojson", data: featureCollection([]) });
+  map.addSource("terminal-points", {
+    type: "geojson", data: terminalPoints(),
+    attribution: 'ION terminal trackwork © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+  });
+  map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
+  map.addLayer({
+    id: "terminal-routes", type: "line", source: "terminal-routes", minzoom: 15,
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["match", ["get", "kind"], "arrive", "#4fd1b0", "#f2b544"],
+      "line-width": ["interpolate", ["exponential", 2], ["zoom"], 15, 3, 19.5, 30],
+      "line-opacity": 0.34,
+    },
+  }, firstLabel);
+  map.addLayer({
+    id: "terminal-points", type: "circle", source: "terminal-points", minzoom: 16,
+    paint: {
+      "circle-radius": ["match", ["get", "kind"], "diamond", 3, 4],
+      "circle-color": ["match", ["get", "kind"], "switch", "#ffcf5a", "buffer", "#ff5a4e", "#f2f2f2"],
+      "circle-stroke-color": "#11161c", "circle-stroke-width": 1.5, "circle-pitch-alignment": "map",
+    },
+  });
+  map.addLayer({
+    id: "terminal-signals", type: "circle", source: "terminal-signals", minzoom: 15,
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 4, 19, 8],
+      "circle-color": ["match", ["get", "aspect"], "stop", "#ff4b3e", "clear", "#4be08a", "#8a96a0"],
+      "circle-stroke-color": "#0b1014", "circle-stroke-width": 2, "circle-pitch-alignment": "map",
+    },
+  });
   map.addLayer({
     id: "vehicle-ground", type: "fill", source: "vehicle-ground", minzoom: BODY_MIN_ZOOM,
     paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "opacity"], "fill-antialias": true },
@@ -434,11 +545,14 @@ export default function GeospatialMap({
   network, snapshot, decision, selected, onSelect, live, onModeChange, sumoSnapshot = null, timeline, clock,
   ionSchedule = null,
   trafficMultiplier = 1,
+  ionBaselineMetrics = null,
+  seconds = 0,
+  onSeek,
 }: Props) {
   // Same timetable and trip model as backend/ion.py: trains sit exactly where
   // the simulator put them at every minute.
   const timetable = useMemo(
-    () => (ionSchedule ? new IonTimetable(corridor.data.ion, ionSchedule) : null),
+    () => (ionSchedule ? new IonTimetable(corridor.data.ion, ionSchedule, TERMINALS) : null),
     [ionSchedule],
   );
   const timetableRef = useRef(timetable);
@@ -489,6 +603,8 @@ export default function GeospatialMap({
   const trainPose = simulating && selectedTrain && timetable
     ? timetable.trains(now).find((train) => train.id === selectedTrain) : undefined;
   const trainState = trainPose ? snapshot?.trains?.find((train) => train.id === trainPose.id) : undefined;
+  const latestTrainDecision = trainPose && timetable
+    ? timetable.decisionsFor(trainPose.id).filter((d) => d.t <= seconds + 0.5).at(-1) : undefined;
   const focus = vehicle ?? sumoBus;
   const lon = depotSelected ? ION_DEPOT.centre[0] : focus?.lon;
   const lat = depotSelected ? ION_DEPOT.centre[1] : focus?.lat;
@@ -537,6 +653,8 @@ export default function GeospatialMap({
             map: currentMap,
             scene: () => sceneRef.current,
             seek: (seconds: number) => clock.seek(seconds),
+            // The ION run being played: physical trains, plans and decisions.
+            ion: () => timetableRef.current?.schedule ?? null,
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
             frameCosts: frameCosts.current,
             live: () => trackerRef.current.poses(performance.now() / 1000)
@@ -598,7 +716,7 @@ export default function GeospatialMap({
                 if (current.sumoSnapshot) {
                   setSelectedSumo(id);
                   current.onSelect(null);
-                } else if (id.startsWith("ION-")) {
+                } else if (timetableRef.current?.schedule.vehicles.some((v) => v.id === id)) {
                   setSelectedTrain(id);
                   // The inspector shows the simulator's view of this train.
                   const train = current.snapshot?.trains?.find((item) => item.id === id);
@@ -650,8 +768,8 @@ export default function GeospatialMap({
       if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", live ? "visible" : "none");
     }
     map.resize();
-    if (!live) map.easeTo({ ...campusCamera(map.getContainer().clientWidth), duration: 1600 });
-    else if (map.getZoom() > 16) map.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA, duration: 1200 });
+    if (!live) map.easeTo({ ...campusCamera(map.getContainer().clientWidth), padding: NO_PAD, duration: 1600 });
+    else if (map.getZoom() > 16) map.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA, padding: NO_PAD, duration: 1200 });
   }, [live, ready]);
 
   useEffect(() => {
@@ -716,6 +834,27 @@ export default function GeospatialMap({
         lighting.night = nightRef.current;
         for (const bus of scene.buses) busBody(bus, bus.id === state.selectedBus, bodies);
         for (const train of scene.trains) trainBody(train, bodies);
+        // Station control on the map: granted routes ahead of moving trains,
+        // and each home signal at stop while a train waits for a route.
+        const routes: GeoJSON.Feature[] = [];
+        const aspects: Record<string, string> = { fairway: "stop", conestoga: "stop" };
+        for (const train of scene.trains) {
+          if (!train.terminal || !train.route || train.s === undefined) continue;
+          const route = TERMINALS.terminals[train.terminal as "fairway"].routes[train.route];
+          if (train.moveEnd !== undefined) {
+            const from = Math.max(train.s - ION_LENGTH, route.kind === "arrive" ? (route.home_signal_m ?? 0) - 20 : 0);
+            const to = route.kind === "arrive" ? train.moveEnd : Math.min(train.moveEnd, route.line.line_start_m ?? route.length_m);
+            if (to > from + 1) routes.push(line(slicePath(route.path, from, to).map(([lon, lat]) => [lon, lat]), { kind: route.kind }));
+            if (route.kind === "arrive" && train.moveEnd > (route.home_signal_m ?? 0) && train.s < (route.home_signal_m ?? 0)) {
+              aspects[train.terminal] = "clear";
+            }
+          }
+        }
+        setData(map, "terminal-routes", featureCollection(routes));
+        setData(map, "terminal-signals", featureCollection(Object.entries(aspects).map(([key, aspect]) => {
+          const [lon, lat] = homeSignal(key);
+          return point(lon, lat, { aspect, terminal: key });
+        })));
         // Simulated cars and crossing gates: street zoom only, and only in view.
         if (map.getZoom() >= BODY_MIN_ZOOM) {
           const bounds = map.getBounds();
@@ -900,11 +1039,37 @@ export default function GeospatialMap({
       : { pitch: 0, bearing: 0 });
   }
 
+  /** Decision Inspector: show the moment and place a decision explains. */
+  function showDecision(decision: RailDecision) {
+    onSeek?.(decision.t);
+    const map = mapRef.current;
+    const t = TERMINALS.terminals[decision.terminal as "fairway"];
+    if (decision.vehicle_id && timetable?.schedule.vehicles.some((v) => v.id === decision.vehicle_id)) {
+      setSelectedTrain(decision.vehicle_id);
+      onSelect(null);
+    }
+    if (map && t) {
+      setFollow(false);
+      const narrow = map.getContainer().clientWidth < 640;
+      const route = t.routes[`arrive:${t.preference[0]}`];
+      // Between the crossover and the track ends; the inspector covers the
+      // right of the map on a desktop and the bottom on a phone.
+      const [lon, lat] = lerpAlong(route.path, route.switch_m + 45);
+      map.easeTo({
+        center: [lon, lat], zoom: narrow ? 16.9 : 17.6, pitch: 50, bearing: decision.terminal === "fairway" ? -13 : 72,
+        padding: narrow
+          ? { top: 90, bottom: Math.round(map.getContainer().clientHeight * 0.5), left: 0, right: 0 }
+          : { top: 60, bottom: 40, left: 0, right: 380 },
+        duration: 1200,
+      });
+    }
+  }
+
   function goTo(camera: (width: number) => Camera) {
     const map = mapRef.current;
     if (!map) return;
     setFollow(false);
-    map.easeTo({ ...camera(map.getContainer().clientWidth), duration: 1400 });
+    map.easeTo({ ...camera(map.getContainer().clientWidth), padding: NO_PAD, duration: 1400 });
   }
 
   const showPopup = Boolean(depotSelected || focus || simPose || trainPose);
@@ -926,7 +1091,7 @@ export default function GeospatialMap({
             }));
             selectDepot();
           }}>ION depot</button>
-          <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA })}>Region</button>
+          <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA, padding: NO_PAD })}>Region</button>
           <button type="button" aria-pressed={demo} disabled={!ready} onClick={() => (demo ? exitDemo() : startDemo())}>Fairway</button>
           <button type="button" aria-pressed={live && !demo} onClick={() => {
             clearDetails();
@@ -974,6 +1139,16 @@ export default function GeospatialMap({
           )}
       </div>
       {demo && ready && mapRef.current && <FairwayDemo map={mapRef.current} onExit={exitDemo} />}
+      {!demo && simulating && ionSchedule?.decisions && (
+        <DecisionInspector
+          decisions={ionSchedule.decisions}
+          now={seconds}
+          vehicle={selectedTrain}
+          onPick={showDecision}
+          hold={ionSchedule.platform_hold}
+          metrics={ionBaselineMetrics ? { adaptive: ionSchedule.metrics, baseline: ionBaselineMetrics } : null}
+        />
+      )}
       {popupContent && showPopup && !demo && createPortal(
         <aside className="geoVehicleCard" aria-label={depotSelected ? "ION depot details" : "Selected vehicle details"}>
           <button type="button" aria-label={depotSelected ? "Close depot details" : "Close vehicle details"} onClick={clearDetails}>×</button>
@@ -1012,20 +1187,27 @@ export default function GeospatialMap({
             </>
           ) : trainPose ? (
             <>
-              <strong>Simulated ION train · {trainPose.direction === "north" ? "northbound" : "southbound"}</strong>
-              <span>{trainPose.station ? `At ${trainPose.station}` : `${Math.round(trainPose.speed * 3.6)} km/h`}</span>
-              {(trainPose.delayMin ?? 0) > 0 && <span>{Math.round(trainPose.delayMin ?? 0)} min late · {trainPose.hold}</span>}
+              <strong>Simulated ION train {trainPose.id}{trainPose.tripId
+                ? (trainPose.terminal && trainPose.station ? ` · arrived on ${trainPose.tripId}` : ` · trip ${trainPose.tripId}`) : ""}</strong>
+              <span>{trainPose.direction === "north" ? "Northbound" : "Southbound"} · {trainPose.station ? `at ${trainPose.station}` : `${Math.round(trainPose.speed * 3.6)} km/h`}</span>
+              {trainPose.activity && <span>{trainPose.activity}</span>}
+              {(trainPose.delayMin ?? 0) > 0 && <span>Left {Math.round(trainPose.delayMin ?? 0)} min late · {trainPose.hold}</span>}
               {!trainPose.station && trainPose.nextStation && <span>Next · {trainPose.nextStation}</span>}
               {trainState && Object.keys(trainState.transfers_ahead).length > 0 && (
                 <span>Transferring to the bus · {Object.entries(trainState.transfers_ahead)
                   .map(([stop, riders]) => `${riders} at ${stop === "UW" ? "UW" : "Central"}`).join(", ")}</span>
               )}
-              <span>Python simulator · {ionSchedule?.headway_min ?? 8}-minute headway on the real track</span>
+              {latestTrainDecision && (
+                <div className="geoDecision">
+                  <strong>{latestTrainDecision.trigger}</strong>
+                  <span>Chose · {latestTrainDecision.chosen}</span>
+                </div>
+              )}
+              <span>Python simulator · same train ID through every turnback</span>
               <button type="button" className="followButton" aria-pressed={follow} onClick={() => setFollow(!follow)}>
                 {follow ? "Stop following" : "Follow"}
               </button>
-            </>
-          ) : simBus && (
+            </>          ) : simBus && (
             <>
               <strong>Simulated bus {simBus.id}</strong>
               <span>{(simPose?.state ?? simBus.state).replaceAll("_", " ")} · {simBus.occupancy}/{simBus.capacity} aboard</span>

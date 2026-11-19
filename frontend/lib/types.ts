@@ -12,6 +12,11 @@ export type Controls = {
   emergency_dispatch_minute: number | null;
   seed: number;
   ion_headway?: number;
+  /** extra platform hold at an ION terminal (null: none) */
+  platform_hold_terminal?: "fairway" | "conestoga" | null;
+  platform_hold_platform?: "1" | "2";
+  platform_hold_minute?: number;
+  platform_hold_minutes?: number;
 };
 
 export type StopState = {
@@ -82,7 +87,12 @@ export type Network = {
 
 /** An ION train in a minute snapshot (backend/simulation_engine.py). */
 export type TrainState = {
+  /** the physical train (vehicle ID) */
   id: string;
+  /** the trip it is running */
+  trip_id?: string;
+  terminal?: string | null;
+  activity?: string;
   direction: "north" | "south";
   /** metres along the track of the train's nose */
   nose_m: number;
@@ -135,6 +145,8 @@ export type CaseResult = {
   metrics: Metrics;
   events: SimulationEvent[];
   timeline: Snapshot[];
+  /** this case's ION run (adaptive: dispatch may reassign trips; baseline: holds only) */
+  ion?: IonSchedule;
 };
 
 export type SimulationResponse = {
