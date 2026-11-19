@@ -1,4 +1,4 @@
-import type { IonSchedule } from "./motion/ion.ts";
+import type { IonSchedule, RailDecision } from "./motion/ion.ts";
 
 export type Controls = {
   traffic_multiplier: number;
@@ -130,6 +130,12 @@ export type Metrics = {
   average_transfer_wait: number;
   ion_trains_peak: number;
   ion_max_delay: number;
+  connection_holds?: number;
+  connection_hold_minutes?: number;
+  hold_onboard_rider_minutes?: number;
+  hold_downstream_rider_minutes?: number;
+  total_wait_rider_minutes?: number;
+  total_transfer_wait_rider_minutes?: number;
 };
 
 export type SimulationEvent = {
@@ -147,6 +153,8 @@ export type CaseResult = {
   timeline: Snapshot[];
   /** this case's ION run (adaptive: dispatch may reassign trips; baseline: holds only) */
   ion?: IonSchedule;
+  /** bus dispatch decisions: connection holds at UW and Central */
+  decisions?: RailDecision[];
 };
 
 export type SimulationResponse = {

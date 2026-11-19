@@ -356,6 +356,7 @@ export default function Home() {
             ionSchedule={data?.ion ?? null}
             trafficMultiplier={data?.scenario.traffic_multiplier ?? controls.traffic_multiplier}
             ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
+            busDecisions={data?.smart.decisions ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />
@@ -607,6 +608,8 @@ export default function Home() {
             <div><span>ION transfers to the bus</span><strong>{smart ? `${smart.ion_transfers_boarded} of ${smart.ion_transfers}` : "—"}</strong></div>
             <div><span>ION transfer wait</span><strong>{smart ? `${smart.average_transfer_wait.toFixed(1)} min` : "—"}</strong></div>
             <div><span>Latest ION train</span><strong>{smart ? `+${smart.ion_max_delay} min` : "—"}</strong></div>
+            <div><span>Connection holds</span><strong>{smart ? `${smart.connection_holds ?? 0} · ${smart.connection_hold_minutes ?? 0} min` : "—"}</strong></div>
+            <div><span>Transfers boarded (baseline → adaptive)</span><strong>{baseline && smart ? `${baseline.ion_transfers_boarded} → ${smart.ion_transfers_boarded} of ${smart.ion_transfers}` : "—"}</strong></div>
           </div>
         </section>
       </div>

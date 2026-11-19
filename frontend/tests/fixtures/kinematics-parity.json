@@ -47190,16 +47190,16 @@
      },
      {
       "id": "B103",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "CENTRAL",
-       "to": "UW",
-       "elapsed": 0,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
-       "length_m": 7290.9,
-       "distance_m": 0.0
+       "from": "YARD",
+       "to": "CENTRAL",
+       "elapsed": 1,
+       "minutes": 1,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 298.7,
+       "distance_m": 298.7
       }
      }
     ],
@@ -47242,16 +47242,16 @@
      },
      {
       "id": "B103",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "CENTRAL",
-       "to": "UW",
+       "from": "YARD",
+       "to": "CENTRAL",
        "elapsed": 1,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
-       "length_m": 7290.9,
-       "distance_m": 247.4
+       "minutes": 1,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 298.7,
+       "distance_m": 298.7
       }
      }
     ],
@@ -47298,12 +47298,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 2,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 0,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 506.2
+       "distance_m": 0.0
       }
      }
     ],
@@ -47350,12 +47350,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 3,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 1,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 767.3
+       "distance_m": 247.1
       }
      }
     ],
@@ -47402,12 +47402,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 4,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1029.9
+       "distance_m": 505.0
       }
      }
     ],
@@ -47454,12 +47454,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 5,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 3,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1292.5
+       "distance_m": 765.5
       }
      }
     ],
@@ -47506,12 +47506,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 6,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 4,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1555.0
+       "distance_m": 1027.3
       }
      }
     ],
@@ -47558,12 +47558,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 7,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 5,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1817.6
+       "distance_m": 1289.1
       }
      }
     ],
@@ -47610,12 +47610,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 8,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 6,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 2080.1
+       "distance_m": 1551.0
       }
      }
     ],
@@ -47662,12 +47662,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 9,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 7,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 2342.7
+       "distance_m": 1812.8
       }
      }
     ],
@@ -47714,12 +47714,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 10,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 8,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 2605.2
+       "distance_m": 2074.7
       }
      }
     ],
@@ -47766,12 +47766,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 11,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 9,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 2714.0
+       "distance_m": 2336.5
       }
      }
     ],
@@ -47818,12 +47818,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 12,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 10,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 2848.4
+       "distance_m": 2598.3
       }
      }
     ],
@@ -47870,12 +47870,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 13,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 11,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 3110.9
+       "distance_m": 2860.2
       }
      }
     ],
@@ -47922,12 +47922,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 14,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 12,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 3373.5
+       "distance_m": 3122.0
       }
      }
     ],
@@ -47974,12 +47974,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 15,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 13,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 3636.0
+       "distance_m": 3383.9
       }
      }
     ],
@@ -48026,12 +48026,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 16,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 14,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 3898.6
+       "distance_m": 3645.7
       }
      }
     ],
@@ -48078,12 +48078,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 17,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 15,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 4161.1
+       "distance_m": 3907.5
       }
      }
     ],
@@ -48130,12 +48130,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 18,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 16,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 4421.9
+       "distance_m": 4169.4
       }
      }
     ],
@@ -48182,12 +48182,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 19,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 17,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 4682.6
+       "distance_m": 4429.5
       }
      }
     ],
@@ -48234,12 +48234,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 20,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 18,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 4945.1
+       "distance_m": 4689.5
       }
      }
     ],
@@ -48286,12 +48286,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 21,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 19,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 5207.7
+       "distance_m": 4951.3
       }
      }
     ],
@@ -48338,12 +48338,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 22,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 20,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 5468.8
+       "distance_m": 5213.1
       }
      }
     ],
@@ -48390,12 +48390,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 23,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 21,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 5731.4
+       "distance_m": 5473.6
       }
      }
     ],
@@ -48442,12 +48442,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 24,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 22,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 5993.9
+       "distance_m": 5735.5
       }
      }
     ],
@@ -48494,12 +48494,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 25,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 23,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 6256.5
+       "distance_m": 5997.3
       }
      }
     ],
@@ -48546,12 +48546,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 26,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 24,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 6519.0
+       "distance_m": 6259.1
       }
      }
     ],
@@ -48598,12 +48598,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 27,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 25,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 6778.8
+       "distance_m": 6521.0
       }
      }
     ],
@@ -48650,12 +48650,12 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 28,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 26,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 7041.2
+       "distance_m": 6780.1
       }
      }
     ],
@@ -48698,16 +48698,16 @@
      },
      {
       "id": "B103",
-      "state": "DWELLING",
+      "state": "EN_ROUTE",
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 29,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 27,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 7290.9
+       "distance_m": 7041.8
       }
      }
     ],
@@ -48750,21 +48750,21 @@
      },
      {
       "id": "B103",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "UW",
-       "to": "WATERLOO_SQUARE",
-       "elapsed": 0,
-       "minutes": 9,
+       "from": "CENTRAL",
+       "to": "UW",
+       "elapsed": 28,
+       "minutes": 28,
        "hold_minutes": 0,
        "queue_cars": 0,
-       "length_m": 2791.4,
-       "distance_m": 0.0
+       "length_m": 7290.9,
+       "distance_m": 7290.9
       }
      }
     ],
     "phases": {
-     "I1": "GREEN",
+     "I1": "RED",
      "I2": "GREEN",
      "I3": "GREEN"
     }
@@ -48806,12 +48806,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 1,
+       "elapsed": 0,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 294.5
+       "distance_m": 0.0
       }
      }
     ],
@@ -48858,12 +48858,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 2,
+       "elapsed": 1,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 604.3
+       "distance_m": 294.5
       }
      }
     ],
@@ -48910,12 +48910,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 3,
+       "elapsed": 2,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 919.5
+       "distance_m": 604.3
       }
      }
     ],
@@ -48962,12 +48962,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 4,
+       "elapsed": 3,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1234.6
+       "distance_m": 919.5
       }
      }
     ],
@@ -49014,12 +49014,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 5,
+       "elapsed": 4,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1543.3
+       "distance_m": 1234.6
       }
      }
     ],
@@ -49066,12 +49066,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 6,
+       "elapsed": 5,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1858.5
+       "distance_m": 1543.3
       }
      }
     ],
@@ -49118,12 +49118,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 7,
+       "elapsed": 6,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 2173.6
+       "distance_m": 1858.5
       }
      }
     ],
@@ -49170,12 +49170,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 8,
+       "elapsed": 7,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 2488.8
+       "distance_m": 2173.6
       }
      }
     ],
@@ -49218,16 +49218,16 @@
      },
      {
       "id": "B103",
-      "state": "DWELLING",
+      "state": "EN_ROUTE",
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 9,
+       "elapsed": 8,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 2791.4
+       "distance_m": 2488.8
       }
      }
     ],

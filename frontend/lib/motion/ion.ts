@@ -85,6 +85,8 @@ export type RailDecision = {
   options: { option: string; feasible: boolean; reason: string; estimate_s: number | null }[];
   chosen: string;
   outcome: string;
+  /** where to look on the map (bus decisions at a stop) */
+  location?: [number, number];
 };
 
 export type RailMetrics = {
