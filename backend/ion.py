@@ -136,7 +136,7 @@ class IonPlan:
     """
 
     def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0,
-                 platform_hold=None, reassign=True):
+                 platform_hold=None, reassign=True, closures=None):
         import rail_ops
         self.headway_s = headway_min * 60.0
         self.duration_s = duration_min * 60.0
@@ -153,7 +153,8 @@ class IonPlan:
                 self.trips.append(Trip(f"ION-{prefix}{k}", direction, t, t))
         self.platform_hold = platform_hold
         self.events = self._assign_events(transfer_demand, delay_min)
-        self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign).run()
+        self.closures = closures or []
+        self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign, closures=self.closures).run()
         for trip in self.trips:
             if trip.station_times:
                 trip.depart_s = trip.depart_s  # set by RailOps at departure
@@ -296,6 +297,13 @@ class IonPlan:
             "holds": self.ops.holds,
             "metrics": self.ops.metrics(window),
             "platform_hold": self.platform_hold,
+            "closures": [
+                {**cp["closure"], "plan": cp["kind"], "diversion": cp["route"]["id"] if cp["kind"] == "diversion" else None}
+                for cp in self.ops.closures
+            ],
+            # Line diversions the trains used (paths, stops and speed limits for the map).
+            "routes": {cp["route"]["id"]: cp["route"] for cp in self.ops.closures if cp["kind"] == "diversion"},
+            "sections": {k: v["log"] for k, v in self.ops.sections.items()},
         }
 
 

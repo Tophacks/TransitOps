@@ -305,6 +305,33 @@ def build():
         if not c["passenger"]:
             continue
     report.append(f"diversions: {', '.join(d['id'] for d in diversions) or 'none'}")
+    # Turnbacks: a train stopped at a platform reverses on its own track to a
+    # crossover that takes trains of the opposite direction onto their track.
+    # Valid only if that crossover is enabled and behind the platform; the
+    # reversing run is against the track's usual direction.
+    turnbacks = {}
+    for d in ("north", "south"):
+        other = "south" if d == "north" else "north"
+        back = other   # direction of travel after reversing
+        out = []
+        for st in stations[d]:
+            behind = []
+            for c in enabled:
+                move = next((m for m in c["moves"] if m["travel"] == back and m["from"] == d and m["to"] == other), None)
+                if move is None:
+                    continue
+                end = next(e for e in c["ends"] if e["track"] == d)
+                gap = st["track_m"] - end["track_m"]        # metres back along the own track
+                if gap > ION_LENGTH:
+                    behind.append((gap, c))
+            if behind:
+                gap, c = min(behind, key=lambda x: x[0])
+                out.append({"station": st["name"], "valid": True, "crossover": c["way"], "site": c["site"],
+                            "reverse_m": round(gap, 1)})
+            else:
+                out.append({"station": st["name"], "valid": False,
+                            "reason": f"no enabled crossover behind it takes {back}bound trains from the {d} track to the {other} track"})
+        turnbacks[d] = out
     return {
         "attribution": "ION track and crossovers © OpenStreetMap contributors (ODbL); line paths and stations from GRT GTFS: "
                        "contains information provided by the Regional Municipality of Waterloo under the Region's Open Data Licence.",
@@ -313,6 +340,7 @@ def build():
         "stations": stations,
         "crossovers": crossovers,
         "diversions": diversions,
+        "turnbacks": turnbacks,
     }, report
 
 

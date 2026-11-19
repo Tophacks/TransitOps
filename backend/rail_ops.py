@@ -51,6 +51,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 TERMINALS = json.loads((Path(__file__).resolve().parent / "ion_terminals.json").read_text())["terminals"]
+NETWORK = json.loads((Path(__file__).resolve().parent / "ion_network.json").read_text())
+DIVERSIONS = {d["id"]: d for d in NETWORK["diversions"]}
+
+
+def route_def(terminal, name):
+    """A move's route: a terminal layout's, or a line diversion ("network")."""
+    if terminal == "network":
+        return DIVERSIONS[name]
+    return TERMINALS[terminal]["routes"][name]
 
 # Modelled operating parameters (seconds unless noted).
 CAB_OFF_S = 40.0          # after stopping: doors, then the operator shuts down the arriving cab
@@ -59,6 +68,7 @@ TURN_S = 240.0            # minimum time from stopping to departing (riders off,
 REQUEST_M = 400.0         # an approaching train asks for its route this far before the home signal
 QUEUE_GAP_M = 15.0        # a second waiting train stops this far behind the first
 SWAP_GAIN_S = 120.0       # dispatch swaps trips only if that saves at least this much
+PLATFORM_GAP_S = 30.0     # a train may arrive at a platform this long after the previous one has left
 FLEET_MARGIN_S = 60.0     # recovery margin per terminal when sizing the fleet
 SPAWN_UNTIL_S = None      # set by RailOps: trains may enter service (from the yard) only during warm-up
 
@@ -181,7 +191,7 @@ def move_profile(terminal, route_name, s0, s1, stop=True):
     import ion
     key = (terminal, route_name, round(s0, 3), round(s1, 3), stop)
     if key not in _PROFILES:
-        route = TERMINALS[terminal]["routes"][route_name]
+        route = route_def(terminal, route_name)
         _PROFILES[key] = Profile(s1 - s0, route_cap(route, s0, ion.ION_TOP_SPEED), 0.0, stop, ion.ION_ACCEL, ion.ION_DECEL)
     return _PROFILES[key]
 
@@ -311,7 +321,7 @@ class StationControl:
 class RailOps:
     """Runs every trip of an IonPlan with physical trains (see module docstring)."""
 
-    def __init__(self, plan, platform_hold=None, reassign=True, start_s=None, end_s=None):
+    def __init__(self, plan, platform_hold=None, reassign=True, start_s=None, end_s=None, closures=None):
         import ion
         self.ion = ion
         self.plan = plan
@@ -335,6 +345,10 @@ class RailOps:
         self.departed = []          # (trip, t)
         self.holds = []             # applied platform holds
         self.waiting_order = []     # trains waiting for an earlier trip to leave
+        self.sections = {}          # single-track sections: holders, waiting trains, log
+        self.platform_at = {}       # (direction, stop index) -> (train, leaves at)
+        self.platform_waiters = {}
+        self.closures = []
         self.terminal_of = {"north": "fairway", "south": "conestoga"}  # where a direction's trips start
         for trip in sorted(plan.trips, key=lambda t: (t.scheduled_s, t.train_id)):
             trip.vehicle_id = None
@@ -347,6 +361,10 @@ class RailOps:
             self.push(trip.scheduled_s, 3, "due", trip=trip)
         if platform_hold:
             self.push(platform_hold["minute"] * 60.0, 0, "hold", spec=platform_hold)
+        self.closures = self.resolve_closures(closures)
+        for cp in self.closures:
+            if cp.get("section"):
+                self.push(cp["end"], 1, "closure_end", section=cp["section"])
 
     def trip_seconds(self, direction):
         """Platform to platform on the preferred routes, dwells included."""
@@ -544,6 +562,29 @@ class RailOps:
             self.push(at, 2, "try_depart", train=train)
             return
         route_name = self.depart_route(train)
+        # The first platform on the line must be free when the train gets there.
+        holder = self.platform_at.get((trip.direction, 1))
+        if holder is not None and holder[0] is not train:
+            route = st.route(route_name)
+            arrive = t + move_profile(train.terminal, route_name, route["start_m"], route["length_m"]).duration
+            if True:  # the platform ahead must actually be empty
+                key = (trip.direction, 1)
+                if ("depart", train) not in self.platform_waiters.get(key, []):
+                    self.platform_waiters.setdefault(key, []).append(("depart", train))
+                if not getattr(train, "logged_platform", False):
+                    train.logged_platform = True
+                    station = self.plan.lines[trip.direction].stops[1][0].replace(" Station", "")
+                    d = self.decide(t, "vehicle", train.terminal, train, trip, f"{station} platform ahead occupied by "
+                                    f"{holder[0].vehicle_id}",
+                                    [{"option": f"depart for {station}", "feasible": False,
+                                      "reason": f"{holder[0].vehicle_id} is held there" if holder[1] == math.inf else
+                                      f"{holder[0].vehicle_id} leaves at {fmt(holder[1])}", "estimate_s": None},
+                                     {"option": "wait at the terminal platform", "feasible": True,
+                                      "reason": "trains never share a stopping point", "estimate_s": None}],
+                                    "wait at the terminal platform")
+                    trip.decisions.append(d)
+                return
+        train.logged_platform = False
         blocked = st.blockers(route_name, t, train.vehicle_id)
         if blocked:
             if not getattr(train, "logged_block", False):
@@ -616,28 +657,430 @@ class RailOps:
         train.add(Segment("stand", tt, tt + self.ion.DWELL_S, lead, trip.train_id, line=trip.direction, leg=1,
                           s0=line.stops[1][1], s1=line.stops[1][1], station=line.stops[1][0]))
         tt += self.ion.DWELL_S
-        for i in range(1, len(line.legs) - 1):
-            leg = line.legs[i]
-            train.add(Segment("run", tt, tt + leg.run_s, lead, trip.train_id, line=trip.direction, leg=i,
-                              s0=leg.from_m, s1=leg.to_m))
-            tt += leg.run_s
-            trip.station_times[leg.to_station] = tt
-            train.add(Segment("stand", tt, tt + self.ion.DWELL_S, lead, trip.train_id, line=trip.direction, leg=i,
-                              s0=leg.to_m, s1=leg.to_m, station=leg.to_station))
-            tt += self.ion.DWELL_S
+        self.hold_platform(trip.direction, 1, train, tt)
         train.terminal = None
         train.platform = None
         train.trip = trip
         train.next_trip = None
         train.ready_s = None
-        dest = "conestoga" if trip.direction == "north" else "fairway"
-        self.push(tt, 4, "approach", train=train, terminal=dest, t0=tt)
+        self.plan_line(train, trip, 1, tt)
         # Trains waiting for this trip to leave first may go now (after the spacing).
         for other in [tr for tr in self.waiting_order if tr.next_trip is not None]:
             self.waiting_order.remove(other)
             nb, _ = self.not_before(other, other.next_trip)
             self.schedule_departure(t, other, nb)
         self.retry(t, key)
+
+    # --- line running, closures and single-track sections ------------------------
+    def plan_line(self, train, trip, index, tt):
+        """The train stands at stops[index] and can leave at tt: decide its next leg then."""
+        self.push(tt, 2, "line_depart", train=train, trip=trip, index=index)
+
+    def on_line_depart(self, t, train, trip, index):
+        """Leaving a platform on the line: closures first, then the next platform
+        must be free when the train gets there (trains never share a stopping point)."""
+        line = self.plan.lines[trip.direction]
+        if index >= len(line.legs) - 1:
+            self.release_platform(t, trip.direction, index, train)
+            dest = "conestoga" if trip.direction == "north" else "fairway"
+            self.push(t, 4, "approach", train=train, terminal=dest, t0=t)
+            return
+        if getattr(train, "gate_done", None) != (trip.train_id, index):
+            gate = self.closure_gate(trip.direction, index, t)
+            if gate is not None:
+                self.on_section_request(t, train, trip, index, gate)
+                return
+        self.run_leg(t, train, trip, index)
+
+    def run_leg(self, t, train, trip, index):
+        line = self.plan.lines[trip.direction]
+        leg = line.legs[index]
+        nxt = (trip.direction, index + 1)
+        holder = self.platform_at.get(nxt)
+        if holder is not None and holder[0] is not train:
+            # Movement authority: the platform ahead must actually be empty (the
+            # train there may still be held), not just predicted to be.
+            arrive = t + leg.run_s
+            leaves = holder[1]
+            if True:
+                # Wait here until the train ahead has left the next platform.
+                stand = train.segments[-1]
+                stand.t1 = math.inf
+                stand.note = f"waiting: {leg.to_station.replace(' Station', '')} platform occupied by {holder[0].vehicle_id}"
+                self.hold_platform(trip.direction, index, train, math.inf)
+                self.platform_waiters.setdefault(nxt, []).append((train, trip, index))
+                d = self.decide(t, "vehicle", "line", train, trip,
+                                f"{leg.to_station.replace(' Station', '')} platform ahead occupied by {holder[0].vehicle_id}",
+                                [{"option": f"run to {leg.to_station.replace(' Station', '')}", "feasible": False,
+                                  "reason": (f"{holder[0].vehicle_id} is held there" if leaves == math.inf else
+                                             f"{holder[0].vehicle_id} leaves at {fmt(leaves)}; arriving at {fmt(arrive)} "
+                                             f"would leave under {PLATFORM_GAP_S:.0f} s"), "estimate_s": None},
+                                 {"option": f"wait at {line.stops[index][0].replace(' Station', '')}", "feasible": True,
+                                  "reason": "trains never share a stopping point", "estimate_s": None}],
+                                f"wait at {line.stops[index][0].replace(' Station', '')}")
+                trip.decisions.append(d)
+                train.platform_wait = d
+                return
+        stand = train.segments[-1]
+        if stand.kind == "stand" and (stand.t1 == math.inf or stand.t1 < t):
+            stand.t1 = t
+        if getattr(train, "platform_wait", None) is not None:
+            train.platform_wait.outcome = f"left at {fmt(t)}"
+            train.platform_wait = None
+        self.release_platform(t, trip.direction, index, train)
+        lead = train.lead
+        train.add(Segment("run", t, t + leg.run_s, lead, trip.train_id, line=trip.direction, leg=index,
+                          s0=leg.from_m, s1=leg.to_m))
+        tt = t + leg.run_s
+        trip.station_times[leg.to_station] = tt
+        pending = getattr(train, "pending_release", None)
+        if pending is not None and leg.from_m <= pending["line_m"] <= leg.to_m:
+            release = t + run_time_at(leg.run(), pending["line_m"] - leg.from_m)
+            self.push(release, 1, "section_release", section=pending["section"], vehicle=train.vehicle_id)
+            if getattr(train, "section_log", None) is not None:
+                train.section_log["release_s"] = release
+            if getattr(train, "section_decision", None) is not None:
+                train.section_decision.outcome += f"; section released at {fmt(release)} when its rear cleared"
+            train.pending_release = None
+        train.add(Segment("stand", tt, tt + self.ion.DWELL_S, lead, trip.train_id, line=trip.direction, leg=index,
+                          s0=leg.to_m, s1=leg.to_m, station=leg.to_station))
+        self.platform_at[nxt] = (train, tt + self.ion.DWELL_S)
+        self.plan_line(train, trip, index + 1, tt + self.ion.DWELL_S)
+
+    def release_platform(self, t, direction, index, train):
+        key = (direction, index)
+        holder = self.platform_at.get(key)
+        if holder is not None and holder[0] is train:
+            del self.platform_at[key]
+            for waiter in self.platform_waiters.pop(key, []):
+                self.push(t + PLATFORM_GAP_S, 2, "platform_free", waiter=waiter)
+
+    def on_platform_free(self, t, waiter):
+        if waiter[0] == "depart":
+            self.on_try_depart(t, waiter[1])
+            return
+        train, trip, index = waiter
+        self.run_leg(t, train, trip, index)
+
+    def hold_platform(self, direction, index, train, until):
+        self.platform_at[(direction, index)] = (train, until)
+
+    def line_seconds(self, direction, i0, i1):
+        """Normal running time from leaving stops[i0] to leaving stops[i1] (dwells included)."""
+        line = self.plan.lines[direction]
+        return sum(line.legs[i].run_s + self.ion.DWELL_S for i in range(i0, i1))
+
+    def stop_index(self, direction, name):
+        return next(i for i, (n, _) in enumerate(self.plan.lines[direction].stops) if n == name)
+
+    def resolve_closures(self, closures):
+        """For each closure: the shortest valid diversion that covers it, or none."""
+        plans = []
+        for c in closures or []:
+            closed = c["track"]
+            travel = closed
+            stations = {st["name"]: st["track_m"] for st in NETWORK["stations"][closed]}
+            a, b = sorted((stations[c["from_station"]], stations[c["to_station"]]))
+            start, end = c["from_minute"] * 60.0, c["to_minute"] * 60.0
+            options = []
+            for d in NETWORK["diversions"]:
+                if d["closed"] != closed:
+                    continue
+                entry_m = stations[d["entry_station"]]
+                exit_m = stations[d["exit_station"]]
+                covers = entry_m < a and exit_m > b
+                options.append((covers, d["shared_m"], d))
+            covering = sorted((x for x in options if x[0]), key=lambda x: x[1])
+            line = self.plan.lines[travel]
+            names = [n for n, _ in line.stops]
+            # Last platform before the closure, in the direction of travel.
+            closed_stops = [n for n in names if n in stations and stations[n] >= a]
+            first_closed = names.index(closed_stops[0]) if closed_stops else len(names) - 1
+            plan = {"closure": c, "closed": closed, "travel": travel, "start": start, "end": end,
+                    "span_m": (a, b), "rejected": [(x[2]["id"], "does not cover the closure") for x in options if not x[0]]}
+            if covering:
+                d = covering[0][2]
+                i_entry = self.stop_index(travel, d["entry_station"])
+                i_exit = self.stop_index(travel, d["exit_station"])
+                opp = d["opposing"]["direction"]
+                oline = self.plan.lines[opp]
+                sec0, sec1 = d["opposing"]["section_line_m"]
+                o_entry = max(i for i, (_, nose) in enumerate(oline.stops) if nose < sec0)
+                o_exit = min(i for i, (_, nose) in enumerate(oline.stops) if nose - self.ion.ION_LENGTH > sec1)
+                div_prof = self.diversion_seconds(d)
+                plan.update({
+                    "kind": "diversion", "route": d, "section": d["section"],
+                    "entry_index": i_entry, "exit_index": i_exit,
+                    # How long before the closure starts a train leaving the entry platform would
+                    # still be in the closed stretch by normal running.
+                    "lead_s": self.line_seconds(travel, i_entry, max(i_entry, first_closed)) + 60.0,
+                    "divert_s": div_prof,
+                    "opposing": opp, "opp_entry_index": o_entry, "opp_exit_index": o_exit,
+                    "opp_s": self.line_seconds(opp, o_entry, o_exit),
+                })
+            else:
+                # Hold where the closed stretch begins, in the direction of travel.
+                i_block = min(self.stop_index(travel, c["from_station"]), self.stop_index(travel, c["to_station"]))
+                plan.update({"kind": "blocked", "block_index": i_block})
+            plans.append(plan)
+            self.sections.setdefault(plan.get("section"), {"holders": {}, "waiting": [], "log": []}) if plan.get("section") else None
+        return plans
+
+    def diversion_seconds(self, d):
+        total, s = 0.0, 0.0
+        for st in d["stops"]:
+            total += move_profile("network", d["id"], s, st["at_m"]).duration + self.ion.DWELL_S
+            s = st["at_m"]
+        return total
+
+    def closure_gate(self, direction, i, tt):
+        """Does a closure need a decision before leaving stops[i] at tt?"""
+        for cp in self.closures:
+            if cp["kind"] == "diversion":
+                if direction == cp["travel"] and i == cp["entry_index"]:
+                    if tt < cp["end"] and tt + cp["lead_s"] > cp["start"]:
+                        return {"role": "divert", "plan": cp}
+                if direction == cp["opposing"] and i == cp["opp_entry_index"]:
+                    # Diverted trains can be in the section from (start - lead) until the
+                    # last of them clears it: reserve whenever this run could overlap that.
+                    busy_from = cp["start"] - cp["lead_s"]
+                    sec = self.sections[cp["section"]]
+                    diverted_left = any(h["role"] == "divert" for h in sec["holders"].values()) or any(
+                        w["gate"]["role"] == "divert" for w in sec["waiting"])
+                    if tt >= cp["end"] and not diverted_left:
+                        continue
+                    if tt + cp["opp_s"] > busy_from:
+                        return {"role": "opposing", "plan": cp}
+            elif direction == cp["travel"] and i == cp["block_index"]:
+                if tt < cp["end"] and tt + self.line_seconds(direction, i, min(i + 2, len(self.plan.lines[direction].legs) - 1)) > cp["start"]:
+                    return {"role": "blocked", "plan": cp}
+        return None
+
+    def on_section_request(self, t, train, trip, index, gate):
+        cp = gate["plan"]
+        line = self.plan.lines[trip.direction]
+        station = line.stops[index][0]
+        c = cp["closure"]
+        what = (f"{c['track'].capitalize()}bound track closed between {c['from_station'].replace(' Station', '')} and "
+                f"{c['to_station'].replace(' Station', '')}, {fmt(cp['start'])}-{fmt(cp['end'])}")
+        if gate["role"] == "blocked":
+            options = []
+            if cp["rejected"]:
+                options.append({"option": "divert over the other track", "feasible": False,
+                                "reason": f"{len(cp['rejected'])} diversions exist for this track, none covering this "
+                                          "stretch: each crosses back inside it or before it", "estimate_s": None})
+            else:
+                options.append({"option": "divert over the other track", "feasible": False,
+                                "reason": f"no pair of enabled crossovers lets {trip.direction}bound trains cross over "
+                                          "and back around this stretch; south of Mill is disabled (CN, not electrified)",
+                                "estimate_s": None})
+            tb = next((x for x in NETWORK["turnbacks"][trip.direction] if x["station"] == station), None)
+            if tb and tb["valid"]:
+                options.append({"option": f"turn back at {station.replace(' Station', '')}", "feasible": False,
+                                "reason": f"route valid: reverse {tb['reverse_m'] / 1000:.1f} km against the usual direction "
+                                          f"to the {tb['site']} crossover. Rejected: it strands riders beyond the closure "
+                                          "(no bus bridge modelled) and takes trains away from the far terminal's departures",
+                                "estimate_s": None})
+            else:
+                options.append({"option": f"turn back at {station.replace(' Station', '')}", "feasible": False,
+                                "reason": (tb or {}).get("reason", "no validated turnback here"), "estimate_s": None})
+            options.append({"option": f"hold at {station.replace(' Station', '')} until the track reopens", "feasible": True,
+                            "reason": f"reopens at {fmt(cp['end'])}", "estimate_s": round(cp["end"], 1)})
+            d = self.decide(t, "vehicle", "line", train, trip, what, options,
+                            f"hold at {station.replace(' Station', '')} until {fmt(cp['end'])}")
+            trip.decisions.append(d)
+            stand = train.segments[-1]
+            stand.t1 = max(t, cp["end"])
+            stand.note = f"held: {what}"
+            self.hold_platform(trip.direction, index, train, stand.t1)
+            d.outcome = f"left {station.replace(' Station', '')} at {fmt(stand.t1)} ({fmt_dur(stand.t1 - t)} later)"
+            self.resume_line(train, trip, index, stand.t1, after_gate=cp)
+            return
+        sec = self.sections[cp["section"]]
+        direction = trip.direction
+        holders = sec["holders"]
+        opposite_inside = [v for v, h in holders.items() if h["direction"] != direction]
+        opposite_waiting = [w for w in sec["waiting"] if w["trip"].direction != direction and w["t"] < t - 1e-9]
+        ok = not opposite_inside and not opposite_waiting
+        if (train, trip) not in [(w["train"], w["trip"]) for w in sec["waiting"]]:
+            sec["waiting"].append({"t": t, "train": train, "trip": trip, "index": index, "gate": gate, "station": station})
+        if not ok:
+            if not getattr(train, "section_logged", None) == cp["section"]:
+                train.section_logged = cp["section"]
+                blocker = opposite_inside[0] if opposite_inside else opposite_waiting[0]["train"].vehicle_id
+                until = holders[opposite_inside[0]]["release"] if opposite_inside else None
+                reason = (f"occupied by {blocker} ({'northbound' if direction == 'south' else 'southbound'}) until its "
+                          f"rear clears the far crossover at {fmt(until)}" if until is not None else
+                          f"{blocker} has been waiting longer for the opposite direction")
+                options = self.section_options(cp, gate, station, reason)
+                d = self.decide(t, "station", "line", train, trip, f"{what}: single-track section requested", options,
+                                f"hold at {station.replace(' Station', '')} for the single-track section")
+                trip.decisions.append(d)
+                train.section_wait = d
+            stand = train.segments[-1]
+            stand.t1 = math.inf
+            stand.note = "waiting for the single-track section"
+            self.hold_platform(trip.direction, index, train, math.inf)
+            return
+        sec["waiting"] = [w for w in sec["waiting"] if w["train"] is not train]
+        self.grant_section(t, train, trip, index, gate, station, what)
+
+    def section_options(self, cp, gate, station, blocked_reason):
+        d = cp["route"]
+        if gate["role"] == "divert":
+            return [
+                {"option": "continue on the southbound track" if cp["closed"] == "south" else "continue on the northbound track",
+                 "feasible": False, "reason": "closed", "estimate_s": None},
+                {"option": f"divert: cross at {d['sites'][0]}, single track to {d['sites'][1]}", "feasible": False,
+                 "reason": blocked_reason, "estimate_s": None},
+                {"option": f"hold at {station.replace(' Station', '')} until the track reopens", "feasible": True,
+                 "reason": f"reopens at {fmt(cp['end'])}", "estimate_s": round(cp["end"], 1)},
+            ]
+        return [{"option": "continue on its own track", "feasible": False,
+                 "reason": f"now single track shared with diverted trains: {blocked_reason}", "estimate_s": None},
+                {"option": f"hold at {station.replace(' Station', '')} for the section", "feasible": True,
+                 "reason": "first come, first served; no train enters while one waits in the other direction",
+                 "estimate_s": None}]
+
+    def grant_section(self, t, train, trip, index, gate, station, what):
+        cp = gate["plan"]
+        sec = self.sections[cp["section"]]
+        stand = train.segments[-1]
+        waited = max(0.0, t - stand.t0 - self.ion.DWELL_S) if stand.kind == "stand" else 0.0
+        stand.t1 = max(t, stand.t0)
+        if stand.note == "waiting for the single-track section":
+            stand.note = f"waited {fmt_dur(waited)} for the single-track section"
+        start = stand.t1
+        d = cp["route"]
+        lead = train.lead
+        if gate["role"] == "divert":
+            # The whole diversion, stop by stop, over the other track's platforms.
+            s0, tt = 0.0, start
+            release = None
+            sec_end = next(r["s1"] for r in d["resources"] if r["id"] == cp["section"])
+            for st in d["stops"]:
+                prof = move_profile("network", d["id"], s0, st["at_m"])
+                if release is None and s0 <= sec_end + self.ion.ION_LENGTH <= st["at_m"]:
+                    release = tt + prof.time_at(sec_end + self.ion.ION_LENGTH - s0)
+                train.add(Segment("move", tt, tt + prof.duration, lead, trip.train_id, "network", d["id"], s0, st["at_m"],
+                                  note=f"diverted: single track to {d['sites'][1]}"))
+                tt += prof.duration
+                trip.station_times[st["name"]] = tt
+                train.add(Segment("stand", tt, tt + self.ion.DWELL_S, lead, trip.train_id, "network", d["id"], st["at_m"],
+                                  st["at_m"], station=st["name"], note=f"{st['track']}bound platform" if st["track"] != trip.direction else ""))
+                tt += self.ion.DWELL_S
+                s0 = st["at_m"]
+            release = release if release is not None else tt
+            next_index = cp["exit_index"]
+            choice = f"divert: cross at {d['sites'][0]}, single track to {d['sites'][1]}"
+            options = [
+                {"option": "continue on the southbound track" if cp["closed"] == "south" else "continue on the northbound track",
+                 "feasible": False, "reason": "closed", "estimate_s": None},
+                {"option": choice, "feasible": True,
+                 "reason": f"section free; {d['shared_m'] / 1000:.1f} km of shared track, {len(d['stops']) - 1} stops on the "
+                           f"{d['single_track']}bound platforms", "estimate_s": round(tt, 1)},
+                {"option": f"hold at {station.replace(' Station', '')} until the track reopens",
+                 "feasible": True, "reason": f"would leave at {fmt(cp['end'])}", "estimate_s": round(cp["end"], 1)},
+            ]
+            # The agent diverts if that gets it to the exit platform before the track reopens.
+            if tt - self.ion.DWELL_S > cp["end"] + self.line_seconds(trip.direction, index, next_index):
+                # Holding is quicker: undo the plan and wait for the reopening instead.
+                while train.segments and train.segments[-1].t0 >= start:
+                    train.segments.pop()
+                stand = train.segments[-1]
+                stand.t1 = cp["end"]
+                dd = self.decide(t, "vehicle", "line", train, trip, what, options,
+                                 f"hold at {station.replace(' Station', '')} until the track reopens")
+                trip.decisions.append(dd)
+                dd.outcome = f"left at {fmt(cp['end'])}"
+                self.resume_line(train, trip, index, cp["end"], after_gate=cp)
+                return
+        else:
+            # Normal running on its own (now shared) track; the section is held
+            # until the rear clears the far crossover (worked out leg by leg, as the
+            # train actually runs: see run_leg).
+            sec1 = cp["route"]["opposing"]["section_line_m"][1]
+            train.pending_release = {"section": cp["section"], "line_m": sec1 + self.ion.ION_LENGTH}
+            release = None
+            next_index = None
+            choice = "enter the single-track section"
+            options = [{"option": "enter the single-track section", "feasible": True,
+                        "reason": "no train in it or waiting in the other direction", "estimate_s": None}]
+        sec["holders"][train.vehicle_id] = {"direction": trip.direction, "release": release, "from": start,
+                                            "role": gate["role"]}
+        entry = {"vehicle_id": train.vehicle_id, "trip": trip.train_id, "direction": trip.direction,
+                 "from_s": start, "release_s": release, "role": gate["role"]}
+        sec["log"].append(entry)
+        train.section_log = entry
+        if release is not None:
+            self.push(release, 1, "section_release", section=cp["section"], vehicle=train.vehicle_id)
+        prior = getattr(train, "section_wait", None)
+        dd = self.decide(t, "station" if prior else "vehicle", "line", train, trip, f"{what}: single-track section", options, choice)
+        trip.decisions.append(dd)
+        dd.outcome = (f"entered at {fmt(start)}; section released at {fmt(release)} when its rear cleared"
+                      if release is not None else f"entered at {fmt(start)}")
+        train.section_decision = dd
+        if prior is not None:
+            prior.outcome = f"granted at {fmt(start)} after waiting {fmt_dur(waited)}"
+            train.section_wait = None
+        train.section_logged = None
+        if gate["role"] == "divert":
+            self.release_platform(start, trip.direction, index, train)
+            self.hold_platform(trip.direction, next_index, train, tt)
+            train.gate_done = None
+            self.plan_line(train, trip, next_index, tt)
+        else:
+            self.resume_line(train, trip, index, start, after_gate=cp)
+
+    def resume_line(self, train, trip, index, tt, after_gate):
+        """Continue from stops[index] at tt past a gate that has been settled."""
+        train.gate_done = (trip.train_id, index)
+        self.plan_line(train, trip, index, tt)
+
+    def on_section_release(self, t, section, vehicle):
+        sec = self.sections[section]
+        sec["holders"].pop(vehicle, None)
+        self.section_drain(t, section)
+
+    def section_drain(self, t, section):
+        """After the track reopens: diverted trains still waiting run normally, and
+        once no diverted train is in the section the shared track is no longer needed."""
+        sec = self.sections[section]
+        cp = next(c for c in self.closures if c.get("section") == section)
+        if t < cp["end"] - 1e-9:
+            return self.section_admit(t, section)
+        for w in list(sec["waiting"]):
+            if w["gate"]["role"] == "divert" or not any(h["role"] == "divert" for h in sec["holders"].values()):
+                sec["waiting"].remove(w)
+                d = getattr(w["train"], "section_wait", None)
+                if d is not None:
+                    d.outcome = (f"track reopened at {fmt(cp['end'])}: left at {fmt(t)} on its own track" if w["gate"]["role"] == "divert" else f"left at {fmt(t)}: the last diverted train had cleared the single track")
+                    w["train"].section_wait = None
+                w["train"].section_logged = None
+                self.resume_line(w["train"], w["trip"], w["index"], t, after_gate=cp)
+
+    def on_closure_end(self, t, section):
+        self.section_drain(t, section)
+
+    def section_admit(self, t, section):
+        sec = self.sections[section]
+        for w in sorted(list(sec["waiting"]), key=lambda w: (w["t"], w["train"].vehicle_id)):
+            if w not in sec["waiting"]:
+                continue
+            direction = w["trip"].direction
+            if any(h["direction"] != direction for h in sec["holders"].values()):
+                continue
+            earlier_opposite = [x for x in sec["waiting"] if x["trip"].direction != direction and x["t"] < w["t"]]
+            if earlier_opposite:
+                continue
+            sec["waiting"].remove(w)
+            self.grant_section(t, w["train"], w["trip"], w["index"], w["gate"], w["station"],
+                               self.closure_text(w["gate"]["plan"]))
+
+    def closure_text(self, cp):
+        c = cp["closure"]
+        return (f"{c['track'].capitalize()}bound track closed between {c['from_station'].replace(' Station', '')} and "
+                f"{c['to_station'].replace(' Station', '')}, {fmt(cp['start'])}-{fmt(cp['end'])}")
 
     # --- arrivals -------------------------------------------------------------
     def on_approach(self, t, train, terminal, t0):
@@ -912,6 +1355,9 @@ class RailOps:
         """A path position as a distance along the line (approximate in the trackwork)."""
         if seg.line:
             return s
+        if seg.terminal == "network":
+            route = DIVERSIONS[seg.route]
+            return _interp_line_s(route, s)
         route = TERMINALS[seg.terminal]["routes"][seg.route]
         line = route["line"]
         direction = line["direction"]
@@ -928,7 +1374,7 @@ class RailOps:
         """Lon/lat of the middle of the train whose nose is at s."""
         if seg.line:
             return self.ion.position(seg.line, s)
-        path = TERMINALS[seg.terminal]["routes"][seg.route]["path"]
+        path = route_def(seg.terminal, seg.route)["path"]
         lon, lat = self.ion.corridor._lerp_path(path, s - self.ion.ION_LENGTH / 2.0)
         return round(lon, 6), round(lat, 6)
 
@@ -1014,6 +1460,31 @@ class RailOps:
                 segs.append(seg)
             out.append({"id": train.vehicle_id, "segments": segs})
         return out
+
+
+def run_time_at(run, d):
+    """Seconds into a corridor.Run until it has covered d metres."""
+    lo, hi = 0.0, run.duration
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if run.distance(mid) < d:
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def _interp_line_s(route, s):
+    """A diversion path position as a distance along its direction's GTFS line."""
+    path, line_s = route["path"], route["line_s"]
+    if s <= path[0][2]:
+        return line_s[0]
+    for i in range(len(path) - 1):
+        if path[i][2] <= s <= path[i + 1][2]:
+            span = path[i + 1][2] - path[i][2]
+            f = 0.0 if span == 0 else (s - path[i][2]) / span
+            return line_s[i] + (line_s[i + 1] - line_s[i]) * f
+    return line_s[-1]
 
 
 def fmt(t):

@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,6 +38,14 @@ class SimulationRequest(BaseModel):
     platform_hold_platform: Literal["1", "2"] = "2"
     platform_hold_minute: int = Field(default=20, ge=0, le=59)
     platform_hold_minutes: int = Field(default=12, ge=1, le=40)
+    # A track closure on the ION line (e.g. track work): trains of that
+    # direction divert over the other track if a valid single-track section
+    # exists, else hold until it reopens.
+    closure_track: Literal["north", "south"] | None = None
+    closure_from_station: str = "Grand River Hospital Station"
+    closure_to_station: str = "Central Station"
+    closure_from_minute: int = Field(default=15, ge=0, le=59)
+    closure_to_minute: int = Field(default=45, ge=1, le=90)
 
 
 def metrics_to_dict(metrics):
@@ -122,6 +130,22 @@ def platform_hold(payload: SimulationRequest):
     }
 
 
+def closures(payload: SimulationRequest):
+    if payload.closure_track is None:
+        return None
+    import rail_ops
+    names = {st["name"] for st in rail_ops.NETWORK["stations"][payload.closure_track]}
+    for name in (payload.closure_from_station, payload.closure_to_station):
+        if name not in names:
+            raise HTTPException(status_code=422, detail=f"{name!r} is not a {payload.closure_track}bound ION station")
+    return [{
+        "id": "C1", "track": payload.closure_track,
+        "from_station": payload.closure_from_station, "to_station": payload.closure_to_station,
+        "from_minute": payload.closure_from_minute, "to_minute": max(payload.closure_from_minute + 1, payload.closure_to_minute),
+        "reason": "track work",
+    }]
+
+
 def ion_plan(payload: SimulationRequest, reassign: bool = True):
     """The ION run: physical trains through both terminals. The adaptive case
     lets dispatch give a threatened trip to another train; the baseline only
@@ -133,6 +157,7 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
         delay_min=payload.train_delay,
         platform_hold=platform_hold(payload),
         reassign=reassign,
+        closures=closures(payload),
     )
 
 
