@@ -67,7 +67,7 @@ def clock(t):
 
 class Rider:
     __slots__ = ("id", "stop", "route", "direction", "dest", "ready_s", "source", "boarded_s", "to_ion", "bus",
-                 "planned_alight_s")
+                 "planned_alight_s", "stranded")
 
     def __init__(self, rid, stop, route, direction, dest, ready_s, source="walk-up", to_ion=False):
         self.id, self.stop, self.route, self.direction, self.dest = rid, stop, route, direction, dest
@@ -75,6 +75,7 @@ class Rider:
         self.boarded_s = None
         self.bus = None
         self.planned_alight_s = None
+        self.stranded = False       # put off a broken-down bus; boards again without counting twice
 
 
 class LineBus:
@@ -107,8 +108,11 @@ class LineBus:
 
 class LineService:
     def __init__(self, routes=("7",), seed=17, duration_s=3600.0, traffic=TRAFFIC_REF, ion_plan=None,
-                 demand=1.0, station_block=None, errors=None, vehicles=None, data=None):
+                 demand=1.0, station_block=None, errors=None, vehicles=None, data=None, fleet=None):
         self.data = data or LINES
+        self.fleet = fleet
+        if fleet is not None and vehicles is None:
+            vehicles = fleet.block_vehicle
         self.routes = [r for r in routes if r in self.data["routes"]]
         self.seed, self.duration_s, self.traffic = seed, duration_s, traffic
         self.demand = demand
@@ -158,6 +162,8 @@ class LineService:
                 continue
             vid = (self.vehicles or {}).get(b, f"V-{b}")
             bus = LineBus(vid, b, rows, self.seed)
+            if self.fleet is not None and vid in self.fleet.vehicles:
+                bus.driver = self.fleet.driver(vid)      # the bus's operator today
             while bus.row < len(rows) and rows[bus.row]["end"] - HOUR0 <= 0:
                 bus.row += 1
             out.append(bus)
@@ -261,6 +267,17 @@ class LineService:
         if bus.state == "layover":
             if t >= bus.until:
                 self.depart_terminal(bus, t)
+            return
+        if bus.state == "deadhead":
+            if t >= bus.until:          # the spare is at its relief point
+                if getattr(bus, "relieves", None):
+                    bus.state = "standby"   # waits there for the bus it replaces
+                    return
+                bus.state = "queue"         # in service from here
+                bus.arrived_at = t
+                self.try_berth(bus, t)
+            return
+        if bus.state == "standby":
             return
         if bus.state == "run":
             stop_s = bus.pattern["stops"][bus.i]["s"]
@@ -487,9 +504,13 @@ class LineService:
             r.planned_alight_s = bus.trip["gtfs"][k][0] - HOUR0
             bus.onboard.append(r)
             bus.boarded_here += 1
-            self.metrics["boarded"] += 1
-            if r.source == "ion":
-                self.metrics["ion_transfers_boarded"] += 1
+            if r.stranded:
+                r.stranded = False
+                self.metrics["reboarded"] = self.metrics.get("reboarded", 0) + 1
+            else:
+                self.metrics["boarded"] += 1
+                if r.source == "ion":
+                    self.metrics["ion_transfers_boarded"] += 1
             bus.until = max(bus.until, t + CLOSE_S) + BOARD_S
 
     def timepoint(self, bus, i):
@@ -500,6 +521,20 @@ class LineService:
         i = bus.i
         sid = bus.pattern["stops"][i]["stop"]
         last = i == len(bus.pattern["stops"]) - 1
+        rel = getattr(bus, "release", None)
+        if rel is not None and rel["k"] == i:
+            self.release_here(bus, t, sid)
+            return
+        ho = getattr(bus, "handover", None)
+        if ho is not None and ho["k"] == i and not last:
+            spare = next(b for b in self.buses if b.vehicle_id == ho["spare"])
+            if spare.state != "standby":
+                if not ho.get("waiting"):
+                    ho["waiting"] = True
+                    ho["since"] = t
+                return            # hold at the stop until the relief bus is here
+            self.hand_over(bus, spare, t, sid)
+            return
         if not last and self.timepoint(bus, i) and t < self.gtfs_dep(bus, i):
             return            # hold: never leave a timepoint early
         held = self.berths.get(sid, [])
@@ -551,6 +586,165 @@ class LineService:
         else:
             bus.state = "done"
 
+    # --- dispatcher orders ---------------------------------------------------------------
+    def active_bus(self, block=None, vehicle=None):
+        for b in self.buses:
+            if b.broken or b.trip is None or b.state not in ("run", "dwell", "queue", "layover"):
+                continue
+            if (block is None or b.block == block) and (vehicle is None or b.vehicle_id == vehicle) \
+                    and not getattr(b, "release", None) and not getattr(b, "handover", None):
+                return b
+        return None
+
+    def later_trips(self, bus):
+        """The block's trips after the current one that start inside the run."""
+        return [r["trip_id"] for r in bus.rows[bus.row + 1:] if r["modelled"] and r["start"] - HOUR0 < self.duration_s]
+
+    def replace(self, t, bus, k, plan):
+        """A spare takes over `bus`'s block at stop k; `bus` then leaves service."""
+        stops = bus.pattern["stops"]
+        nb = LineBus(plan["vehicle"], bus.block, bus.rows, self.seed)
+        if self.fleet is not None:
+            nb.driver = self.fleet.driver(plan["vehicle"])
+        nb.row, nb.trip, nb.pattern = bus.row, bus.trip, bus.pattern
+        nb.i, nb.s = k, stops[k]["s"]
+        nb.state, nb.until = "deadhead", plan["arrive_s"]
+        nb.relieves = bus.vehicle_id
+        nb.segments.append([plan["leave_s"], plan["arrive_s"], bus.pattern["id"], nb.s, nb.s, "deadhead"])
+        nb.deadhead = plan["deadhead"]
+        self.buses.append(nb)
+        bus.handover = {"k": k, "spare": nb.vehicle_id}
+        return nb
+
+    def hand_over(self, bus, spare, t, sid):
+        """Riders change buses at the relief point; the relieved bus leaves service."""
+        moved = len(bus.onboard)
+        spare.onboard, bus.onboard = bus.onboard, []
+        held = self.berths.get(sid, [])
+        if bus.vehicle_id in held:
+            held.remove(bus.vehicle_id)
+        bus.segments.append([bus.dwell_from, t, bus.pattern["id"], bus.s, bus.s, "dwell"])
+        bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
+                              "arr": bus.arrived_at, "dep": t, "on": bus.boarded_here, "off": bus.alighted_here,
+                              "passed": False, "handover": spare.vehicle_id})
+        bus.state, bus.trip = "done", None
+        if self.fleet is not None:
+            self.fleet.vehicles[bus.vehicle_id].set(t, "returning", f"relieved by {spare.vehicle_id} at {sid}")
+        spare.relieves = None
+        spare.state = "dwell"
+        spare.arrived_at = spare.dwell_from = t
+        spare.berth_stop = sid
+        held.append(spare.vehicle_id)
+        spare.boarded_here, spare.alighted_here = 0, 0
+        spare.until = t + 30.0                    # riders step across (modelled)
+        wait = t - bus.handover.get("since", t)
+        self.decide(t, "vehicle", spare, f"Relief at {self.stops[sid]['name']}: {spare.vehicle_id} takes over from "
+                    f"{bus.vehicle_id}", [{"option": "take over the block here", "feasible": True, "reason": "", "estimate_s": None}],
+                    "take over the block here", outcome=f"{moved} riders changed buses; {bus.vehicle_id} returns to its garage",
+                    effect=f"{bus.vehicle_id} held {wait:.0f} s for the relief" if wait else "no hold")
+
+    def release(self, t, bus, k, on_release):
+        bus.release = {"k": k, "cb": on_release}
+
+    def release_here(self, bus, t, sid):
+        """A reassigned bus leaves its line at this stop: its riders wait for the next bus."""
+        put_off = 0
+        for r in list(bus.onboard):
+            bus.onboard.remove(r)
+            r.stop, r.ready_s, r.bus, r.boarded_s, r.stranded = sid, t, None, None, True
+            self.riders.append(r)
+            put_off += 1
+        self.riders.sort(key=lambda x: x.ready_s)
+        held = self.berths.get(sid, [])
+        if bus.vehicle_id in held:
+            held.remove(bus.vehicle_id)
+        bus.segments.append([bus.dwell_from, t, bus.pattern["id"], bus.s, bus.s, "dwell"])
+        bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
+                              "arr": bus.arrived_at, "dep": t, "on": bus.boarded_here, "off": bus.alighted_here,
+                              "passed": False, "released": True})
+        self.metrics["stranded"] = self.metrics.get("stranded", 0) + put_off
+        cb = bus.release["cb"]
+        bus.state, bus.trip, bus.release = "done", None, None
+        cb(bus.vehicle_id, sid, t, put_off)
+
+    # --- breakdowns --------------------------------------------------------------------
+    def relief_index(self, bus):
+        """The next relief point ahead on its trip (a station a spare can reach), else the terminal."""
+        from fleet import DEADHEADS
+        stops = bus.pattern["stops"]
+        # Laying over at the terminal: the relief happens there, before the trip.
+        start = bus.i if bus.state in ("run", "layover") else bus.i + 1
+        for k in range(start, len(stops)):
+            if stops[k]["stop"] in DEADHEADS["points"]:
+                return k
+        return len(stops) - 1
+
+    def breakdown(self, t, vehicle=None):
+        """A bus on a line breaks down and is withdrawn; dispatch sends a spare to
+        take over its block at the next relief point."""
+        cand = [b for b in self.buses if b.trip is not None and not b.broken and b.state in ("run", "dwell", "queue")]
+        if vehicle:
+            cand = [b for b in cand if b.vehicle_id == vehicle]
+        if not cand:
+            return None
+        bus = cand[0]
+        bus.broken = True
+        stops = bus.pattern["stops"]
+        nxt = bus.i if bus.state == "run" else min(bus.i + 1, len(stops) - 1)
+        sid = stops[nxt]["stop"]
+        walk_m = max(0.0, stops[nxt]["s"] - bus.s)
+        walk_s = walk_m / WALK_MPS
+        stranded = 0
+        for r in list(bus.onboard):
+            bus.onboard.remove(r)
+            if r.dest == sid:
+                self.done_riders.append(r)
+                continue
+            r.stop, r.ready_s, r.bus = sid, t + walk_s, None
+            r.boarded_s = None
+            r.stranded = True
+            stranded += 1
+            self.riders.append(r)
+        self.riders.sort(key=lambda x: x.ready_s)
+        for q in self.berths.values():
+            if bus.vehicle_id in q:
+                q.remove(bus.vehicle_id)
+        for q in self.queues.values():
+            if bus.vehicle_id in q:
+                q.remove(bus.vehicle_id)
+        bus.segments.append([t, self.duration_s, bus.pattern["id"], round(bus.s, 1), round(bus.s, 1), "broken"])
+        self.metrics["breakdowns"] = self.metrics.get("breakdowns", 0) + 1
+        self.metrics["stranded"] = self.metrics.get("stranded", 0) + stranded
+        k = self.relief_index(bus)
+        relief = stops[k]["stop"]
+        self.decide(t, "vehicle", bus, f"{bus.vehicle_id} breaks down on trip {bus.trip['trip_id']}",
+                    [{"option": "continue in service", "feasible": False, "reason": "the bus cannot be driven",
+                      "estimate_s": None},
+                     {"option": "stop, secure the bus and call Control", "feasible": True, "reason": "", "estimate_s": None}],
+                    "stop, secure the bus and call Control", outcome=f"withdrawn at {clock(t)}",
+                    error="vehicle breakdown (scenario)",
+                    saw=f"{len(stops) - nxt} stops left on the trip; {stranded} riders onboard",
+                    effect=f"{stranded} riders walk {walk_m:.0f} m to {self.stops[sid]['name']} and wait for another bus")
+        if self.fleet is None:
+            return None
+        if self.fleet is not None:
+            self.fleet.breakdown(t, bus.vehicle_id, f"route {bus.trip['route']} trip {bus.trip['trip_id']}")
+        label = f"block {bus.block} (route {bus.trip['route']} trip {bus.trip['trip_id']}) from {self.stops[relief]['name']}"
+        plan = self.fleet.request_spare(t, relief, f"{bus.vehicle_id} broke down on route {bus.trip['route']}", label,
+                                        decide=self.decisions.append)
+        if plan is None:
+            return None
+        nb = LineBus(plan["vehicle"], bus.block, bus.rows, self.seed)
+        nb.driver = self.fleet.driver(plan["vehicle"])
+        nb.row, nb.trip, nb.pattern = bus.row, bus.trip, bus.pattern
+        nb.i, nb.s = k, stops[k]["s"]
+        nb.state, nb.until = "deadhead", plan["arrive_s"]
+        nb.segments.append([plan["leave_s"], plan["arrive_s"], bus.pattern["id"], nb.s, nb.s, "deadhead"])
+        nb.deadhead = plan["deadhead"]
+        nb.replaces = bus.vehicle_id
+        self.buses.append(nb)
+        return plan
+
     # --- results -------------------------------------------------------------------------
     def finish(self):
         end = self.duration_s
@@ -572,8 +766,11 @@ class LineService:
 
     def plans(self):
         return [{"vehicle_id": b.vehicle_id, "block": b.block, "driver": b.driver.describe(),
+                 "operator": b.driver.vehicle_id,
                  "segments": [[round(a, 1), round(c, 1), p, s0, s1, k] for a, c, p, s0, s1, k in b.segments],
-                 "stops": b.stops_log, "unmodelled": b.unmodelled}
+                 "stops": b.stops_log, "unmodelled": b.unmodelled,
+                 "deadhead": getattr(b, "deadhead", None), "replaces": getattr(b, "replaces", None) or
+                 getattr(b, "relieved", None), "broken": b.broken}
                 for b in self.buses]
 
     def network(self):

@@ -6,7 +6,7 @@ GTFS): Northfield Drive (Waterloo), Strasburg Road / Chandler Drive
 (minute 0 = 07:30 on a GTFS Wednesday) each garage sends one bus out to the
 first stop of its block and receives one back from the last stop of another.
 
-Each bus keeps one ID (GRT-<block>) from the garage to the stop and through its
+Each bus keeps its fleet ID (fleet.py) from the garage to the stop and through its
 trip; the route 13 bus returning to Northfield is the same vehicle the UW
 Station simulation moved through Transit Plaza Road. Each garage keeps an
 inventory: the number of buses there (modelled) and which of the scenario's
@@ -77,7 +77,9 @@ class Garages:
         for g in GARAGES["garages"]:
             gid = g["id"]
             out, inn = g["out"], g["in"]
-            out_id, in_id = f"GRT-{out['block']}", f"GRT-{inn['block']}"
+            fleet = getattr(self.engine, "fleet", None)
+            out_id = (fleet.vehicle_for_block(out["block"]) if fleet else None) or f"GRT-{out['block']}"
+            in_id = (fleet.vehicle_for_block(inn["block"]) if fleet else None) or f"GRT-{inn['block']}"
             count = g["inventory"]
             log = [{"t": 0.0, "count": count, "present": [out_id], "event": "07:30: buses at the garage (modelled)"}]
 

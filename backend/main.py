@@ -21,12 +21,29 @@ from simulation_engine import (
 app = FastAPI(title="TransitOps API", version="0.2.0")
 
 
+class Command(BaseModel):
+    minute: int = Field(ge=0, le=179)
+    action: Literal["dispatch_spare", "reassign", "breakdown"]
+    vehicle: str
+    # "corridor", or a GTFS block on a modelled line
+    target: str = "corridor"
+
+
 class SimulationRequest(BaseModel):
     traffic_multiplier: float = Field(default=1.25, ge=0.5, le=3.0)
     train_delay: int = Field(default=5, ge=0, le=30)
     passenger_demand: int = Field(default=135, ge=10, le=500)
     # Buses assigned to this run's corridor service (not the regional inventory).
     fleet_size: int = Field(default=4, ge=1, le=12)
+    # The regional inventory of conventional buses (grt.ca: "more than 300"); garage shares modelled.
+    fleet_inventory: int = Field(default=300, ge=230, le=400)
+    # A breakdown: "hold" (six-minute roadside hold, the original scenario) or "out_of_service"
+    # (withdrawn; dispatch sends a ready spare from a garage). On the corridor or on a line.
+    breakdown_kind: Literal["hold", "out_of_service"] = "hold"
+    breakdown_target: Literal["corridor", "line"] = "corridor"
+    breakdown_vehicle: str | None = None
+    # Dispatcher orders from the Fleet panel, applied at their minute.
+    commands: list[Command] = Field(default_factory=list)
     # Run length from 07:30. Scheduled lines need more than an hour for a round trip.
     duration_min: int = Field(default=60, ge=30, le=180)
     # Scheduled GRT lines run end to end (lines.json; build_lines.py).
@@ -213,6 +230,10 @@ def driver_errors(payload: SimulationRequest):
     return out
 
 
+def ion_vehicle_ids(plan):
+    return sorted({t.vehicle_id for t in plan.ops.trains}) if getattr(plan, "ops", None) else []
+
+
 def lines(payload: SimulationRequest):
     from lines import LINES
     unknown = [r for r in payload.lines if r not in LINES["routes"]]
@@ -294,6 +315,11 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         driver_errors=driver_errors(payload),
         lines=lines(payload),
         line_block=line_block(payload),
+        fleet_inventory=payload.fleet_inventory,
+        breakdown_kind=payload.breakdown_kind,
+        breakdown_target=payload.breakdown_target,
+        breakdown_vehicle=payload.breakdown_vehicle,
+        commands=[c.model_dump() for c in payload.commands],
     )
     metrics = sim.run()
 
@@ -311,6 +337,9 @@ def run_case(payload: SimulationRequest, intelligent: bool):
                "metrics": sim.uw.metrics() if sim.uw else None},
         # GRT garages: pull-outs and returns, inventories (garage_ops.py)
         "garages": sim.garages.plans(),
+        # The regional fleet: inventory, garages, every vehicle's states and the spares sent (fleet.py)
+        "fleet": {"summary": sim.fleet.summary(), "vehicles": sim.fleet.vehicles_out(ion_vehicle_ids(plan)),
+                  "events": sim.fleet.events},
         # Scheduled GRT lines end to end: each bus's trajectory, stops served and metrics (lines.py)
         "lines": ({"network": sim.lines.network(), "vehicles": sim.lines.plans(), "metrics": sim.lines.metrics,
                    "block": line_block(payload)} if sim.lines else None),
