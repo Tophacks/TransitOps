@@ -125,6 +125,8 @@ class TransitSimulation:
         connection_holds=None,
         uw_block=None,
         uw_station=True,
+        uw_cars="moderate",
+        driver_errors=None,
     ):
         self.buses = buses
         # Connection holds at UW and Central: on with the adaptive controller.
@@ -174,7 +176,7 @@ class TransitSimulation:
         self.uw = None
         if uw_station:
             from uw_station import UwStation
-            self.uw = UwStation(self, block=uw_block, seed=seed, adaptive=intelligent)
+            self.uw = UwStation(self, block=uw_block, seed=seed, adaptive=intelligent, cars=uw_cars, errors=driver_errors)
 
     def log(self, message, kind="info", *, bus_id=None, reason=None, train_id=None):
         event = {"minute": self.time, "message": message, "kind": kind}
@@ -563,7 +565,31 @@ class TransitSimulation:
             return hold * 60.0
         return 0.0
 
-    def station_exit(self, bus, t):
+    def station_missed(self, bus, t, stop):
+        """A stop the bus could not serve after a driver error (recorded)."""
+        self.metrics.missed_stops = getattr(self.metrics, "missed_stops", 0) + 1
+        self.log(f"{bus.bus_id} missed stop {stop} at UW Station", "disruption", bus_id=bus.bus_id,
+                 reason="Driver error; Control found no reverse or forward recovery for this stop.")
+
+    def station_exit(self, bus, t, arrived=None):
+        """The bus has left the modelled roads at UW: its next leg starts, or,
+        after a detour, it is already at the next stop (`arrived`)."""
+        if arrived is not None:
+            bus.at_station = False
+            bus.doors_open_s = None
+            bus.hold_evaluated = False
+            bus.held_minutes = 0
+            bus.current_stop_index = ROUTE.index("UW")
+            bus.target_stop_index = ROUTE.index(arrived)
+            bus.state = BusState.EN_ROUTE
+            bus.segment_minutes = 1
+            bus.segment_elapsed = 0
+            bus.segment_progress = 0.0
+            bus.segment_hold_minutes = 0
+            bus.segment_queue_cars = 0
+            bus.detour_arrival = True
+            bus.station_exit_s = t
+            return
         """The bus has turned onto Phillip Street: its next leg starts."""
         bus.at_station = False
         bus.doors_open_s = None
@@ -868,6 +894,7 @@ class TransitSimulation:
                     self.uw.arrive(bus, self.time * 60.0)
                     continue
                 self._alight_and_board(bus, stop_id)
+                bus.detour_arrival = False
                 bus.state = BusState.DWELLING
                 bus.dwell_minutes = 1
                 bus.segment_progress = 1.0
@@ -925,6 +952,9 @@ class TransitSimulation:
             "queue_cars": bus.segment_queue_cars,
             "length_m": run.length,
             "distance_m": round(distance, 1),
+            # After an unintended turn the bus reached this stop on another road
+            # (the UW Station replay draws that route).
+            **({"detour": True} if getattr(bus, "detour_arrival", False) and origin == "UW" else {}),
         }
 
     def _bus_geo(self, bus, motion=None):
