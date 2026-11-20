@@ -11,6 +11,7 @@ import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
 import { GARAGES, garagePoses, type GarageVehicle } from "../../lib/motion/garages.ts";
+import { LINES, linePoses, sparePoses, type FleetVehicle, type LineVehicle } from "../../lib/motion/lines.ts";
 import { UW, UW_ROADS, berthStates, carPoses, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwCar, type UwVehicle } from "../../lib/motion/uwStation.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
@@ -55,6 +56,12 @@ type Props = {
   uwCars?: UwCar[];
   /** GRT garage pull-outs and returns, from the simulator (garage_ops.py) */
   garageVehicles?: GarageVehicle[];
+  /** buses on the scheduled lines (lines.py) and the regional fleet's spares (fleet.py) */
+  lineVehicles?: LineVehicle[];
+  fleetVehicles?: FleetVehicle[];
+  /** a fleet vehicle picked in the Fleet panel or tapped on the map */
+  focusVehicle?: string | null;
+  onFocusVehicle?: (id: string | null) => void;
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -406,6 +413,20 @@ function addLayers(map: MapInstance) {
   map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-closure", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-crossover-points", { type: "geojson", data: crossoverPoints() });
+  // Scheduled lines (GTFS route variants with more than a handful of trips) and their stops.
+  map.addSource("sched-lines", {
+    type: "geojson", data: lineFeatures(),
+    attribution: "Scheduled lines: GRT GTFS (Region of Waterloo Open Data Licence)",
+  });
+  map.addLayer({
+    id: "sched-lines-route", type: "line", source: "sched-lines", filter: ["==", ["geometry-type"], "LineString"], minzoom: 11,
+    paint: { "line-color": "#f0a04b", "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.2, 16, 3], "line-opacity": 0.55 },
+  }, firstLabel);
+  map.addLayer({
+    id: "sched-lines-stops", type: "circle", source: "sched-lines", filter: ["==", ["geometry-type"], "Point"], minzoom: 14,
+    paint: { "circle-radius": ["match", ["get", "kind"], "station", 4.5, 2.6], "circle-color": "#f0a04b",
+      "circle-stroke-color": "#11161c", "circle-stroke-width": 1, "circle-pitch-alignment": "map" },
+  });
   map.addSource("bus-garages", {
     type: "geojson", data: garageFeatures(),
     attribution: 'GRT garages and roads © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>; blocks: GRT GTFS',
@@ -624,7 +645,10 @@ const UW_CLAMP = stationClamp(corridor);
 
 /** Corridor buses: inside UW Station the station replay places them. */
 function sceneBuses(timeline: Snapshot[], vehicles: readonly UwVehicle[], t: number): BusPose[] {
-  const out = busPoses(corridor, timeline, t, UW_CLAMP).filter((bus) => !inStation(vehicles, bus.id, t));
+  // A spare still out of service from its garage is drawn on its own road route (lines.ts).
+  const frame = timeline[Math.min(Math.max(0, timeline.length - 1), Math.floor(t / 60) + 1)];
+  const deadheading = new Set((frame?.buses ?? []).filter((b) => (b.segment as { deadhead?: boolean } | undefined)?.deadhead).map((b) => b.id));
+  const out = busPoses(corridor, timeline, t, UW_CLAMP).filter((bus) => !inStation(vehicles, bus.id, t) && !deadheading.has(bus.id));
   for (const pose of uwPoses(vehicles, t)) {
     if (pose.kind !== "corridor") continue;
     out.push({ id: pose.id, state: pose.speed > 0.2 ? "EN_ROUTE" : "DWELLING", from: "CENTRAL", to: "UW", distance: 0, length: 0,
@@ -654,6 +678,21 @@ function onPhillip(p: [number, number]) {
     if (Math.hypot(ax + dx * f, ay + dy * f) < 9) return true;
   }
   return false;
+}
+
+/** The scheduled lines' main route variants and stops (lines.json, from GTFS). */
+function lineFeatures(): GeoJSON.FeatureCollection {
+  const out: GeoJSON.Feature[] = [];
+  for (const route of Object.values(LINES.routes)) {
+    for (const p of route.patterns) {
+      if (p.trips < 10) continue;
+      out.push(line(p.path.map(([lon, lat]) => [lon, lat]), { kind: "route", route: route.id, pattern: p.id }));
+    }
+  }
+  for (const [id, st] of Object.entries(LINES.stops)) {
+    out.push(point(st.lon, st.lat, { kind: st.ion || /Station/.test(st.name) ? "station" : "stop", id, name: st.name }));
+  }
+  return featureCollection(out);
 }
 
 /** GRT garages: site outlines (OSM), driveways and where buses stand. */
@@ -733,7 +772,19 @@ export default function GeospatialMap({
   uwVehicles = [],
   uwCars = [],
   garageVehicles = [],
+  lineVehicles = [],
+  fleetVehicles = [],
+  focusVehicle = null,
+  onFocusVehicle,
 }: Props) {
+  const lineRef = useRef<LineVehicle[]>([]);
+  lineRef.current = lineVehicles;
+  const simFleetRef = useRef<FleetVehicle[]>([]);
+  simFleetRef.current = fleetVehicles;
+  const focusRef = useRef<string | null>(null);
+  focusRef.current = focusVehicle;
+  const onFocusRef = useRef(onFocusVehicle);
+  onFocusRef.current = onFocusVehicle;
   const garageRef = useRef<GarageVehicle[]>([]);
   garageRef.current = garageVehicles;
   const uwRef = useRef<UwVehicle[]>([]);
@@ -775,6 +826,12 @@ export default function GeospatialMap({
   const [selectedVehicle, setSelectedVehicle] = useState<string | null>(null);
   const [selectedSumo, setSelectedSumo] = useState<string | null>(null);
   const [selectedTrain, setSelectedTrain] = useState<string | null>(null);
+  const selectedTrainRef = useRef<string | null>(null);
+  selectedTrainRef.current = selectedTrain;
+  // The Fleet panel picks a vehicle: the inspector follows it.
+  useEffect(() => {
+    if (focusVehicle) setSelectedTrain(focusVehicle);
+  }, [focusVehicle]);
   const [follow, setFollow] = useState(false);
   const [depotSelected, setDepotSelected] = useState(false);
   // Fairway terminal replay (modelled), shown instead of live or simulated vehicles.
@@ -856,6 +913,10 @@ export default function GeospatialMap({
             garages: (t?: number) => garagePoses(garageRef.current, t ?? clock.time()),
             uw: (t?: number) => uwPoses(uwRef.current, t ?? clock.time()),
             uwCars: (t?: number) => carPoses(uwCarsRef.current, t ?? clock.time()),
+            uwPlans: () => uwRef.current.map((v) => ({ id: v.id, kind: v.kind })),
+            lines: (t?: number) => linePoses(lineRef.current, t ?? clock.time()),
+            spares: (t?: number) => sparePoses(simFleetRef.current, t ?? clock.time(), new Set(lineRef.current.map((v) => v.vehicle_id))),
+            inspecting: () => selectedTrainRef.current,
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
             frameCosts: frameCosts.current,
             live: () => trackerRef.current.poses(performance.now() / 1000)
@@ -927,6 +988,13 @@ export default function GeospatialMap({
                   if (data) {
                     setSelectedTrain(null);
                     current.onSelect({ type: "bus", data });
+                    onFocusRef.current?.(id);
+                  } else {
+                    // A line bus, a spare or a UW Station GTFS bus: the inspector shows its decisions.
+                    const vehicle = id.replace(/-\d+$/, "");
+                    setSelectedTrain(vehicle);
+                    current.onSelect(null);
+                    onFocusRef.current?.(vehicle);
                   }
                 }
                 break;
@@ -1041,7 +1109,17 @@ export default function GeospatialMap({
         }
         // Other GRT buses at UW Station (GTFS schedule, simulated) and any blocking bus.
         for (const other of uwPoses(uwRef.current, t)) {
-          if (other.kind !== "corridor") busBody({ id: other.id, centre: other.centre, heading: other.heading }, false, bodies, "stale");
+          if (other.kind !== "corridor") busBody({ id: other.id, centre: other.centre, heading: other.heading }, other.id === focusRef.current, bodies, "stale");
+        }
+        // Scheduled lines (Route 7 and the others modelled), driven by their own drivers,
+        // and spares on their way out of a garage.
+        const onLine = new Set(lineRef.current.map((v) => v.vehicle_id));
+        for (const bus of linePoses(lineRef.current, t)) {
+          busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, bus.id === focusRef.current, bodies,
+            bus.state === "broken" ? "stale" : "live");
+        }
+        for (const bus of sparePoses(simFleetRef.current, t, onLine)) {
+          busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, bus.id === focusRef.current, bodies, "live");
         }
         const second = Math.floor(t);
         if (second !== lastBerthSecond) {

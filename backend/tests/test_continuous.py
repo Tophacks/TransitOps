@@ -36,8 +36,25 @@ class ContinuousRunTests(unittest.TestCase):
         surges = [e for e in next_result["events"] if e["kind"] == "surge"]
         self.assertEqual([e["minute"] for e in surges], [20])
 
+    def test_route_7_keeps_running_after_the_first_hour(self):
+        payload = SimulationRequest(fleet_size=3)
+        settings = continuous_settings(payload)
+        settings.pop("sources")
+        run = ContinuousRun(settings)
+        while run.minute < 100:
+            result = json.loads(run.next_json())["smart"]
+        lines = result["lines"]
+        later = [x for v in lines["vehicles"] for x in v["stops"] if x["dep"] > 3600]
+        self.assertTrue(later)                                   # served stops after 08:30
+        self.assertGreater(lines["metrics"]["trips_covered"], 10)
+        cut = (run.minute - REPLAY_MINUTES) * 60
+        self.assertTrue(all(seg[1] >= cut for v in lines["vehicles"] for seg in v["segments"]))
+        self.assertIsNotNone(result["fleet"])
+
     def test_worker_bundle_contains_the_engine_and_geometry(self):
         settings = continuous_settings(SimulationRequest())
         self.assertIn("class ContinuousRun", settings["sources"]["continuous.py"])
         self.assertIn("ion_network.json", settings["sources"])
+        for name in ("lines.py", "fleet.py", "lines.json", "deadheads.json"):
+            self.assertIn(name, settings["sources"])
         self.assertNotIn("main.py", settings["sources"])

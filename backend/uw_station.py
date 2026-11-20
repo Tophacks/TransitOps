@@ -247,11 +247,17 @@ class UwStation:
                             current.calls.append(call)
                         continue
                     visits[block] = visits.get(block, 0) + 1
-                    vid = f"GRT-{block}" + (f"-{visits[block]}" if visits[block] > 1 else "")
+                    fleet = getattr(self.engine, "fleet", None)
+                    vehicle = (fleet.vehicle_for_block(block) if fleet is not None else None) or f"GRT-{block}"
+                    # One agent per visit; the vehicle keeps its fleet ID throughout.
+                    vid = vehicle + (f"-{visits[block]}" if visits[block] > 1 else "")
                     first_p = to_p(side, BERTHS[next(b for b in BERTHS if BERTHS[b]["stop"] == c["stop"])]["front"])
                     t_enter = c["arrive_s"] - first_p / V0 - 8.0
                     current = Agent(vid, "grt", side, max(0.0, t_enter), [call], route=trip["route"],
                                     label=f"route {trip['route']} (block {block})")
+                    current.vehicle_id, current.block = vehicle, block
+                    if fleet is not None and vehicle in fleet.vehicles:
+                        current.driver = fleet.driver(vehicle)
                     self.agents.append(current)
 
     # --- corridor buses ----------------------------------------------------------------
@@ -288,7 +294,7 @@ class UwStation:
         s = to_s(agent.side, agent.p)
         lon, lat = self.lonlat(s, agent.side, agent.lat)
         d = {"id": f"U{self.seq:03d}", "t": round(t, 1), "minute": int(t // 60), "level": level, "terminal": "uw",
-             "vehicle_id": agent.id, "trip_id": agent.current_trip(), "trigger": trigger,
+             "vehicle_id": getattr(agent, "vehicle_id", agent.id), "trip_id": agent.current_trip(), "trigger": trigger,
              "options": options, "chosen": chosen, "outcome": outcome, "location": [lon, lat]}
         self.decisions.append(d)
         return d
@@ -434,7 +440,9 @@ class UwStation:
                     a.berth_log[-1][2] = t
                 continue
             if a.driver is None:
-                a.driver = Driver(a.id, self.seed)
+                fleet = getattr(self.engine, "fleet", None)
+                vid = getattr(a, "vehicle_id", a.id)
+                a.driver = fleet.driver(vid) if fleet is not None and vid in fleet.vehicles else Driver(a.id, self.seed)
             if a.state == "pending" and a.t_enter <= t:
                 # Enter only if the entrance is clear.
                 behind = [o for o in self.plaza() if o.side == a.side and o.rear < GAP + 1.0]

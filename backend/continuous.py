@@ -87,6 +87,12 @@ class ContinuousRun:
                         max(a.t_enter, a.exit_s or 0, a.trace[-1][0] if a.trace else 0) >= cut]
         uw.road.vehicles[:] = [v for v in uw.road.vehicles if not v.done or v.trace[-1][0] >= cut]
         uw.errors.used[:] = [e for e in uw.errors.used if e["t"] >= cut]
+        # Scheduled lines: only the replay window's trajectory and stops are sent
+        # (metrics are kept separately and cover the whole run).
+        if getattr(sim, "lines", None) is not None:
+            for bus in sim.lines.buses:
+                bus.segments[:] = [seg for seg in bus.segments if seg[1] >= cut]
+                bus.stops_log[:] = [x for x in bus.stops_log if x["dep"] >= cut]
 
         # Keep a service-cycle margin behind replay for trip lookup and
         # forecast bookkeeping. Active authorities and incomplete trips stay.

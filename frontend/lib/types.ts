@@ -38,7 +38,7 @@ export type Controls = {
   /** private cars on Phillip Street southbound at the UW exit */
   uw_cars?: "light" | "moderate" | "heavy";
   /** opt-in driver errors (a demo on B101's first UW visit, or seeded) */
-  driver_error?: "overshoot" | "overshoot_blocked" | "missed_berth" | "wrong_turn" | "seeded" | null;
+  driver_error?: "overshoot" | "overshoot_blocked" | "missed_berth" | "wrong_turn" | "missed_stop" | "seeded" | null;
   driver_error_rate?: number;
   error_seed?: number;
   /** a train overshooting a platform (Rail Control recovery) */
@@ -46,7 +46,27 @@ export type Controls = {
   rail_overshoot_direction?: "north" | "south";
   rail_overshoot_minute?: number;
   rail_overshoot_metres?: number;
+  /** run length from 07:30 (scheduled lines need more than an hour for a round trip) */
+  duration_min?: number;
+  /** scheduled GRT lines run end to end (backend/lines.py) */
+  lines?: string[];
+  /** a station delay on a line: the stop's berths unavailable (scenario) */
+  line_block_stop?: string | null;
+  line_block_from_minute?: number;
+  line_block_to_minute?: number;
+  /** where the "missed_stop" driver error demo happens */
+  missed_stop_stop?: string;
+  missed_stop_after_minute?: number;
+  /** regional inventory of conventional buses (fleet_size is only the corridor run's buses) */
+  fleet_inventory?: number;
+  breakdown_kind?: "hold" | "out_of_service";
+  breakdown_target?: "corridor" | "line";
+  breakdown_vehicle?: string | null;
+  /** dispatcher orders from the Fleet panel, applied at their minute */
+  commands?: Command[];
 };
+
+export type Command = { minute: number; action: "dispatch_spare" | "reassign" | "breakdown"; vehicle: string; target: string };
 
 export type StopState = {
   id: string;
@@ -191,6 +211,10 @@ export type CaseResult = {
   /** GRT garage pull-outs and returns and each garage's inventory (backend/garage_ops.py) */
   garages?: { vehicles: import("./motion/garages.ts").GarageVehicle[];
     inventory: Record<string, { t: number; count: number; present: string[]; event: string }[]> };
+  /** scheduled GRT lines end to end (backend/lines.py) */
+  lines?: import("./motion/lines.ts").LinesResult | null;
+  /** the regional fleet: inventory, garages, every vehicle's states, spares sent (backend/fleet.py) */
+  fleet?: import("./motion/lines.ts").FleetData;
   /** every vehicle on UW Station's roadway, second by second (backend/uw_station.py) */
   uw?: { block: Record<string, unknown> | null; vehicles: import("./motion/uwStation.ts").UwVehicle[];
     cars?: import("./motion/uwStation.ts").UwCar[]; car_demand?: string;

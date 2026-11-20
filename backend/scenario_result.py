@@ -41,7 +41,24 @@ def case_result(sim, metrics, car_demand, garages, garage_decisions=()):
                "metrics": sim.uw.metrics() if sim.uw else None},
         # GRT garages: pull-outs and returns, inventories (garage_ops.py)
         "garages": garages.plans(),
+        # The regional fleet: inventory, garages, every vehicle's states and the spares sent (fleet.py)
+        "fleet": ({"summary": sim.fleet.summary(), "vehicles": sim.fleet.vehicles_out(ion_vehicle_ids(plan)),
+                   "events": sim.fleet.events} if getattr(sim, "fleet", None) else None),
+        # Scheduled GRT lines end to end: each bus's trajectory, stops served and metrics (lines.py)
+        "lines": line_result(sim),
     }
+
+
+def ion_vehicle_ids(plan):
+    return sorted({t.vehicle_id for t in plan.ops.trains}) if getattr(plan, "ops", None) else []
+
+
+def line_result(sim):
+    lines = getattr(sim, "lines", None)
+    if lines is None:
+        return None
+    lines.finish(sim.time * 60.0)          # metrics up to this run's end or checkpoint
+    return {"network": lines.network(), "vehicles": lines.plans(), "metrics": lines.metrics, "block": lines.block}
 
 
 def simulation_result(scenario, network, baseline, smart):
