@@ -188,6 +188,9 @@ export type CaseResult = {
   ion?: IonSchedule;
   /** bus decisions: UW Station agents, station reports, holds and capacity requests */
   decisions?: RailDecision[];
+  /** GRT garage pull-outs and returns and each garage's inventory (backend/garage_ops.py) */
+  garages?: { vehicles: import("./motion/garages.ts").GarageVehicle[];
+    inventory: Record<string, { t: number; count: number; present: string[]; event: string }[]> };
   /** every vehicle on UW Station's roadway, second by second (backend/uw_station.py) */
   uw?: { block: Record<string, unknown> | null; vehicles: import("./motion/uwStation.ts").UwVehicle[];
     cars?: import("./motion/uwStation.ts").UwCar[]; car_demand?: string;

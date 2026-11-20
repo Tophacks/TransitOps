@@ -273,6 +273,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
                "cars": sim.uw.cars() if sim.uw else [], "car_demand": payload.uw_cars,
                "errors": sim.uw.errors.used if sim.uw else [],
                "metrics": sim.uw.metrics() if sim.uw else None},
+        # GRT garages: pull-outs and returns, inventories (garage_ops.py)
+        "garages": sim.garages.plans(),
     }
 
 

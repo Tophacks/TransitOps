@@ -12,7 +12,7 @@ Sources:
   all-way stops, crossings and the ION level crossing.
 - GRT GTFS (Region of Waterloo Open Data Licence): stops 1078, 1223, 1260,
   1262 and 1264 with their platform_code, and every call at them between
-  08:00 and 09:00 on Wednesday 2 December 2026, including pickup_type=1
+  07:30 and 08:30 on Wednesday 2 December 2026, including pickup_type=1
   (drop-off only) calls.
 - GRT's University of Waterloo Station map (station-maps page, uw-station.pdf):
   the same stops on the same sides of the roadway; used as a cross-check.
@@ -59,7 +59,8 @@ BUS_LENGTH = 12.2          # GRT 40-ft bus (modelled for every route)
 BUS_WIDTH = 2.6
 BERTH_GAP = 6.0          # room to swing out of a stacked berth (modelled)
 LANE_W = 3.5
-DATE, HOUR = "20261202", ("08:00:00", "09:00:00")
+DATE, HOUR = "20261202", ("07:30:00", "08:30:00")   # run minute 0 = 07:30 (shared with build_garages.py)
+HOUR0 = 7 * 3600 + 30 * 60
 STOPS = ("1078", "1223", "1260", "1262", "1264")
 
 
@@ -108,7 +109,7 @@ def gtfs_calls(root):
         t = trips[trip_id]
         def sec(x):
             h, m, s = (int(v) for v in x.split(":"))
-            return h * 3600 + m * 60 + s - 8 * 3600
+            return h * 3600 + m * 60 + s - HOUR0
         out.append({
             "trip_id": trip_id, "route": t["route_id"], "headsign": t["trip_headsign"], "block": t["block_id"],
             "calls": [{"stop": c["stop_id"], "arrive_s": sec(c["arrival_time"]), "depart_s": sec(c["departure_time"]),
@@ -214,7 +215,7 @@ def build(gtfs_root):
                    "side": located[0][2], "osm_way": wid})
     # Drop-off-only calls per route and stop (GTFS pickup_type = 1).
     drop_only = sorted({(c["stop"], t["route"]) for t in calls for c in t["calls"] if c["drop_off_only"]})
-    report.append(f"GTFS {DATE} 08:00–09:00: {len(calls)} trips call at the station; drop-off-only calls: "
+    report.append(f"GTFS {DATE} {HOUR[0][:5]}–{HOUR[1][:5]}: {len(calls)} trips call at the station; drop-off-only calls: "
                   + ", ".join(f"route {r} at {s}" for s, r in drop_only))
     side_of = {p["stop"]: pl["side"] for pl in platforms for p in pl["poles"]}
     return {
@@ -230,7 +231,7 @@ def build(gtfs_root):
         "features": features, "stop_lines": stop_lines,
         "platforms": platforms, "go_platforms": go,
         "stops": {k: {**v, "side": side_of.get(k)} for k, v in gstops.items()},
-        "gtfs": {"date": DATE, "hour": "08:00-09:00", "trips": calls,
+        "gtfs": {"date": DATE, "hour": f"{HOUR[0][:5]}-{HOUR[1][:5]}", "trips": calls,
                  "drop_off_only": [{"stop": s, "route": r} for s, r in drop_only]},
     }, report
 

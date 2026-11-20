@@ -395,6 +395,7 @@ export default function Home() {
             busDecisions={data?.smart.decisions ?? []}
             uwVehicles={data?.smart.uw?.vehicles ?? []}
             uwCars={data?.smart.uw?.cars ?? []}
+            garageVehicles={data?.smart.garages?.vehicles ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />

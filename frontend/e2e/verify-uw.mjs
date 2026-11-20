@@ -45,7 +45,8 @@ for (const [name, viewport] of Object.entries({ desktop: { width: 1440, height: 
   await page.waitForFunction(() => window.__transitops.scene().trains.length > 0, null, { timeout: 90_000 });
   await page.getByRole("button", { name: /Pause/ }).click();
   const decisions = await page.evaluate(() => window.__transitops.busDecisions());
-  const alt = decisions.filter((d) => d.terminal === "uw" && /^alternate berth P6/.test(d.chosen));
+  // Corridor buses (B1xx); GTFS buses at 1078 record the same decision and are covered by backend/tests/test_uw_station.py.
+  const alt = decisions.filter((d) => d.terminal === "uw" && /^alternate berth P6/.test(d.chosen) && /^B1/.test(d.vehicle_id));
   const buses = [...new Set(alt.map((d) => d.vehicle_id))];
   check(`${name}: three corridor buses take an alternate berth at platform 6`, buses.length >= 3, buses.join(", "));
   check(`${name}: each explains the blocked berth`, alt.every((d) => d.options.some((o) => !o.feasible && /out-of-service/.test(o.reason) || /OOS/.test(o.reason))),

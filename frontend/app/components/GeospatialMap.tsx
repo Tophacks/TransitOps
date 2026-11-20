@@ -10,6 +10,7 @@ import { useGrtFleet } from "../../lib/useGrtFleet";
 import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
+import { GARAGES, garagePoses, type GarageVehicle } from "../../lib/motion/garages.ts";
 import { UW, UW_ROADS, berthStates, carPoses, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwCar, type UwVehicle } from "../../lib/motion/uwStation.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
@@ -52,6 +53,8 @@ type Props = {
   uwVehicles?: UwVehicle[];
   /** private cars on Phillip Street at the UW exit, from the simulator (road_traffic.py) */
   uwCars?: UwCar[];
+  /** GRT garage pull-outs and returns, from the simulator (garage_ops.py) */
+  garageVehicles?: GarageVehicle[];
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -403,6 +406,22 @@ function addLayers(map: MapInstance) {
   map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-closure", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-crossover-points", { type: "geojson", data: crossoverPoints() });
+  map.addSource("bus-garages", {
+    type: "geojson", data: garageFeatures(),
+    attribution: 'GRT garages and roads © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>; blocks: GRT GTFS',
+  });
+  map.addLayer({
+    id: "bus-garage-outline", type: "line", source: "bus-garages", filter: ["==", ["geometry-type"], "LineString"], minzoom: 13,
+    paint: { "line-color": "#9fb6ff", "line-width": 1.4, "line-opacity": 0.75, "line-dasharray": ["literal", [2, 1.5]] },
+  }, firstLabel);
+  map.addLayer({
+    id: "bus-garage-points", type: "circle", source: "bus-garages", filter: ["==", ["geometry-type"], "Point"], minzoom: 14,
+    paint: {
+      "circle-radius": ["match", ["get", "kind"], "park", 5, 3.5],
+      "circle-color": ["match", ["get", "kind"], "park", "#9fb6ff", "#ffcf5a"],
+      "circle-stroke-color": "#11161c", "circle-stroke-width": 1.2, "circle-pitch-alignment": "map",
+    },
+  });
   map.addSource("uw-berths", {
     type: "geojson", data: featureCollection([]),
     attribution: 'UW Station platforms © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>; stops: GRT GTFS',
@@ -637,6 +656,15 @@ function onPhillip(p: [number, number]) {
   return false;
 }
 
+/** GRT garages: site outlines (OSM), driveways and where buses stand. */
+function garageFeatures(): GeoJSON.FeatureCollection {
+  return featureCollection(GARAGES.flatMap((g) => [
+    line(g.outline.map(([lon, lat]) => [lon, lat]), { kind: "site", id: g.id, name: g.name }),
+    point(g.park[0], g.park[1], { kind: "park", id: g.id, name: g.name }),
+    ...g.driveways.map((d) => point(d.lon, d.lat, { kind: "driveway", id: g.id, road: d.road })),
+  ]));
+}
+
 /** UW Station berth outlines, coloured by who holds them at t. */
 function uwBerthFeatures(vehicles: readonly UwVehicle[], t: number): GeoJSON.FeatureCollection {
   const held = berthStates(vehicles, t);
@@ -704,7 +732,10 @@ export default function GeospatialMap({
   busDecisions = [],
   uwVehicles = [],
   uwCars = [],
+  garageVehicles = [],
 }: Props) {
+  const garageRef = useRef<GarageVehicle[]>([]);
+  garageRef.current = garageVehicles;
   const uwRef = useRef<UwVehicle[]>([]);
   uwRef.current = uwVehicles;
   const uwCarsRef = useRef<UwCar[]>([]);
@@ -822,6 +853,7 @@ export default function GeospatialMap({
             // The ION run being played: physical trains, plans and decisions.
             ion: () => timetableRef.current?.schedule ?? null,
             busDecisions: () => busDecisionsRef.current,
+            garages: (t?: number) => garagePoses(garageRef.current, t ?? clock.time()),
             uw: (t?: number) => uwPoses(uwRef.current, t ?? clock.time()),
             uwCars: (t?: number) => carPoses(uwCarsRef.current, t ?? clock.time()),
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
@@ -1003,6 +1035,10 @@ export default function GeospatialMap({
         const bodies = emptyBodies();
         lighting.night = nightRef.current;
         for (const bus of scene.buses) busBody(bus, bus.id === state.selectedBus, bodies);
+        // GRT garage buses (GTFS blocks, simulated) on their pull-outs and returns.
+        for (const bus of garagePoses(garageRef.current, t)) {
+          busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, false, bodies, "stale");
+        }
         // Other GRT buses at UW Station (GTFS schedule, simulated) and any blocking bus.
         for (const other of uwPoses(uwRef.current, t)) {
           if (other.kind !== "corridor") busBody({ id: other.id, centre: other.centre, heading: other.heading }, false, bodies, "stale");

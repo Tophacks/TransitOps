@@ -1120,6 +1120,9 @@ class TransitSimulation:
                     self.metrics.unserved_wait_minutes += still
                     if p.source == "ion":
                         self.metrics.unserved_transfer_wait_minutes += still
+        # GRT garages: pull-outs and returns on real roads (garage_ops.py).
+        from garage_ops import Garages
+        self.garages = Garages(self).run()
         self.decisions.sort(key=lambda d: d["t"])
         self.log("Corridor simulation complete", "system")
         return self.metrics
