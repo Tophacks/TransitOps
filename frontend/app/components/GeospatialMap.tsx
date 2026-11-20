@@ -10,6 +10,7 @@ import { useGrtFleet } from "../../lib/useGrtFleet";
 import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
+import { UW, berthStates, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwVehicle } from "../../lib/motion/uwStation.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
 import { CAR_LENGTH, CAR_WIDTH, TrafficStream, queuedCars, type CarPose } from "../../lib/motion/traffic.ts";
@@ -47,6 +48,8 @@ type Props = {
   onSeek?: (seconds: number) => void;
   /** bus dispatch decisions (connection holds), shown with the rail decisions */
   busDecisions?: RailDecision[];
+  /** every vehicle on UW Station's roadway, from the simulator (uw_station.py) */
+  uwVehicles?: UwVehicle[];
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -398,6 +401,18 @@ function addLayers(map: MapInstance) {
   map.addSource("terminal-signals", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-closure", { type: "geojson", data: featureCollection([]) });
   map.addSource("ion-crossover-points", { type: "geojson", data: crossoverPoints() });
+  map.addSource("uw-berths", {
+    type: "geojson", data: featureCollection([]),
+    attribution: 'UW Station platforms © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>; stops: GRT GTFS',
+  });
+  map.addLayer({
+    id: "uw-berths", type: "line", source: "uw-berths", minzoom: 16,
+    paint: {
+      "line-color": ["match", ["get", "state"], "blocked", "#ff5a4e", "occupied", "#ffcf5a", "#59e3a7"],
+      "line-width": 1.6, "line-opacity": 0.85,
+      "line-dasharray": ["match", ["get", "state"], "free", ["literal", [2, 1.5]], ["literal", [1, 0]]],
+    },
+  }, firstLabel);
   map.addSource("dutton-yard", {
     type: "geojson", data: yardFeatures(),
     attribution: 'Dutton yard (OMSF) © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
@@ -584,6 +599,49 @@ function fleetKey(mode: GrtMode, id: string) {
 
 type Scene = { buses: BusPose[]; trains: TrainPose[] };
 
+const UW_CLAMP = stationClamp(corridor);
+
+/** Corridor buses: inside UW Station the station replay places them. */
+function sceneBuses(timeline: Snapshot[], vehicles: readonly UwVehicle[], t: number): BusPose[] {
+  const out = busPoses(corridor, timeline, t, UW_CLAMP).filter((bus) => !inStation(vehicles, bus.id, t));
+  for (const pose of uwPoses(vehicles, t)) {
+    if (pose.kind !== "corridor") continue;
+    out.push({ id: pose.id, state: pose.speed > 0.2 ? "EN_ROUTE" : "DWELLING", from: "CENTRAL", to: "UW", distance: 0, length: 0,
+      speed: pose.speed, centre: pose.centre, heading: pose.heading, queueCars: 0, holdAt: null, holdMinutes: 0 });
+  }
+  // A bus waiting at the entrance before the station lets it in.
+  for (const v of vehicles) {
+    if (v.kind === "corridor" && t >= v.t_enter && v.trace.length && t < v.trace[0][0] && !out.some((b) => b.id === v.id)) {
+      const { point, heading } = roadPoint(-UW.bus.length_m / 2, UW.lanes.through_offset_m);
+      out.push({ id: v.id, state: "EN_ROUTE", from: "CENTRAL", to: "UW", distance: 0, length: 0, speed: 0, centre: point,
+        heading, queueCars: 0, holdAt: null, holdMinutes: 0 });
+    }
+  }
+  return out;
+}
+
+/** UW Station berth outlines, coloured by who holds them at t. */
+function uwBerthFeatures(vehicles: readonly UwVehicle[], t: number): GeoJSON.FeatureCollection {
+  const held = berthStates(vehicles, t);
+  const out: GeoJSON.Feature[] = [];
+  for (const platform of UW.platforms) {
+    const sign = platform.side === "se" ? 1 : -1;
+    const off = UW.lanes.berth_offset_m * sign;
+    for (const b of platform.berths) {
+      const lo = Math.min(b.front, b.rear);
+      const hi = Math.max(b.front, b.rear);
+      const ring = [
+        roadPoint(lo, off - 1.5 * sign).point, roadPoint(hi, off - 1.5 * sign).point,
+        roadPoint(hi, off + 1.5 * sign).point, roadPoint(lo, off + 1.5 * sign).point,
+      ];
+      const h = held.get(b.id);
+      out.push({ type: "Feature", geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
+        properties: { id: b.id, stop: b.stop, state: h ? (h.kind === "oos" ? "blocked" : "occupied") : "free", by: h?.by ?? "" } });
+    }
+  }
+  return featureCollection(out);
+}
+
 function livePing(vehicle: GrtVehicle): LivePing {
   return {
     key: fleetKey(vehicle.mode, vehicle.id),
@@ -627,7 +685,10 @@ export default function GeospatialMap({
   seconds = 0,
   onSeek,
   busDecisions = [],
+  uwVehicles = [],
 }: Props) {
+  const uwRef = useRef<UwVehicle[]>([]);
+  uwRef.current = uwVehicles;
   // Same timetable and trip model as backend/ion.py: trains sit exactly where
   // the simulator put them at every minute.
   const timetable = useMemo(
@@ -902,6 +963,7 @@ export default function GeospatialMap({
     if (!map || !ready || live || sumoSnapshot || demo) return;
     let frame = 0;
     let lastKey = "";
+    let lastBerthSecond = -1;
     const draw = () => {
       const t = clock.time();
       const state = sceneState.current;
@@ -912,13 +974,22 @@ export default function GeospatialMap({
         lastKey = key;
         const started = performance.now();
         const scene: Scene = {
-          buses: busPoses(corridor, callbacks.current.timeline, t),
+          buses: sceneBuses(callbacks.current.timeline, uwRef.current, t),
           trains: timetableRef.current?.trains(t) ?? [],
         };
         sceneRef.current = scene;
         const bodies = emptyBodies();
         lighting.night = nightRef.current;
         for (const bus of scene.buses) busBody(bus, bus.id === state.selectedBus, bodies);
+        // Other GRT buses at UW Station (GTFS schedule, simulated) and any blocking bus.
+        for (const other of uwPoses(uwRef.current, t)) {
+          if (other.kind !== "corridor") busBody({ id: other.id, centre: other.centre, heading: other.heading }, false, bodies, "stale");
+        }
+        const second = Math.floor(t);
+        if (second !== lastBerthSecond) {
+          lastBerthSecond = second;
+          setData(map, "uw-berths", uwBerthFeatures(uwRef.current, t));
+        }
         for (const train of scene.trains) trainBody(train, bodies);
         // Station control on the map: granted routes ahead of moving trains,
         // and each home signal at stop while a train waits for a route.
@@ -948,7 +1019,8 @@ export default function GeospatialMap({
           const inView = ([lon, lat]: [number, number]) =>
             lon > bounds.getWest() - pad && lon < bounds.getEast() + pad && lat > bounds.getSouth() - pad && lat < bounds.getNorth() + pad;
           const cars: CarPose[] = [...(trafficRef.current?.cars(t) ?? []), ...queuedCars(corridor, scene.buses)];
-          for (const car of cars) if (inView(car.centre)) carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
+          // Transit Plaza Road (UW Station) is bus-only: no simulated cars on it.
+          for (const car of cars) if (inView(car.centre) && !onStationRoad(car.centre)) carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
           for (const gate of gateStates(corridor.data.ion_crossings ?? [], scene.trains)) {
             if (inView([gate.crossing.lon, gate.crossing.lat])) gateBodies(gate, performance.now() / 1000, bodies);
           }

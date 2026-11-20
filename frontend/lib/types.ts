@@ -30,6 +30,11 @@ export type Controls = {
   yard_block_lead?: "north" | "south" | null;
   yard_block_from_minute?: number;
   yard_block_to_minute?: number;
+  /** UW Station: a berth taken by an out-of-service bus, or the Phillip St exit blocked */
+  uw_block?: "berth" | "exit" | null;
+  uw_block_berth?: string;
+  uw_block_from_minute?: number;
+  uw_block_to_minute?: number;
 };
 
 export type StopState = {
@@ -170,8 +175,12 @@ export type CaseResult = {
   timeline: Snapshot[];
   /** this case's ION run (adaptive: dispatch may reassign trips; baseline: holds only) */
   ion?: IonSchedule;
-  /** bus dispatch decisions: connection holds at UW and Central */
+  /** bus decisions: UW Station agents, station reports, holds and capacity requests */
   decisions?: RailDecision[];
+  /** every vehicle on UW Station's roadway, second by second (backend/uw_station.py) */
+  uw?: { block: Record<string, unknown> | null; vehicles: import("./motion/uwStation.ts").UwVehicle[];
+    metrics: { corridor_departures: number; mean_station_s: number; corridor_queue_s: number;
+      corridor_stopped_by: Record<string, number>; grt_buses: number; grt_queue_s: number } | null };
 };
 
 export type SimulationResponse = {

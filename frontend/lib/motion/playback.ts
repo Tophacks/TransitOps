@@ -57,7 +57,11 @@ function sameSegment(a?: SegmentMotion | null, b?: SegmentMotion | null) {
  * next stop. A held bus (dwelling, broken down, waiting to depart) has the
  * same elapsed time in both snapshots and stays still.
  */
-export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[], seconds: number): BusPose[] {
+/** Optional limits on where a bus may be drawn along a segment (e.g. it waits
+ * at a station's entrance while the station replay draws it inside). */
+export type SegmentClamp = (from: string, to: string) => [number, number] | null;
+
+export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[], seconds: number, clamp?: SegmentClamp): BusPose[] {
   if (!timeline.length) return [];
   const last = timeline.length - 1;
   const minute = Math.min(last, Math.max(0, Math.floor(seconds / 60)));
@@ -79,7 +83,9 @@ export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[],
     const run = corridor.run(motion.from, motion.to, motion.minutes, motion.hold_minutes, motion.queue_cars ?? 0);
     const segment = corridor.segment(motion.from, motion.to);
     const t = elapsed * 60;
-    const distance = run.distance(t);
+    const limits = clamp?.(motion.from, motion.to);
+    const raw = run.distance(t);
+    const distance = limits ? Math.min(limits[1], Math.max(limits[0], raw)) : raw;
     const front = corridor.point(segment, distance + FRONT_AXLE);
     const rear = corridor.point(segment, distance + REAR_AXLE);
     const centre: LonLat = [(front[0] + rear[0]) / 2, (front[1] + rear[1]) / 2];
@@ -90,7 +96,7 @@ export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[],
       to: motion.to,
       distance,
       length: segment.length_m,
-      speed: e1 > e0 ? run.speedAt(t) : 0,
+      speed: e1 > e0 && distance === raw ? run.speedAt(t) : 0,
       centre,
       heading: bearing(rear, front),
       queueCars: motion.queue_cars ?? 0,

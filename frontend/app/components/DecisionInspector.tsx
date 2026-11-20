@@ -21,8 +21,8 @@ type Props = {
   hold?: { terminal: string; platform: string; minute: number; minutes: number } | null;
 };
 
-const LEVEL = { vehicle: "Train", station: "Station control", dispatch: "Dispatch" } as const;
-const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW bus stop", central: "Central bus stop", line: "ION line", yard: "Dutton yard" };
+const LEVEL = { vehicle: "Vehicle agent", station: "Station control", dispatch: "Dispatch" } as const;
+const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW Station", central: "Central bus stop", line: "ION line", yard: "Dutton yard" };
 
 export function clock(t: number) {
   const s = Math.round(t);
@@ -67,7 +67,7 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
       <header>
         <button type="button" className="inspectorToggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           <strong>Decision Inspector</strong>
-          <span>{vehicle ? `${vehicle} only` : `ION terminals and bus connections · ${decisions.filter((d) => d.t >= 0 && notable(d)).length} decisions`}</span>
+          <span>{vehicle ? `${vehicle} only` : `ION, yard, UW Station and bus connections · ${decisions.filter((d) => d.t >= 0 && notable(d)).length} decisions`}</span>
         </button>
       </header>
       {open && (

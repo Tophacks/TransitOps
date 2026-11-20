@@ -55371,16 +55371,16 @@
     "buses": [
      {
       "id": "B101",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 28,
+       "elapsed": 29,
        "minutes": 29,
        "hold_minutes": 1,
        "queue_cars": 2,
        "length_m": 7290.9,
-       "distance_m": 7041.2
+       "distance_m": 7290.9
       }
      },
      {
@@ -55475,16 +55475,16 @@
     "buses": [
      {
       "id": "B101",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "UW",
-       "to": "WATERLOO_SQUARE",
-       "elapsed": 0,
-       "minutes": 9,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 2791.4,
-       "distance_m": 0.0
+       "from": "CENTRAL",
+       "to": "UW",
+       "elapsed": 29,
+       "minutes": 29,
+       "hold_minutes": 1,
+       "queue_cars": 2,
+       "length_m": 7290.9,
+       "distance_m": 7290.9
       }
      },
      {
@@ -55517,7 +55517,7 @@
      }
     ],
     "phases": {
-     "I1": "GREEN",
+     "I1": "RED",
      "I2": "GREEN",
      "I3": "GREEN"
     }
@@ -55531,12 +55531,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 1,
+       "elapsed": 0,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 294.5
+       "distance_m": 0.0
       }
      },
      {
@@ -55583,12 +55583,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 2,
+       "elapsed": 1,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 604.3
+       "distance_m": 294.5
       }
      },
      {
@@ -55635,12 +55635,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 3,
+       "elapsed": 2,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 919.5
+       "distance_m": 604.3
       }
      },
      {
@@ -55687,12 +55687,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 4,
+       "elapsed": 3,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1234.6
+       "distance_m": 919.5
       }
      },
      {
@@ -55739,12 +55739,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 5,
+       "elapsed": 4,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1543.3
+       "distance_m": 1234.6
       }
      },
      {
@@ -55791,12 +55791,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 6,
+       "elapsed": 5,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1858.5
+       "distance_m": 1543.3
       }
      },
      {
@@ -55843,26 +55843,26 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 7,
+       "elapsed": 6,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 2173.6
+       "distance_m": 1858.5
       }
      },
      {
       "id": "B102",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 27,
+       "elapsed": 28,
        "minutes": 28,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 7041.8
+       "distance_m": 7290.9
       }
      },
      {
@@ -55895,12 +55895,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 8,
+       "elapsed": 7,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 2488.8
+       "distance_m": 2173.6
       }
      },
      {
@@ -55943,30 +55943,30 @@
     "buses": [
      {
       "id": "B101",
-      "state": "DWELLING",
-      "segment": {
-       "from": "UW",
-       "to": "WATERLOO_SQUARE",
-       "elapsed": 9,
-       "minutes": 9,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 2791.4,
-       "distance_m": 2791.4
-      }
-     },
-     {
-      "id": "B102",
       "state": "EN_ROUTE",
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 0,
+       "elapsed": 8,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 0.0
+       "distance_m": 2488.8
+      }
+     },
+     {
+      "id": "B102",
+      "state": "DWELLING",
+      "segment": {
+       "from": "CENTRAL",
+       "to": "UW",
+       "elapsed": 28,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 7290.9,
+       "distance_m": 7290.9
       }
      },
      {
@@ -55995,16 +55995,16 @@
     "buses": [
      {
       "id": "B101",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "WATERLOO_SQUARE",
-       "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 0,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
-       "length_m": 1245.4,
-       "distance_m": 0.0
+       "from": "UW",
+       "to": "WATERLOO_SQUARE",
+       "elapsed": 9,
+       "minutes": 9,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 2791.4,
+       "distance_m": 2791.4
       }
      },
      {
@@ -56013,12 +56013,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 1,
+       "elapsed": 0,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 294.5
+       "distance_m": 0.0
       }
      },
      {
@@ -56051,12 +56051,12 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 1,
+       "elapsed": 0,
        "minutes": 6,
        "hold_minutes": 1,
        "queue_cars": 2,
        "length_m": 1245.4,
-       "distance_m": 246.3
+       "distance_m": 0.0
       }
      },
      {
@@ -56065,12 +56065,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 2,
+       "elapsed": 1,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 604.3
+       "distance_m": 294.5
       }
      },
      {
@@ -56103,12 +56103,12 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 2,
+       "elapsed": 1,
        "minutes": 6,
        "hold_minutes": 1,
        "queue_cars": 2,
        "length_m": 1245.4,
-       "distance_m": 280.0
+       "distance_m": 246.3
       }
      },
      {
@@ -56117,12 +56117,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 3,
+       "elapsed": 2,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 919.5
+       "distance_m": 604.3
       }
      },
      {
@@ -56155,12 +56155,12 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 3,
+       "elapsed": 2,
        "minutes": 6,
        "hold_minutes": 1,
        "queue_cars": 2,
        "length_m": 1245.4,
-       "distance_m": 484.3
+       "distance_m": 280.0
       }
      },
      {
@@ -56169,12 +56169,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 4,
+       "elapsed": 3,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1234.6
+       "distance_m": 919.5
       }
      },
      {
@@ -56207,12 +56207,12 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 4,
+       "elapsed": 3,
        "minutes": 6,
        "hold_minutes": 1,
        "queue_cars": 2,
        "length_m": 1245.4,
-       "distance_m": 740.8
+       "distance_m": 484.3
       }
      },
      {
@@ -56221,12 +56221,12 @@
       "segment": {
        "from": "UW",
        "to": "WATERLOO_SQUARE",
-       "elapsed": 5,
+       "elapsed": 4,
        "minutes": 9,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 2791.4,
-       "distance_m": 1543.3
+       "distance_m": 1234.6
       }
      },
      {
@@ -56259,6 +56259,58 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
+       "elapsed": 4,
+       "minutes": 6,
+       "hold_minutes": 1,
+       "queue_cars": 2,
+       "length_m": 1245.4,
+       "distance_m": 740.8
+      }
+     },
+     {
+      "id": "B102",
+      "state": "EN_ROUTE",
+      "segment": {
+       "from": "UW",
+       "to": "WATERLOO_SQUARE",
+       "elapsed": 5,
+       "minutes": 9,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 2791.4,
+       "distance_m": 1543.3
+      }
+     },
+     {
+      "id": "B103",
+      "state": "EN_ROUTE",
+      "segment": {
+       "from": "CENTRAL",
+       "to": "UW",
+       "elapsed": 23,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 7290.9,
+       "distance_m": 5997.3
+      }
+     }
+    ],
+    "phases": {
+     "I1": "RED",
+     "I2": "RED",
+     "I3": "GREEN"
+    }
+   },
+   {
+    "minute": 47,
+    "buses": [
+     {
+      "id": "B101",
+      "state": "EN_ROUTE",
+      "segment": {
+       "from": "WATERLOO_SQUARE",
+       "to": "GRAND_RIVER_HOSPITAL",
        "elapsed": 5,
        "minutes": 6,
        "hold_minutes": 1,
@@ -56287,23 +56339,23 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 23,
+       "elapsed": 24,
        "minutes": 28,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 5997.3
+       "distance_m": 6259.1
       }
      }
     ],
     "phases": {
      "I1": "RED",
-     "I2": "RED",
+     "I2": "GREEN",
      "I3": "GREEN"
     }
    },
    {
-    "minute": 47,
+    "minute": 48,
     "buses": [
      {
       "id": "B101",
@@ -56339,23 +56391,23 @@
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 24,
+       "elapsed": 25,
        "minutes": 28,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 6259.1
+       "distance_m": 6521.0
       }
      }
     ],
     "phases": {
-     "I1": "RED",
+     "I1": "GREEN",
      "I2": "GREEN",
-     "I3": "GREEN"
+     "I3": "RED"
     }
    },
    {
-    "minute": 48,
+    "minute": 49,
     "buses": [
      {
       "id": "B101",
@@ -56383,58 +56435,6 @@
        "queue_cars": 0,
        "length_m": 2791.4,
        "distance_m": 2488.8
-      }
-     },
-     {
-      "id": "B103",
-      "state": "EN_ROUTE",
-      "segment": {
-       "from": "CENTRAL",
-       "to": "UW",
-       "elapsed": 25,
-       "minutes": 28,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 7290.9,
-       "distance_m": 6521.0
-      }
-     }
-    ],
-    "phases": {
-     "I1": "GREEN",
-     "I2": "GREEN",
-     "I3": "GREEN"
-    }
-   },
-   {
-    "minute": 49,
-    "buses": [
-     {
-      "id": "B101",
-      "state": "EN_ROUTE",
-      "segment": {
-       "from": "GRAND_RIVER_HOSPITAL",
-       "to": "CENTRAL",
-       "elapsed": 1,
-       "minutes": 5,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 1248.4,
-       "distance_m": 243.4
-      }
-     },
-     {
-      "id": "B102",
-      "state": "DWELLING",
-      "segment": {
-       "from": "UW",
-       "to": "WATERLOO_SQUARE",
-       "elapsed": 9,
-       "minutes": 9,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 2791.4,
-       "distance_m": 2791.4
       }
      },
      {
@@ -56467,40 +56467,40 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
-       "elapsed": 2,
+       "elapsed": 1,
        "minutes": 5,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 1248.4,
-       "distance_m": 496.7
+       "distance_m": 243.4
       }
      },
      {
       "id": "B102",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
-       "from": "WATERLOO_SQUARE",
-       "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 0,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
-       "length_m": 1245.4,
-       "distance_m": 0.0
+       "from": "UW",
+       "to": "WATERLOO_SQUARE",
+       "elapsed": 9,
+       "minutes": 9,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 2791.4,
+       "distance_m": 2791.4
       }
      },
      {
       "id": "B103",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
        "from": "CENTRAL",
        "to": "UW",
-       "elapsed": 27,
+       "elapsed": 28,
        "minutes": 28,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 7041.8
+       "distance_m": 7290.9
       }
      }
     ],
@@ -56519,12 +56519,12 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
-       "elapsed": 3,
+       "elapsed": 2,
        "minutes": 5,
        "hold_minutes": 0,
        "queue_cars": 0,
        "length_m": 1248.4,
-       "distance_m": 749.9
+       "distance_m": 496.7
       }
      },
      {
@@ -56533,12 +56533,12 @@
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 1,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "elapsed": 0,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 1245.4,
-       "distance_m": 246.3
+       "distance_m": 0.0
       }
      },
      {
@@ -56571,6 +56571,58 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
+       "elapsed": 3,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 1248.4,
+       "distance_m": 749.9
+      }
+     },
+     {
+      "id": "B102",
+      "state": "EN_ROUTE",
+      "segment": {
+       "from": "WATERLOO_SQUARE",
+       "to": "GRAND_RIVER_HOSPITAL",
+       "elapsed": 1,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 1245.4,
+       "distance_m": 242.8
+      }
+     },
+     {
+      "id": "B103",
+      "state": "DWELLING",
+      "segment": {
+       "from": "CENTRAL",
+       "to": "UW",
+       "elapsed": 28,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
+       "length_m": 7290.9,
+       "distance_m": 7290.9
+      }
+     }
+    ],
+    "phases": {
+     "I1": "GREEN",
+     "I2": "GREEN",
+     "I3": "RED"
+    }
+   },
+   {
+    "minute": 53,
+    "buses": [
+     {
+      "id": "B101",
+      "state": "EN_ROUTE",
+      "segment": {
+       "from": "GRAND_RIVER_HOSPITAL",
+       "to": "CENTRAL",
        "elapsed": 4,
        "minutes": 5,
        "hold_minutes": 0,
@@ -56586,11 +56638,11 @@
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
        "elapsed": 2,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 1245.4,
-       "distance_m": 280.0
+       "distance_m": 495.5
       }
      },
      {
@@ -56610,12 +56662,12 @@
     ],
     "phases": {
      "I1": "GREEN",
-     "I2": "GREEN",
+     "I2": "RED",
      "I3": "RED"
     }
    },
    {
-    "minute": 53,
+    "minute": 54,
     "buses": [
      {
       "id": "B101",
@@ -56638,11 +56690,11 @@
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
        "elapsed": 3,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 1245.4,
-       "distance_m": 484.3
+       "distance_m": 748.1
       }
      },
      {
@@ -56661,13 +56713,13 @@
      }
     ],
     "phases": {
-     "I1": "GREEN",
+     "I1": "RED",
      "I2": "RED",
-     "I3": "RED"
+     "I3": "GREEN"
     }
    },
    {
-    "minute": 54,
+    "minute": 55,
     "buses": [
      {
       "id": "B101",
@@ -56676,9 +56728,9 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 0,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
        "distance_m": 0.0
       }
@@ -56690,11 +56742,11 @@
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
        "elapsed": 4,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 1245.4,
-       "distance_m": 740.8
+       "distance_m": 1000.8
       }
      },
      {
@@ -56714,12 +56766,12 @@
     ],
     "phases": {
      "I1": "RED",
-     "I2": "RED",
+     "I2": "GREEN",
      "I3": "GREEN"
     }
    },
    {
-    "minute": 55,
+    "minute": 56,
     "buses": [
      {
       "id": "B101",
@@ -56728,25 +56780,25 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 1,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 247.4
+       "distance_m": 247.1
       }
      },
      {
       "id": "B102",
-      "state": "EN_ROUTE",
+      "state": "DWELLING",
       "segment": {
        "from": "WATERLOO_SQUARE",
        "to": "GRAND_RIVER_HOSPITAL",
        "elapsed": 5,
-       "minutes": 6,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 5,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 1245.4,
-       "distance_m": 997.3
+       "distance_m": 1245.4
       }
      },
      {
@@ -56765,13 +56817,13 @@
      }
     ],
     "phases": {
-     "I1": "RED",
+     "I1": "GREEN",
      "I2": "GREEN",
-     "I3": "GREEN"
+     "I3": "RED"
     }
    },
    {
-    "minute": 56,
+    "minute": 57,
     "buses": [
      {
       "id": "B101",
@@ -56780,25 +56832,25 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 2,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 506.2
+       "distance_m": 505.0
       }
      },
      {
       "id": "B102",
-      "state": "DWELLING",
+      "state": "EN_ROUTE",
       "segment": {
-       "from": "WATERLOO_SQUARE",
-       "to": "GRAND_RIVER_HOSPITAL",
-       "elapsed": 6,
+       "from": "GRAND_RIVER_HOSPITAL",
+       "to": "CENTRAL",
+       "elapsed": 0,
        "minutes": 6,
        "hold_minutes": 1,
        "queue_cars": 2,
-       "length_m": 1245.4,
-       "distance_m": 1245.4
+       "length_m": 1248.4,
+       "distance_m": 0.0
       }
      },
      {
@@ -56818,12 +56870,12 @@
     ],
     "phases": {
      "I1": "GREEN",
-     "I2": "GREEN",
+     "I2": "RED",
      "I3": "RED"
     }
    },
    {
-    "minute": 57,
+    "minute": 58,
     "buses": [
      {
       "id": "B101",
@@ -56832,11 +56884,11 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 3,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 767.3
+       "distance_m": 765.5
       }
      },
      {
@@ -56845,12 +56897,12 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
-       "elapsed": 0,
-       "minutes": 5,
-       "hold_minutes": 0,
-       "queue_cars": 0,
+       "elapsed": 1,
+       "minutes": 6,
+       "hold_minutes": 1,
+       "queue_cars": 2,
        "length_m": 1248.4,
-       "distance_m": 0.0
+       "distance_m": 246.9
       }
      },
      {
@@ -56869,13 +56921,13 @@
      }
     ],
     "phases": {
-     "I1": "GREEN",
+     "I1": "RED",
      "I2": "RED",
      "I3": "GREEN"
     }
    },
    {
-    "minute": 58,
+    "minute": 59,
     "buses": [
      {
       "id": "B101",
@@ -56884,11 +56936,11 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 4,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1029.9
+       "distance_m": 1027.3
       }
      },
      {
@@ -56897,12 +56949,12 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
-       "elapsed": 1,
-       "minutes": 5,
-       "hold_minutes": 0,
-       "queue_cars": 0,
+       "elapsed": 2,
+       "minutes": 6,
+       "hold_minutes": 1,
+       "queue_cars": 2,
        "length_m": 1248.4,
-       "distance_m": 243.4
+       "distance_m": 504.0
       }
      },
      {
@@ -56922,12 +56974,12 @@
     ],
     "phases": {
      "I1": "RED",
-     "I2": "RED",
+     "I2": "GREEN",
      "I3": "GREEN"
     }
    },
    {
-    "minute": 59,
+    "minute": 60,
     "buses": [
      {
       "id": "B101",
@@ -56936,11 +56988,11 @@
        "from": "CENTRAL",
        "to": "UW",
        "elapsed": 5,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
+       "minutes": 28,
+       "hold_minutes": 0,
+       "queue_cars": 0,
        "length_m": 7290.9,
-       "distance_m": 1292.5
+       "distance_m": 1289.1
       }
      },
      {
@@ -56949,12 +57001,12 @@
       "segment": {
        "from": "GRAND_RIVER_HOSPITAL",
        "to": "CENTRAL",
-       "elapsed": 2,
-       "minutes": 5,
-       "hold_minutes": 0,
-       "queue_cars": 0,
+       "elapsed": 3,
+       "minutes": 6,
+       "hold_minutes": 1,
+       "queue_cars": 2,
        "length_m": 1248.4,
-       "distance_m": 496.7
+       "distance_m": 761.1
       }
      },
      {
@@ -56969,58 +57021,6 @@
        "queue_cars": 0,
        "length_m": 2791.4,
        "distance_m": 2173.6
-      }
-     }
-    ],
-    "phases": {
-     "I1": "RED",
-     "I2": "GREEN",
-     "I3": "GREEN"
-    }
-   },
-   {
-    "minute": 60,
-    "buses": [
-     {
-      "id": "B101",
-      "state": "EN_ROUTE",
-      "segment": {
-       "from": "CENTRAL",
-       "to": "UW",
-       "elapsed": 6,
-       "minutes": 29,
-       "hold_minutes": 1,
-       "queue_cars": 2,
-       "length_m": 7290.9,
-       "distance_m": 1555.0
-      }
-     },
-     {
-      "id": "B102",
-      "state": "EN_ROUTE",
-      "segment": {
-       "from": "GRAND_RIVER_HOSPITAL",
-       "to": "CENTRAL",
-       "elapsed": 3,
-       "minutes": 5,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 1248.4,
-       "distance_m": 749.9
-      }
-     },
-     {
-      "id": "B103",
-      "state": "EN_ROUTE",
-      "segment": {
-       "from": "UW",
-       "to": "WATERLOO_SQUARE",
-       "elapsed": 8,
-       "minutes": 9,
-       "hold_minutes": 0,
-       "queue_cars": 0,
-       "length_m": 2791.4,
-       "distance_m": 2488.8
       }
      }
     ],

@@ -9,6 +9,7 @@ import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
 import { corridor } from "../lib/motion/scene.ts";
 import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
+import { UW } from "../lib/motion/uwStation.ts";
 import { NETWORK, TERMINALS } from "../lib/motion/railScene.ts";
 import type {
   Controls,
@@ -44,6 +45,10 @@ const DEFAULTS: Controls = {
   yard_block_lead: null,
   yard_block_from_minute: 10,
   yard_block_to_minute: 50,
+  uw_block: null,
+  uw_block_berth: "P6-1078-1",
+  uw_block_from_minute: 10,
+  uw_block_to_minute: 58,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -55,6 +60,8 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...DEFAULTS, closure_track: "south" } },
   { id: "train-fault", title: "ION train fault", description: "A train arriving at Conestoga from minute 15 is withdrawn to Dutton yard; dispatch can send a spare", controls: { ...DEFAULTS, fault_terminal: "conestoga" } },
   { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...DEFAULTS, fault_terminal: "conestoga", yard_block_lead: "north" } },
+  { id: "uw-berth-blocked", title: "UW berth blocked", description: "An out-of-service bus holds platform 6's front berth (stop 1078) 10:00–58:00", controls: { ...DEFAULTS, uw_block: "berth" } },
+  { id: "uw-exit-blocked", title: "UW exit blocked", description: "The Phillip Street exit from UW Station is blocked 10:00–58:00", controls: { ...DEFAULTS, uw_block: "exit" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -371,6 +378,7 @@ export default function Home() {
             trafficMultiplier={data?.scenario.traffic_multiplier ?? controls.traffic_multiplier}
             ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
             busDecisions={data?.smart.decisions ?? []}
+            uwVehicles={data?.smart.uw?.vehicles ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />
@@ -633,6 +641,36 @@ export default function Home() {
                     onChange={(event) => update("yard_block_from_minute", Number(event.target.value))} />
                   <input aria-label="Yard block to minute" type="number" min="1" max="90" value={controls.yard_block_to_minute}
                     onChange={(event) => update("yard_block_to_minute", Number(event.target.value))} />
+                </span>
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>UW Station blockage</span><strong>{controls.uw_block
+              ? `${controls.uw_block === "berth" ? `Berth ${controls.uw_block_berth}` : "Phillip St exit"} · ${controls.uw_block_from_minute}–${controls.uw_block_to_minute} min` : "Off"}</strong></div>
+            <select aria-label="UW Station blockage" value={controls.uw_block ?? "off"}
+              onChange={(event) => update("uw_block", event.target.value === "off" ? null : event.target.value as "berth" | "exit")}>
+              <option value="off">None</option><option value="berth">Out-of-service bus in a berth</option><option value="exit">Phillip Street exit blocked</option>
+            </select>
+          </label>
+          {controls.uw_block && (
+            <div className="holdRow">
+              {controls.uw_block === "berth" && (
+                <label>
+                  <span>Berth</span>
+                  <select aria-label="Blocked berth" value={controls.uw_block_berth}
+                    onChange={(event) => update("uw_block_berth", event.target.value)}>
+                    {UW.platforms.flatMap((p) => p.berths).map((b) => <option key={b.id} value={b.id}>{b.id}</option>)}
+                  </select>
+                </label>
+              )}
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="UW block from minute" type="number" min="0" max="59" value={controls.uw_block_from_minute}
+                    onChange={(event) => update("uw_block_from_minute", Number(event.target.value))} />
+                  <input aria-label="UW block to minute" type="number" min="1" max="90" value={controls.uw_block_to_minute}
+                    onChange={(event) => update("uw_block_to_minute", Number(event.target.value))} />
                 </span>
               </label>
             </div>
