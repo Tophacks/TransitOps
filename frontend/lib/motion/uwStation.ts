@@ -4,6 +4,7 @@
 // between its one-second samples and draws them.
 
 import geoData from "../geo/uw-station.json";
+import roadData from "../geo/uw-roads.json";
 import { bearing, type LonLat } from "./path.ts";
 import type { Corridor } from "./corridor.ts";
 
@@ -29,7 +30,66 @@ export type UwVehicle = {
   trace: [number, number, number][];
   exit_s: number | null;
   berths: [string, number, number | null][];
+  /** on Phillip Street after turning out: [t, metres along the lane] */
+  road_trace?: [number, number][];
+  /** an unintended turn and its recovery route: [t, metres along it] */
+  detour_trace?: [number, number][];
+  driver?: string;
 };
+
+export type UwCar = { id: string; trace: [number, number][] };
+
+/** Phillip Street southbound, the right turn onto it, and the left-turn recovery route (build_uw_roads.py). */
+export const UW_ROADS = roadData as unknown as {
+  phillip: { path: PathPoint[]; length_m: number; merge_m: number; signal_m: number };
+  right_turn: { path: PathPoint[] };
+  wrong_turn: { path: PathPoint[]; length_m: number };
+};
+
+function along(trace: [number, number][], t: number) {
+  if (!trace.length || t < trace[0][0] || t > trace[trace.length - 1][0]) return null;
+  for (let i = 0; i + 1 < trace.length; i += 1) {
+    const [t0, s0] = trace[i];
+    const [t1, s1] = trace[i + 1];
+    if (t <= t1) {
+      const f = t1 > t0 ? (t - t0) / (t1 - t0) : 1;
+      return { s: s0 + (s1 - s0) * f, speed: t1 > t0 ? Math.abs(s1 - s0) / (t1 - t0) : 0 };
+    }
+  }
+  const last = trace[trace.length - 1];
+  return { s: last[1], speed: 0 };
+}
+
+function onPath(path: PathPoint[], s: number): { point: LonLat; heading: number } {
+  const x = Math.max(0, Math.min(path[path.length - 1][2], s));
+  let i = 0;
+  while (i < path.length - 2 && path[i + 1][2] < x) i += 1;
+  const a = path[i];
+  const b = path[i + 1];
+  const f = b[2] === a[2] ? 0 : (x - a[2]) / (b[2] - a[2]);
+  return { point: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], heading: bearing([a[0], a[1]], [b[0], b[1]]) };
+}
+
+/** A body of `length` whose nose is at x on Phillip Street (before the merge it is still in the right turn). */
+function phillipBody(x: number, length: number) {
+  const ph = UW_ROADS.phillip;
+  const centre = x - length / 2;
+  if (centre >= ph.merge_m) return onPath(ph.path, centre);
+  const rt = UW_ROADS.right_turn.path;
+  return onPath(rt, rt[rt.length - 1][2] - (ph.merge_m - centre));
+}
+
+/** Private cars on Phillip Street at t. */
+export function carPoses(cars: readonly UwCar[], t: number) {
+  const out: { id: string; centre: LonLat; heading: number; speed: number }[] = [];
+  for (const car of cars) {
+    const at = along(car.trace, t);
+    if (!at) continue;
+    const { point, heading } = onPath(UW_ROADS.phillip.path, at.s - 2.3);
+    out.push({ id: car.id, centre: point, heading, speed: at.speed });
+  }
+  return out;
+}
 
 export type UwPose = { id: string; kind: UwVehicle["kind"]; label: string; centre: LonLat; heading: number; speed: number };
 
@@ -74,6 +134,18 @@ function sample(trace: UwVehicle["trace"], t: number) {
 export function uwPoses(vehicles: readonly UwVehicle[], t: number): UwPose[] {
   const out: UwPose[] = [];
   for (const v of vehicles) {
+    const road = v.road_trace ? along(v.road_trace, t) : null;
+    if (road) {
+      const { point, heading } = phillipBody(road.s, UW.bus.length_m);
+      out.push({ id: v.id, kind: v.kind, label: v.label, centre: point, heading, speed: road.speed });
+      continue;
+    }
+    const det = v.detour_trace ? along(v.detour_trace, t) : null;
+    if (det) {
+      const { point, heading } = onPath(UW_ROADS.wrong_turn.path, Math.max(0, det.s - UW.bus.length_m / 2));
+      out.push({ id: v.id, kind: v.kind, label: v.label, centre: point, heading, speed: det.speed });
+      continue;
+    }
     const at = sample(v.trace, t);
     if (!at) continue;
     const dir = v.side === "se" ? 1 : -1;
@@ -120,7 +192,9 @@ export function stationClamp(corridor: Corridor) {
     }
     return { best, length };
   };
-  return (from: string, to: string): [number, number] | null => {
+  return (from: string, to: string, motion?: { detour?: boolean; length_m?: number }): [number, number] | null => {
+    // After an unintended turn the bus reached this stop on another road: hold it there.
+    if (motion?.detour && motion.length_m !== undefined) return [motion.length_m, motion.length_m];
     const key = `${from}>${to}`;
     if (!cache.has(key)) {
       let limits: [number, number] | null = null;

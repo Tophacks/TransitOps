@@ -58,7 +58,7 @@ export type IonSchedule = {
 };
 
 export type PlanSegment = {
-  kind: "move" | "run" | "stand";
+  kind: "move" | "run" | "stand" | "creep";
   t0: number;
   /** null: open (the run ended while it stood here) */
   t1: number | null;
@@ -74,6 +74,8 @@ export type PlanSegment = {
   station?: string;
   note?: string;
   lights?: { off: number; on: number };
+  /** run: seconds into the leg's profile it starts (after an overshoot) */
+  into?: number;
 };
 
 export type VehiclePlan = { id: string; segments: PlanSegment[] };
@@ -92,6 +94,16 @@ export type RailDecision = {
   outcome: string;
   /** where to look on the map (bus decisions at a stop) */
   location?: [number, number];
+  /** what the agent observed */
+  saw?: string;
+  /** what went wrong (a driver error) */
+  error?: string;
+  /** what Control allowed */
+  control?: string;
+  /** how service was affected */
+  effect?: string;
+  /** vehicles that blocked the move */
+  blockers?: string[];
 };
 
 export type RailMetrics = {
@@ -194,7 +206,15 @@ export class IonTimetable {
     const x = t - seg.t0;
     if (seg.kind === "run" && seg.line !== undefined && seg.leg !== undefined) {
       const run = this.lines[seg.line].legs[seg.leg].run;
-      return { segment: seg, s: seg.s0 + run.distance(x), speed: run.speedAt(x), path: this.tracks[seg.line].path };
+      const into = seg.into ?? 0;
+      return { segment: seg, s: seg.s0 + run.distance(x + into), speed: run.speedAt(x + into), path: this.tracks[seg.line].path };
+    }
+    if (seg.kind === "creep" && seg.line !== undefined) {
+      // A slow movement past the stopping point (an overshoot) or back to it.
+      const span = (seg.t1 ?? seg.t0) - seg.t0;
+      const f = span > 0 ? Math.min(1, x / span) : 1;
+      return { segment: seg, s: seg.s0 + (seg.s1 - seg.s0) * f, speed: span > 0 ? Math.abs(seg.s1 - seg.s0) / span : 0,
+        path: this.tracks[seg.line].path };
     }
     if (seg.line) return { segment: seg, s: seg.s0, speed: 0, path: this.tracks[seg.line].path };
     const route = this.route(seg);
