@@ -44,6 +44,13 @@ class SimulationRequest(BaseModel):
     breakdown_vehicle: str | None = None
     # Dispatcher orders from the Fleet panel, applied at their minute.
     commands: list[Command] = Field(default_factory=list)
+    # Incidents during an ordinary run, drawn from `seed` before the run (incidents.py):
+    # the same list for both policies. Rates per hour may be overridden.
+    incidents: Literal["off", "natural"] = "off"
+    # Regional spares the adaptive dispatcher may send when a station asks for capacity
+    # and the corridor's yard is empty (0: never, the original behaviour).
+    capacity_spares: int = Field(default=0, ge=0, le=3)
+    incident_rates: dict[str, float] | None = None
     # Run length from 07:30. Scheduled lines need more than an hour for a round trip.
     duration_min: int = Field(default=60, ge=30, le=180)
     # Scheduled GRT lines run end to end (lines.json; build_lines.py).
@@ -199,9 +206,20 @@ def closures(payload: SimulationRequest):
     }]
 
 
+def incident_list(payload: SimulationRequest):
+    if payload.incidents != "natural":
+        return []
+    from incidents import RATES, generate
+    unknown = set(payload.incident_rates or {}) - set(RATES)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown incident kinds: {', '.join(sorted(unknown))}")
+    return generate(payload.seed, payload.duration_min, payload.incident_rates, payload.fleet_size, tuple(payload.lines))
+
+
 def fault(payload: SimulationRequest):
     if payload.fault_terminal is None:
-        return None
+        drawn = next((i for i in incident_list(payload) if i["kind"] == "train_fault"), None)
+        return {"terminal": drawn["terminal"], "minute": drawn["minute"]} if drawn else None
     return {"terminal": payload.fault_terminal, "minute": payload.fault_minute}
 
 
@@ -216,6 +234,9 @@ def driver_errors(payload: SimulationRequest):
     """Driver errors: off, seeded (reproducible from error_seed), or a demo on B101's first UW visit."""
     e = payload.driver_error
     if e is None:
+        if payload.incidents == "natural":
+            from incidents import DRIVER_ERROR_RATE
+            return {"mode": "seeded", "rate": DRIVER_ERROR_RATE, "seed": payload.seed}
         return None
     if e == "seeded":
         return {"mode": "seeded", "rate": payload.driver_error_rate, "seed": payload.error_seed}
@@ -228,6 +249,24 @@ def driver_errors(payload: SimulationRequest):
     if e == "overshoot_blocked":
         out["follower"] = True
     return out
+
+
+def run_report(sim, metrics):
+    """Trips covered, departure delays, missed stops, transfers boarded and riders still
+    waiting, over the corridor and the scheduled lines."""
+    lm = sim.lines.metrics if sim.lines else {}
+    return {
+        "trips_covered": lm.get("trips_covered", 0), "trips_scheduled": lm.get("trips_scheduled", 0),
+        "corridor_riders_delivered": metrics.completed_trips,
+        "departure_delay_avg_s": lm.get("departure_delay_avg_s", 0.0),
+        "departure_delay_max_s": lm.get("departure_delay_max_s", 0.0),
+        "missed_stops": lm.get("missed_stops", 0) + getattr(metrics, "missed_stops", 0),
+        "transfers_boarded": metrics.ion_transfers_boarded + lm.get("ion_transfers_boarded", 0),
+        "connections_missed": lm.get("connections_missed", 0),
+        "riders_still_waiting": metrics.passengers_left_waiting + lm.get("riders_waiting", 0),
+        "incidents_applied": sum(1 for i in sim.incident_log if i["applied"]),
+        "breakdowns": getattr(metrics, "breakdowns", 0) + lm.get("breakdowns", 0),
+    }
 
 
 def ion_vehicle_ids(plan):
@@ -320,6 +359,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         breakdown_target=payload.breakdown_target,
         breakdown_vehicle=payload.breakdown_vehicle,
         commands=[c.model_dump() for c in payload.commands],
+        incidents=incident_list(payload),
+        capacity_spares=payload.capacity_spares,
     )
     metrics = sim.run()
 
@@ -337,6 +378,10 @@ def run_case(payload: SimulationRequest, intelligent: bool):
                "metrics": sim.uw.metrics() if sim.uw else None},
         # GRT garages: pull-outs and returns, inventories (garage_ops.py)
         "garages": sim.garages.plans(),
+        # Incidents drawn from the seed, and whether each applied in this run (incidents.py)
+        "incidents": sim.incident_log,
+        # The run report: the same five measures for any run (acceptance 5)
+        "report": run_report(sim, metrics),
         # The regional fleet: inventory, garages, every vehicle's states and the spares sent (fleet.py)
         "fleet": {"summary": sim.fleet.summary(), "vehicles": sim.fleet.vehicles_out(ion_vehicle_ids(plan)),
                   "events": sim.fleet.events},
@@ -374,6 +419,8 @@ def simulate(payload: SimulationRequest):
 
     return {
         "scenario": payload.model_dump(),
+        # Drawn once from the seed, before either policy acts: both runs get this list.
+        "incidents": {"mode": payload.incidents, "seed": payload.seed, "list": incident_list(payload)},
         "network": network_definition(),
         # The map plays the adaptive run; each case also carries its own ION run.
         "ion": smart["ion"],
