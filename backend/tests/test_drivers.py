@@ -92,6 +92,69 @@ class GapTests(unittest.TestCase):
         self.assertFalse([d for d in s.decisions if d["chosen"] == "yield and wait" and d["vehicle_id"].startswith("B1")])
 
 
+class SharedRoadTests(unittest.TestCase):
+    """The pilot's Ring Road approach, stop 1223 and Phillip Street merge carry
+    the scheduled GTFS buses on one clock and one occupancy model."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.samples = []
+
+        def watch(station, t):
+            cls.samples.append((t, station.lane_occupancy(),
+                                {a.id: (a.state, a.rear) for a in station.agents}))
+        import uw_station
+        orig = uw_station.UwStation.step
+
+        def step(self, t):
+            orig(self, t)
+            watch(self, t)
+        uw_station.UwStation.step = step
+        try:
+            cls.sim, _ = run(uw_cars="heavy")
+        finally:
+            uw_station.UwStation.step = orig
+        trips = {x["trip_id"]: x for x in __import__("uw_station").GEO["gtfs"]["trips"]}
+        cls.trips = trips
+        cls.bus = next(a for a in cls.sim.uw.agents if a.kind == "grt" and a.calls[0]["stop"] == "1223" and a.road_trace)
+
+    def test_a_scheduled_gtfs_bus_drives_the_pilot_lanes(self):
+        a = self.bus
+        self.assertIn(a.calls[0]["trip_id"], self.trips)       # a real GTFS trip, not a corridor bus
+        seq = []
+        for _, occ, _ in self.samples:
+            here = tuple(sorted(lane for lane, items in occ.items() if any(i["id"] == a.id for i in items)))
+            if here and (not seq or seq[-1] != here):
+                seq.append(here)
+        single = [x[0] for x in seq if len(x) == 1]
+        order = [x for i, x in enumerate(single) if i == 0 or single[i - 1] != x]
+        # In order (pulling out of the berth returns it to the through lane beside the platform first).
+        idx = [order.index(x) for x in ("ring-entry", "berth-1223", "plaza-east", "phillip-out")]
+        self.assertEqual(idx, sorted(idx), order)
+        self.assertIn(("phillip-out", "plaza-east"), seq)       # the turn: one body on two lanes
+
+    def test_one_body_front_and_rear_and_no_overlaps(self):
+        for t, occ, states in self.samples:
+            for lane, items in occ.items():
+                items = sorted(items, key=lambda i: i["rear"])
+                for x, y in zip(items, items[1:]):
+                    self.assertLessEqual(x["front"], y["rear"] + 1e-6, (t, lane, x, y))
+            for vid, (state, rear) in states.items():
+                if state == "phillip":
+                    parts = [i["front"] - i["rear"] for lane in ("plaza-east", "phillip-out") for i in occ[lane] if i["id"] == vid]
+                    if len(parts) == 2:
+                        self.assertAlmostEqual(sum(parts), 12.2, delta=0.05)
+
+    def test_gtfs_bus_merge_decision_names_the_cars(self):
+        waits = [d for d in self.sim.decisions if d["terminal"] == "uw" and d["chosen"] == "yield and wait"
+                 and d["vehicle_id"].startswith("GRT") and d.get("blockers")]
+        self.assertTrue(waits)
+        d = waits[0]
+        self.assertIn(d["trip_id"], self.trips)
+        self.assertTrue(all(b.startswith("car-") or b.startswith("GRT") or b.startswith("B1") for b in d["blockers"]))
+        self.assertIn("Phillip St southbound", d["saw"])
+
+
 class OvershootTests(unittest.TestCase):
     """Acceptance 2."""
 

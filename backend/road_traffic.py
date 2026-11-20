@@ -42,16 +42,24 @@ def following_speed(speed, cruise, gap, headway=1.3, step=STEP):
 
 
 class RoadVehicle:
-    def __init__(self, vid, kind, front, length, speed, driver=None):
+    def __init__(self, vid, kind, front, length, speed, driver=None, entry=None):
         self.id, self.kind = vid, kind
         self.front, self.length, self.speed = front, length, speed
         self.driver = driver
+        # A bus turning in at `entry`: until its whole length is on the lane, the
+        # rest of its body is still in the turn, and the merge point is occupied.
+        self.entry = entry
         self.trace = []
         self.done = False
 
     @property
     def rear(self):
-        return self.front - self.length
+        r = self.front - self.length
+        return max(r, self.entry) if self.entry is not None else r
+
+    @property
+    def turning(self):
+        return self.entry is not None and self.front - self.length < self.entry
 
 
 class Phillip:
@@ -93,7 +101,7 @@ class Phillip:
         return out
 
     def enter(self, vid, length, speed, t, driver=None):
-        v = RoadVehicle(vid, "bus", self.merge, length, speed, driver)
+        v = RoadVehicle(vid, "bus", self.merge, length, speed, driver, entry=self.merge)
         self.vehicles.append(v)
         return v
 

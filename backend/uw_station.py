@@ -62,6 +62,7 @@ CLEAR_BEHIND_S = 4.0   # pull-out: no vehicle in the through lane within this ma
 PLATFORMS = {p["ref"]: p for p in GEO["platforms"]}
 BERTHS = {b["id"]: dict(b, platform=p["ref"], side=p["side"]) for p in GEO["platforms"] for b in p["berths"]}
 SET_DOWN, LOAD = "4", "6"
+DRIVEN = ("corridor", "grt")   # buses whose drivers' decisions are recorded
 LOAD_STOP = "1078"
 
 
@@ -131,6 +132,14 @@ class Agent:
         self.merge_blockers = []
         self.setdown_next = False   # set down at the next stop instead (recovery)
         self.missed = []            # stops it could not serve
+
+    def current_trip(self):
+        """The trip it is working now: the corridor trip, or the GTFS trip of its current call."""
+        if getattr(self, "trip_id", None):
+            return self.trip_id
+        if self.calls:
+            return self.calls[min(self.call, len(self.calls) - 1)].get("trip_id")
+        return None
 
     def lanes(self):
         """The lanes its footprint covers now, from its lateral position."""
@@ -228,7 +237,7 @@ class UwStation:
                     call = {"stop": c["stop"], "platform": platform_of[c["stop"]],
                             "purpose": "set-down" if c["drop_off_only"] else ("layover" if c["first"] else "call"),
                             "arrive_s": c["arrive_s"], "depart_s": max(c["depart_s"], c["arrive_s"] + GRT_MIN_DWELL_S),
-                            "route": trip["route"]}
+                            "route": trip["route"], "trip_id": trip["trip_id"], "block": block}
                     if (current is not None and current.side == side and c["arrive_s"] - current.calls[-1]["depart_s"] <= 600
                             and to_p(side, PLATFORMS[call["platform"]]["s0"]) >= to_p(side, PLATFORMS[current.calls[-1]["platform"]]["s0"]) - 1):
                         # The same bus stays on (a drop-off then the next trip from the same stop).
@@ -278,13 +287,13 @@ class UwStation:
         s = to_s(agent.side, agent.p)
         lon, lat = self.lonlat(s, agent.side, agent.lat)
         d = {"id": f"U{self.seq:03d}", "t": round(t, 1), "minute": int(t // 60), "level": level, "terminal": "uw",
-             "vehicle_id": agent.id, "trip_id": getattr(agent, "trip_id", None), "trigger": trigger,
+             "vehicle_id": agent.id, "trip_id": agent.current_trip(), "trigger": trigger,
              "options": options, "chosen": chosen, "outcome": outcome, "location": [lon, lat]}
         self.decisions.append(d)
         return d
 
     def open_episode(self, agent, kind, t, level, trigger, options, chosen):
-        if agent.kind != "corridor" or kind in agent.episode:
+        if agent.kind not in DRIVEN or kind in agent.episode:
             return None
         d = self.decide(t, level, agent, trigger, options, chosen)
         agent.episode[kind] = (d, t)
@@ -320,17 +329,52 @@ class UwStation:
     def active(self):
         return [a for a in self.agents if a.state not in ("pending", "gone")]
 
+    def lane_extents(self):
+        """The lanes of the occupancy model, as [side, lane kind, from p, to p].
+        South-east side ids follow the private-car pilot (docs/uw-road-agents.md):
+        ring-entry -> berth-1223 -> plaza-east -> (the turn) -> phillip-out."""
+        if getattr(self, "_extents", None) is None:
+            exit_p = to_p("se", GEO["stop_lines"]["se"]["exit"])
+            ext = {}
+            for ref, plat in PLATFORMS.items():
+                a0, a1 = sorted((to_p(plat["side"], plat["s0"]), to_p(plat["side"], plat["s1"])))
+                stops = "-".join(dict.fromkeys(b["stop"] for b in plat["berths"]))
+                ext[f"berth-{stops}"] = [plat["side"], "berth", a0 - TAPER, a1]
+            p4 = ext["berth-1223"][3]
+            ext["ring-entry"] = ["se", "thru", 0.0, p4]
+            ext["plaza-east"] = ["se", "thru", p4, exit_p]
+            ext["plaza-west"] = ["nw", "thru", 0.0, L]
+            self._extents = ext
+        return self._extents
+
+    def lane_occupancy(self):
+        """One occupancy model for buses and cars: every body, front and rear, in
+        metres along each lane it covers now. A body changing lanes or turning out
+        appears on each lane it still covers."""
+        out = {k: [] for k in list(self.lane_extents()) + ["phillip-in", "phillip-out"]}
+        for a in self.plaza():
+            rear, front = a.rear, a.p
+            if a.state in ("phillip", "detour"):
+                front = min(front, a.turn_p)
+            for lane, (side, kind, l0, l1) in self.lane_extents().items():
+                if side != a.side or kind not in a.lanes():
+                    continue
+                lo, hi = max(rear, l0), min(front, l1)
+                if hi > lo + 1e-6:
+                    out[lane].append({"id": a.id, "kind": "bus", "rear": round(lo - l0, 2), "front": round(hi - l0, 2)})
+        m = self.road.merge
+        for v in self.road.ordered():
+            for lane, l0, l1 in (("phillip-in", 0.0, m), ("phillip-out", m, self.road.length)):
+                lo, hi = max(v.rear, l0), min(v.front, l1)
+                if hi > lo + 1e-6:
+                    out[lane].append({"id": v.id, "kind": v.kind, "rear": round(lo - l0, 2), "front": round(hi - l0, 2)})
+        return out
+
     def plaza(self):
         """Vehicles whose bodies are still on Transit Plaza Road: a bus that has
         turned out stops occupying the exit once its whole length is past it."""
-        out = []
-        for a in self.active():
-            if a.state == "phillip" and a.road is not None and a.road.front - self.road.merge >= BUS_L:
-                continue
-            if a.state == "detour" and a.detour is not None and a.detour["s"] >= BUS_L:
-                continue
-            out.append(a)
-        return out
+        return [a for a in self.active()
+                if not (a.state in ("phillip", "detour") and a.rear >= getattr(a, "turn_p", a.p) - 1e-6)]
 
     def berth_holder(self, berth, t):
         for a in self.active():
@@ -407,6 +451,13 @@ class UwStation:
                 self.finish(a, t + 1.0)
         for a in [x for x in self.agents if x.state == "detour"]:
             self.drive_detour(a, t)
+        # A bus turning out: its nose has gone round the turn; the plaza keeps only
+        # the part of its body not yet through it (one body, front and rear).
+        for a in self.agents:
+            if a.state == "phillip" and a.road is not None:
+                a.p = a.turn_p + max(0.0, a.road.front - self.road.merge)
+            elif a.state == "detour" and a.detour is not None:
+                a.p = a.turn_p + a.detour["s"]
         for a in self.active():
             if a.state not in ("phillip", "detour"):
                 a.trace.append([t, round(to_s(a.side, a.p), 2), round(a.lat if a.side == "se" else -a.lat, 2)])
@@ -612,7 +663,7 @@ class UwStation:
         else:
             compatible = [b for b in free if b in own] if call["purpose"] == "load" else free
             choice = compatible[0] if compatible else None
-        if a.kind == "corridor":
+        if a.kind in DRIVEN:
             self.berth_decision(a, t, call, plat, preferred, free, choice)
         if choice is not None:
             a.berth = choice
@@ -890,7 +941,7 @@ class UwStation:
         if a.v < 0.05 and why is not None and why[0] not in ("dwell", "berth"):
             a.stopped = getattr(a, "stopped", {})
             a.stopped[why[0]] = a.stopped.get(why[0], 0) + 1
-        if a.kind != "corridor" or why is None:
+        if a.kind not in DRIVEN or why is None:
             for k in ("follow", "gate", "stop", "merge"):
                 if k in a.episode:
                     self.close_episode(a, k, t, "moved on at {t} after {waited}")
@@ -900,7 +951,8 @@ class UwStation:
         if kind == "follow" and a.v < 0.3 and what.v < 0.3:
             self.open_episode(a, "follow", t, "vehicle", f"{what.id} ({what.label or what.kind}) slow or stopped ahead",
                               [{"option": "slow and follow", "feasible": True,
-                                "reason": f"{GAP:.1f} m standstill gap and {HEADWAY:.1f} s headway", "estimate_s": None},
+                                "reason": f"{GAP:.1f} m standstill gap and {a.driver.headway if a.driver else HEADWAY:.1f} s headway "
+                                          f"(this driver's)", "estimate_s": None},
                                {"option": "pass in the berth lane", "feasible": False,
                                 "reason": "berth lanes are for buses at the platforms", "estimate_s": None}],
                               "slow and follow")
@@ -932,6 +984,7 @@ class UwStation:
         """Turn right onto Phillip Street now (the lane allows it), or, as an
         error where the left turn is legal, left onto northbound Phillip."""
         a.passed.add("exit")
+        a.turn_p = a.p
         if "merge" in a.episode:
             d, t0 = a.episode["merge"]
             seen = getattr(a, "merge_seen", [])
@@ -1021,6 +1074,9 @@ class UwStation:
         """Left the modelled stretch of Phillip Street (past University Ave)."""
         a.state = "gone"
         a.exit_s = t
+        if a.kind != "corridor":
+            for k in list(a.episode):
+                self.close_episode(a, k, t, "moved on at {t} after {waited}")
         if a.kind == "corridor":
             self.leave(a, t, already=True)
 
@@ -1028,9 +1084,9 @@ class UwStation:
         a.state = "gone"
         a.exit_s = t
         a.berth = None
+        for k in list(a.episode):
+            self.close_episode(a, k, t, "moved on at {t} after {waited}")
         if a.kind == "corridor":
-            for k in list(a.episode):
-                self.close_episode(a, k, t, "moved on at {t} after {waited}")
             first = next((d for d in self.decisions if d.get("terminal") == "uw" and d["vehicle_id"] == a.id
                           and d.get("trip_id") == a.trip_id and d["level"] == "dispatch" and not d["outcome"]), None)
             if first is not None:
