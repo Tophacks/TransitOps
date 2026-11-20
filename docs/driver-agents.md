@@ -20,6 +20,23 @@ The private-car pilot (`feat/uw-private-car-agents`, `docs/uw-road-agents.md`) r
 | University Ave signal: stop at its line on red | the same 54 s cycle, red 11–34 s (the pilot's values, modelled) |
 | Lanes `phillip-in` → `phillip-out`, merge from `phillip-right` | one southbound lane, 516 m; the merge is at 134 m and the stop line at 493 m, from the pilot's centrelines |
 
+### One occupancy model, in the pilot's lanes
+
+`UwStation.lane_occupancy()` reports every body, bus or car, front and rear in metres along each lane it covers. On the south-east side the lane IDs are the pilot's:
+
+| Lane | Extent | Who uses it |
+| --- | --- | --- |
+| `ring-entry` | through lane from the Ring Road all-way stop to the end of platform 4 | buses entering from Ring Road |
+| `berth-1223` | platform 4's berth lane, from 15 m before its first berth (the taper) | buses calling at stop 1223 |
+| `plaza-east` | through lane from platform 4 to the Phillip Street exit | buses leaving by Phillip Street |
+| `phillip-in` / `phillip-out` | Phillip Street southbound before and after the merge | cars, and buses once they have turned |
+
+The other platforms' berth lanes (`berth-1078`, `berth-1260-1262`, `berth-1264`) and the north-west through lane (`plaza-west`) complete the plaza.
+
+A body that is changing lanes or turning appears on every lane it still covers, as in the pilot. The pilot's turn connector (`phillip-right`) is modelled at the merge point. While a bus turns, the plaza keeps the part of its body that is not yet through the turn. Phillip Street treats the merge point as occupied until the bus's tail is through. The two parts always add up to one bus length. A follower in the plaza therefore sees the turning bus's real rear, and a car on Phillip Street cannot pass the merge point until the bus is clear of it.
+
+The scheduled GTFS buses, not just the corridor buses, drive this way. Each one carries its GTFS trip ID per call and records its own decisions: following, berths, and waits at the merge naming the cars that block it. `SharedRoadTests` in `test_drivers.py` checks three things: a scheduled bus drives `ring-entry` → `berth-1223` → `plaza-east` → `phillip-out` in heavy traffic; no two bodies overlap on any lane; and its merge decision names the blocking cars.
+
 The modelled gap stream at the Phillip Street exit (600 vehicles/h, 6 s critical gap) is gone. A bus now turns out only when the actual cars leave it room.
 
 The ION crossing, berth assignment, passenger transfers and dispatch are unchanged. The existing UW and rail tests still pass.
@@ -101,7 +118,7 @@ The presets are on the map's control panel. All use seed 17.
 
 | Preset | Shows |
 | --- | --- |
-| UW exit, heavy traffic | B101 waits 22 s at the Phillip exit, blocked by car-371 to car-376. In light traffic the same departure waits 4 s, blocked by car-126 |
+| UW exit, heavy traffic | B101 waits 23 s at the Phillip exit, blocked by car-371 to car-376. In light traffic the same departure waits 5 s, blocked by car-126 |
 | Bus overshoot, reverse granted | B101 overshoots P6-1078-1 by 6 m; reverse granted, swept path reserved |
 | Bus overshoot, reverse denied | a route 9 bus behind is bound for platform 6, so Control denies the reverse and the missed stop at 1078 is recorded |
 | Bus misses a berth | B101 misses the platform 4 berth and sets down at platform 6 |
@@ -116,21 +133,21 @@ Default API scenario: 4 buses, traffic ×1.25, ION delay 4 min, seed 17. All row
 | Run | ION transfers boarded | Riders boarded | Left waiting | Total rider-wait (min) | Avg transfer wait (min) | Missed stops |
 | --- | --- | --- | --- | --- | --- | --- |
 | main | 107 | 330 | 158 | 8970.1 | 14.91 | – |
-| this branch, moderate cars | 107 | 330 | 158 | 9086.8 | 15.16 | 0 |
-| light cars | 107 | 330 | 158 | 9046.8 | 15.16 | 0 |
-| heavy cars | 107 | 330 | 158 | 9086.8 | 15.16 | 0 |
-| overshoot, reverse granted | 107 | 330 | 158 | 9091.4 | 15.17 | 0 |
+| this branch, moderate cars | 107 | 330 | 158 | 9086.3 | 15.16 | 0 |
+| light cars | 107 | 330 | 158 | 9046.3 | 15.16 | 0 |
+| heavy cars | 107 | 330 | 158 | 9086.3 | 15.16 | 0 |
+| overshoot, reverse granted | 107 | 330 | 158 | 9090.8 | 15.17 | 0 |
 | overshoot, bus behind (denied) | 85 | 307 | 181 | 9521.6 | 14.85 | 1 |
-| missed berth | 107 | 330 | 158 | 9002.4 | 14.90 | 0 |
-| wrong turn | 107 | 330 | 158 | 9086.8 | 15.16 | 0 |
-| seeded errors (rate 0.2, seed 17) | 107 | 330 | 158 | 9102.9 | 15.21 | 0 |
-| train overshoot, Research and Technology | 107 | 330 | 158 | 9086.8 | 15.16 | 0 |
-| train overshoot, Waterloo Public Square | 107 | 330 | 158 | 9087.3 | 15.17 | 0 |
+| missed berth | 107 | 330 | 158 | 9001.8 | 14.90 | 0 |
+| wrong turn | 107 | 330 | 158 | 9086.3 | 15.16 | 0 |
+| seeded errors (rate 0.2, seed 17) | 107 | 330 | 158 | 9102.3 | 15.21 | 0 |
+| train overshoot, Research and Technology | 107 | 330 | 158 | 9086.3 | 15.16 | 0 |
+| train overshoot, Waterloo Public Square | 107 | 330 | 158 | 9086.8 | 15.17 | 0 |
 
 How to read the rows:
 
-- **main vs this branch.** UW departures are now measured past the University Ave signal, where the bus leaves the modelled roads, instead of at the Transit Plaza exit. Buses also wait for the actual cars. The first three UW exits move from 35:33 / 43:11 / 54:08 to 36:40 / 44:09 / 54:51. The resulting minute shifts downstream add 117 rider-minutes in total.
-- **Traffic.** Heavy cars cost each departure a few seconds to 22 s. Those seconds do not cross the corridor's one-minute steps, so they barely move the corridor metrics.
+- **main vs this branch.** UW departures are now measured past the University Ave signal, where the bus leaves the modelled roads, instead of at the Transit Plaza exit. Buses also wait for the actual cars. The first three UW exits move from 35:33 / 43:11 / 54:08 to 36:40 / 44:09 / 54:51. The resulting minute shifts downstream add 116 rider-minutes in total.
+- **Traffic.** Heavy cars cost each departure a few seconds to 23 s. Those seconds do not cross the corridor's one-minute steps, so they barely move the corridor metrics.
 - **Denied reverse.** This is the costly case. The 22 ION transfers waiting at stop 1078 are not picked up.
 - **Wrong turn.** The re-route takes 589 s from the exit. B101 reaches Waterloo Public Square at 45:22, which is the same corridor minute (46) as on its normal leg, so there is no downstream effect in this scenario. Buses behind it are not held: once a bus's whole length is past the exit, it no longer occupies Transit Plaza Road.
 - **Train recoveries.** A granted reverse costs that trip 32 s at the platform. The street-running skip leaves that station's riders for the next train. Neither changes the bus transfer counts in this scenario, and no following train is delayed.
