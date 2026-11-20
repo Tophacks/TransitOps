@@ -127,6 +127,8 @@ class TransitSimulation:
         uw_station=True,
         uw_cars="moderate",
         driver_errors=None,
+        lines=("7",),
+        line_block=None,
     ):
         self.buses = buses
         # Connection holds at UW and Central: on with the adaptive controller.
@@ -177,6 +179,15 @@ class TransitSimulation:
         if uw_station:
             from uw_station import UwStation
             self.uw = UwStation(self, block=uw_block, seed=seed, adaptive=intelligent, cars=uw_cars, errors=driver_errors)
+        # Scheduled GRT lines end to end, on the same clock (lines.py).
+        self.lines = None
+        if lines:
+            from drivers import Errors
+            from lines import LineService
+            self.lines = LineService(tuple(lines), seed=seed, duration_s=duration * 60.0,
+                                     traffic=self.traffic_multiplier, ion_plan=ion_plan, demand=self.demand_multiplier,
+                                     station_block=line_block,
+                                     errors=self.uw.errors if self.uw is not None else Errors(driver_errors, seed))
 
     def log(self, message, kind="info", *, bus_id=None, reason=None, train_id=None):
         event = {"minute": self.time, "message": message, "kind": kind}
@@ -1105,6 +1116,8 @@ class TransitSimulation:
             self._advance_buses()
             if self.uw is not None:
                 self.uw.advance_to((minute + 1) * 60.0)
+            if self.lines is not None:
+                self.lines.advance_to((minute + 1) * 60.0)
             self._capture_snapshot()
 
         self.metrics.passengers_left_waiting = sum(
@@ -1123,6 +1136,9 @@ class TransitSimulation:
         # GRT garages: pull-outs and returns on real roads (garage_ops.py).
         from garage_ops import Garages
         self.garages = Garages(self).run()
+        if self.lines is not None:
+            self.lines.finish()
+            self.decisions.extend(self.lines.decisions)
         self.decisions.sort(key=lambda d: d["t"])
         self.log("Corridor simulation complete", "system")
         return self.metrics

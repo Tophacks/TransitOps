@@ -15,14 +15,20 @@ error and where. Kinds:
 - overshoot: stopping a few metres past a berth's stopping point;
 - missed_berth: not turning into the berth in time;
 - wrong_turn: turning left out of the station where a legal left exists
-  (the planned move is right).
+  (the planned move is right);
+- missed_stop: on a line, missing the lane change into the curb and passing
+  a stop where riders are waiting or want to get off.
+
+A seeded rate is per opportunity; a line bus has one at every stop it serves,
+so its rate is scaled down (KIND_SCALE) to stay occasional.
 
 The same seed gives the same drivers and the same mistakes.
 """
 import hashlib
 import random
 
-ERROR_KINDS = ("overshoot", "missed_berth", "wrong_turn")
+ERROR_KINDS = ("overshoot", "missed_berth", "wrong_turn", "missed_stop")
+KIND_SCALE = {"missed_stop": 0.05}     # per-stop opportunities on a line (modelled)
 
 
 def _unit(*parts):
@@ -50,17 +56,23 @@ class Errors:
         self.seed = (spec or {}).get("seed", seed)
         self.used = []
 
-    def happens(self, kind, vehicle_id, visit, where):
+    def happens(self, kind, vehicle_id, visit, where, t=None):
         s = self.spec
         if not s:
             return None
         if s.get("mode") == "demo":
-            if s.get("kind") == kind and s.get("vehicle", vehicle_id) == vehicle_id and s.get("visit", 1) == visit \
-                    and s.get("where", where) == where:
+            if s.get("kind") != kind or s.get("vehicle", vehicle_id) != vehicle_id or s.get("where", where) != where:
+                return None
+            if s.get("once"):
+                # The first opportunity at or after `after_s` (a demo that names a place, not a trip).
+                if getattr(self, "_fired", False) or (t is not None and t < s.get("after_s", 0)):
+                    return None
+                self._fired = True
                 return dict(s)
-            return None
+            return dict(s) if s.get("visit", 1) == visit else None
         if s.get("mode") == "seeded":
-            if _unit(self.seed, vehicle_id, visit, kind, where) < float(s.get("rate", 0.1)):
+            rate = float(s.get("rate", 0.1)) * KIND_SCALE.get(kind, 1.0)
+            if _unit(self.seed, vehicle_id, visit, kind, where) < rate:
                 return {"kind": kind, "metres": round(3.0 + 6.0 * _unit(self.seed, vehicle_id, visit, kind, "m"), 1)}
         return None
 
