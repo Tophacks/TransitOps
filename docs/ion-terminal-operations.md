@@ -89,7 +89,7 @@ trackwork is drawn from OSM.
 | Stopping point | 7 m short of the track end | Not mapped |
 | Approach speed | 12 m/s from the handover to the home signal | Not mapped |
 | Swap threshold | 2 min | Policy choice |
-| Fleet | sized from the actual round trip: 11 trains at an 8-minute headway | Real fleet is 14 LRVs (spares and maintenance not modelled) |
+| Fleet | sized from the actual round trip: 11 trains at an 8-minute headway | GRT lists 15 LRVs. See [yard fleet allocation](ion-yard.md#fleet-and-states). |
 | Vehicle IDs | `LRV501…` | Illustrative, not real fleet assignments |
 | Platform hold | the train at (or next to stop at) the platform cannot leave until the hold ends | Scenario input ("door fault") |
 

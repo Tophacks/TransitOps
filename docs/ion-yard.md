@@ -64,15 +64,16 @@ only once every train between it and the lead has gone.
 
 ## Fleet and states
 
-GRT runs 14 LRVs. The simulator sizes the in-service fleet from the
-timetable: 11 at an 8-minute headway. The remaining 3 start in the yard
-(modelled allocation):
+[GRT lists 15 light rail vehicles](https://www.grt.ca/about-grt/about-us/).
+The simulator sizes the in-service fleet from the timetable: 11 at an
+8-minute headway. The remaining four start in the yard (modelled allocation):
 
 | Train | State | Position |
 | --- | --- | --- |
 | LRV512 | ready (prepared spare) | outdoor track 750968496, position 1 |
 | LRV513 | stored | outdoor track 1537833917, position 1 |
-| LRV514 | unavailable | shop track 750968500, position 1 |
+| LRV514 | stored | outdoor track 750968493, position 1 |
+| LRV515 | unavailable | shop track 750968500, position 1 |
 
 States are stored, ready, unavailable, pulling out, in service and returning.
 Each train keeps a state log, and the live snapshot reports each train's
@@ -142,8 +143,8 @@ and its release time. A spare is taken only if it saves at least 2 minutes.
    | Line trains only (LRV504, then LRV506) | 31:28 | 43:28 | 10.9 min |
    | Ready spare LRV512 for ION-S3 | 32:36 | 36:00 | 4.6 min |
    | LRV504 for ION-S3, LRV512 for ION-S4 (**chosen**) | 31:28 | 36:00 | 3.5 min |
-   | Stored LRV513 (20 min preparation) | | | 17.1–21.6 min |
-   | LRV514 | unavailable (shop) | | |
+   | Stored LRV513 or LRV514 (20 min preparation) | | | 17.1–21.6 min |
+   | LRV515 | unavailable (shop) | | |
    | Spare via the south lead | rejected: points away from Conestoga | | |
 
 3. LRV512 is ready at 22:28. It waits on its storage track because LRV504 is
@@ -180,7 +181,7 @@ both policies give the same result.
 
 | Item | Value |
 | --- | --- |
-| Yard allocation | 14 LRVs in all: the timetable fleet in service, then one ready spare, stored trains, and the last in the shop |
+| Yard allocation | 15 LRVs in all: the timetable fleet in service, then one ready spare, stored trains, and the last in the shop |
 | Storage positions of individual trains | as in the table above |
 | Preparation | 3 min ready, 20 min stored |
 | Yard speed | 15 km/h (no `maxspeed` mapped) |
@@ -188,4 +189,4 @@ both policies give the same result.
 | Shop tracks | inferred from the tracks inside the mapped OMSF building |
 | Fault | scenario input: the first train to stop at the chosen terminal from the chosen minute |
 | Blocked lead | scenario input (track work) |
-| Vehicle IDs | `LRV501`…`LRV514` are illustrative, not real fleet numbers |
+| Vehicle IDs | `LRV501`…`LRV515` are illustrative, not real fleet numbers |

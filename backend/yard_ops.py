@@ -28,7 +28,7 @@ fouling distance, as in the terminals.
 Dispatch (RailOps) asks this module for the earliest feasible yard release
 for a trip and compares it with reassigning a train already on the line.
 
-Modelled, not observed: the yard fleet allocation (14 LRVs in all; the
+Modelled, not observed: the yard fleet allocation (15 LRVs in all; the
 in-service fleet is sized from the timetable, the rest are in the yard: one
 ready spare, then stored, the last in the shop), preparation times, storage
 positions of individual trains, the 15 km/h yard speed and the stop short of
@@ -43,7 +43,7 @@ YARD = ro.NETWORK["yard"]
 ROUTES = {r["id"]: r for r in YARD["routes"]}
 TRACKS = {t["id"]: t for t in YARD["tracks"]}
 
-FLEET_TOTAL = 14            # GRT ION fleet (14 Bombardier Flexity Freedom LRVs)
+FLEET_TOTAL = 15            # Published GRT ION fleet (Bombardier Flexity Freedom LRVs)
 READY_PREP_S = 180.0        # modelled: operator boards, brake and door tests on a prepared spare
 STORED_PREP_S = 1200.0      # modelled: wake-up and full departure inspection of a stored train
 LABEL = {"north": "north lead (node 7020996626)", "south": "south lead (node 7020977372)"}

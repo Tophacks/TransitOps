@@ -94,7 +94,9 @@ class FleetTests(unittest.TestCase):
         self.assertEqual(len(ids), yard_ops.FLEET_TOTAL)
         self.assertEqual(len(set(ids)), len(ids))
         yard = {t.vehicle_id: t.state for t in ops.yard.trains}
-        self.assertEqual(yard, {"LRV512": "ready", "LRV513": "stored", "LRV514": "unavailable"})
+        self.assertEqual(yard, {
+            "LRV512": "ready", "LRV513": "stored", "LRV514": "stored", "LRV515": "unavailable",
+        })
         # Stored trains never share a position.
         self.assertEqual(len(set(ops.yard.occupied)), len(ops.yard.occupied))
 
@@ -114,7 +116,7 @@ class FaultTests(unittest.TestCase):
         self.assertTrue(any(n.startswith("reassign the next arriving train") for n in names))
         self.assertTrue(any("ready spare LRV512" in n for n in names))
         self.assertTrue(any("stored spare LRV513" in n for n in names))
-        unavailable = next(o for o in d.options if o["option"] == "send LRV514 from Dutton")
+        unavailable = next(o for o in d.options if o["option"] == "send LRV515 from Dutton")
         self.assertFalse(unavailable["feasible"])
         south = next(o for o in d.options if o["option"] == "spare via the south lead")
         self.assertFalse(south["feasible"])
