@@ -379,6 +379,7 @@ export default function Home() {
             ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
             busDecisions={data?.smart.decisions ?? []}
             uwVehicles={data?.smart.uw?.vehicles ?? []}
+            garageVehicles={data?.smart.garages?.vehicles ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />

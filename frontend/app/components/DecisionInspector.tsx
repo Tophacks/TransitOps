@@ -22,7 +22,8 @@ type Props = {
 };
 
 const LEVEL = { vehicle: "Vehicle agent", station: "Station control", dispatch: "Dispatch" } as const;
-const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW Station", central: "Central bus stop", line: "ION line", yard: "Dutton yard" };
+const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW Station", central: "Central bus stop", line: "ION line", yard: "Dutton yard",
+  northfield: "Northfield Drive garage", strasburg: "Strasburg Road garage", "conestoga-blvd": "Conestoga Blvd garage (Cambridge)" };
 
 export function clock(t: number) {
   const s = Math.round(t);
