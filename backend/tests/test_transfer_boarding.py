@@ -100,9 +100,9 @@ class EndToEndTests(unittest.TestCase):
         windows = []
 
         class Traced(se.TransitSimulation):
-            def _board_until_doors_close(self, bus, stop):
+            def _board_until_doors_close(self, bus, stop, close_s=None):
                 opened = bus.doors_open_s
-                super()._board_until_doors_close(bus, stop)
+                super()._board_until_doors_close(bus, stop, close_s=close_s)
                 if stop == stop_id and bus.capacity - bus.occupancy >= 3:
                     windows.append(opened)
 

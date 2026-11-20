@@ -53,6 +53,11 @@ class SimulationRequest(BaseModel):
     yard_block_lead: Literal["north", "south"] | None = None
     yard_block_from_minute: int = Field(default=10, ge=0, le=59)
     yard_block_to_minute: int = Field(default=50, ge=1, le=90)
+    # UW Station: a berth occupied by an out-of-service bus, or the Phillip Street exit blocked.
+    uw_block: Literal["berth", "exit"] | None = None
+    uw_block_berth: str = "P6-1078-1"
+    uw_block_from_minute: int = Field(default=10, ge=0, le=59)
+    uw_block_to_minute: int = Field(default=58, ge=1, le=90)
 
 
 def metrics_to_dict(metrics):
@@ -166,6 +171,19 @@ def yard_block(payload: SimulationRequest):
             "to_minute": max(payload.yard_block_from_minute + 1, payload.yard_block_to_minute)}
 
 
+def uw_block(payload: SimulationRequest):
+    if payload.uw_block is None:
+        return None
+    import uw_station
+    window = {"from_s": payload.uw_block_from_minute * 60.0,
+              "to_s": max(payload.uw_block_from_minute + 1, payload.uw_block_to_minute) * 60.0}
+    if payload.uw_block == "exit":
+        return {"exit": True, **window}
+    if payload.uw_block_berth not in uw_station.BERTHS:
+        raise HTTPException(status_code=422, detail=f"{payload.uw_block_berth!r} is not a UW Station berth")
+    return {"berth": payload.uw_block_berth, **window}
+
+
 def ion_plan(payload: SimulationRequest, reassign: bool = True):
     """The ION run: physical trains through both terminals. The adaptive case
     lets dispatch give a threatened trip to another train; the baseline only
@@ -199,6 +217,7 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         surge_passengers=payload.surge_passengers,
         breakdown_minute=payload.breakdown_minute,
         emergency_dispatch_minute=payload.emergency_dispatch_minute,
+        uw_block=uw_block(payload),
     )
     metrics = sim.run()
 
@@ -207,8 +226,11 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         "events": sim.events,
         "timeline": sim.timeline,
         "ion": plan.schedule(),
-        # bus dispatch decisions (connection holds at UW and Central)
+        # bus decisions: UW Station agents, station reports, holds, capacity
         "decisions": sim.decisions,
+        # every vehicle on UW Station's roadway, second by second (uw_station.py)
+        "uw": {"block": uw_block(payload), "vehicles": sim.uw.plans() if sim.uw else [],
+               "metrics": sim.uw.metrics() if sim.uw else None},
     }
 
 

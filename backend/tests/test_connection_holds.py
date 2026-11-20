@@ -28,6 +28,9 @@ class Stand(unittest.TestCase):
         walk = se.TRANSFER_WALK_S["CENTRAL"]
         trip = PLAN.trips[0]
         s.hub_arrivals = [(CLOSE_S + off - walk, trip, "CENTRAL", riders) for off in ready_offsets]
+        # What dispatch knows at the decision: these trains, predicted to arrive at these times.
+        s._predicted_arrivals = lambda stop_id, now: [(at, tr, n, "predicted") for at, tr, sid, n in s.hub_arrivals
+                                                      if sid == stop_id]
         bus = s.buses[0]
         bus.state = BusState.EN_ROUTE
         bus.current_stop_index = se.ROUTE.index("GRAND_RIVER_HOSPITAL")

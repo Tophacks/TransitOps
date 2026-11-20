@@ -231,6 +231,22 @@ class IonPlan:
             return trip.station_times[station]
         return trip.depart_s + self.lines[trip.direction].arrival_offset(station)
 
+    def predict_arrival(self, trip, station, now):
+        """When `trip` should reach `station`, using only what is known at `now`:
+        its actual time if it is already there; otherwise the last station it
+        has reached (or its terminal departure, or its scheduled departure plus
+        any announced hold if it has not left yet) plus the timetabled running
+        time from there. Returns (seconds, "confirmed" | "predicted")."""
+        if trip.station_times.get(station, math.inf) <= now:
+            return trip.station_times[station], "confirmed"
+        line = self.lines[trip.direction]
+        seen = [(t, name) for name, t in trip.station_times.items() if t <= now]
+        if seen:
+            t_last, last = max(seen)
+            return t_last + line.arrival_offset(station) - line.arrival_offset(last), "predicted"
+        start = max(now, trip.scheduled_s + trip.trip_hold_s)
+        return start + line.arrival_offset(station), "predicted"
+
     def hub_arrivals(self):
         """(arrival second, trip, bus stop id, riders) at Central and UW, in order."""
         out = []
