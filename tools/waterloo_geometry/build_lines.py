@@ -201,6 +201,31 @@ def build(gtfs, lrt, routes):
                 raise SystemExit(f"block {b}: trip {y['trip_id']} starts before {x['trip_id']} ends")
         blocks[b] = rows
 
+    # Every block that runs on the day, all routes: the regional fleet assigns a vehicle to each.
+    day = defaultdict(list)
+    by_trip = {t["trip_id"]: t for t in all_trips}
+    ends = {}
+    with open(gtfs / "stop_times.txt", newline="") as f:
+        for r in csv.DictReader(f):
+            if r["trip_id"] not in by_trip:
+                continue
+            q = int(r["stop_sequence"])
+            e = ends.setdefault(r["trip_id"], [None, None])
+            if e[0] is None or q < e[0][0]:
+                e[0] = (q, r["stop_id"], sec(r["departure_time"]))
+            if e[1] is None or q > e[1][0]:
+                e[1] = (q, r["stop_id"], sec(r["arrival_time"]))
+    for tid, (a, b) in ends.items():
+        day[by_trip[tid]["block_id"]].append((a[2], b[2], a[1], b[1], by_trip[tid]["route_id"]))
+    day_blocks = {}
+    for bid, rows in sorted(day.items()):
+        rows.sort()
+        f, l = stops[rows[0][2]], stops[rows[-1][3]]
+        day_blocks[bid] = {"start": rows[0][0], "end": rows[-1][1], "routes": sorted({x[4] for x in rows}),
+                           "first": [rows[0][2], round(float(f["stop_lat"]), 6), round(float(f["stop_lon"]), 6)],
+                           "last": [rows[-1][3], round(float(l["stop_lat"]), 6), round(float(l["stop_lon"]), 6)]}
+    report.append(f"{len(day_blocks)} blocks run on {DATE} (all routes)")
+
     for rid, r in sorted(out_routes.items()):
         bl = {t["block"] for t in r["trips"]}
         inter = sorted({x["route"] for b in bl for x in blocks[b]} - {rid})
@@ -217,7 +242,7 @@ def build(gtfs, lrt, routes):
             "notes": {"sched": "GTFS departure times with each minute change spread over the stops since the "
                                "previous change in proportion to distance (seconds after midnight)",
                       "gtfs": "[arrival, departure] seconds after midnight, as published"},
-            "routes": out_routes, "stops": out_stops, "blocks": blocks}, report
+            "routes": out_routes, "stops": out_stops, "blocks": blocks, "day_blocks": day_blocks}, report
 
 
 def main():
