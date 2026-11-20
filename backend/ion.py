@@ -136,7 +136,7 @@ class IonPlan:
     """
 
     def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0,
-                 platform_hold=None, reassign=True):
+                 platform_hold=None, reassign=True, closures=None, yard_block=None, fault=None):
         import rail_ops
         self.headway_s = headway_min * 60.0
         self.duration_s = duration_min * 60.0
@@ -153,7 +153,11 @@ class IonPlan:
                 self.trips.append(Trip(f"ION-{prefix}{k}", direction, t, t))
         self.platform_hold = platform_hold
         self.events = self._assign_events(transfer_demand, delay_min)
-        self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign).run()
+        self.closures = closures or []
+        self.yard_block = yard_block
+        self.fault = fault
+        self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign, closures=self.closures,
+                                    yard_block=yard_block, fault=fault).run()
         for trip in self.trips:
             if trip.station_times:
                 trip.depart_s = trip.depart_s  # set by RailOps at departure
@@ -227,6 +231,22 @@ class IonPlan:
             return trip.station_times[station]
         return trip.depart_s + self.lines[trip.direction].arrival_offset(station)
 
+    def predict_arrival(self, trip, station, now):
+        """When `trip` should reach `station`, using only what is known at `now`:
+        its actual time if it is already there; otherwise the last station it
+        has reached (or its terminal departure, or its scheduled departure plus
+        any announced hold if it has not left yet) plus the timetabled running
+        time from there. Returns (seconds, "confirmed" | "predicted")."""
+        if trip.station_times.get(station, math.inf) <= now:
+            return trip.station_times[station], "confirmed"
+        line = self.lines[trip.direction]
+        seen = [(t, name) for name, t in trip.station_times.items() if t <= now]
+        if seen:
+            t_last, last = max(seen)
+            return t_last + line.arrival_offset(station) - line.arrival_offset(last), "predicted"
+        start = max(now, trip.scheduled_s + trip.trip_hold_s)
+        return start + line.arrival_offset(station), "predicted"
+
     def hub_arrivals(self):
         """(arrival second, trip, bus stop id, riders) at Central and UW, in order."""
         out = []
@@ -259,6 +279,7 @@ class IonPlan:
         return self.ops.poses(t)
 
     def schedule(self):
+        import rail_ops
         """Everything the browser needs to reproduce train positions exactly:
         the line legs, each physical train's movement plan, and the decisions."""
         window = [t for t in self.trips if 0 <= t.scheduled_s < self.duration_s]
@@ -296,6 +317,20 @@ class IonPlan:
             "holds": self.ops.holds,
             "metrics": self.ops.metrics(window),
             "platform_hold": self.platform_hold,
+            "closures": [
+                {**cp["closure"], "plan": cp["kind"], "diversion": cp["route"]["id"] if cp["kind"] == "diversion" else None}
+                for cp in self.ops.closures
+            ],
+            # Line diversions the trains used (paths, stops and speed limits for the map).
+            "routes": {**{cp["route"]["id"]: cp["route"] for cp in self.ops.closures if cp["kind"] == "diversion"},
+                       **{r: rail_ops.YARD_ROUTES[r] for r in sorted({seg.route for tr in self.ops.trains for seg in tr.segments
+                                                                       if seg.route in rail_ops.YARD_ROUTES})}},
+            "yard": {
+                "block": self.yard_block, "fault": self.fault,
+                "moves": self.ops.yard.log,
+                "fleet": self.ops.yard.inventory(),
+            },
+            "sections": {k: v["log"] for k, v in self.ops.sections.items()},
         }
 
 

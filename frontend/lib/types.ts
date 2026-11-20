@@ -1,4 +1,4 @@
-import type { IonSchedule } from "./motion/ion.ts";
+import type { IonSchedule, RailDecision } from "./motion/ion.ts";
 
 export type Controls = {
   traffic_multiplier: number;
@@ -17,6 +17,24 @@ export type Controls = {
   platform_hold_platform?: "1" | "2";
   platform_hold_minute?: number;
   platform_hold_minutes?: number;
+  /** ION track closure (null: none) */
+  closure_track?: "north" | "south" | null;
+  closure_from_station?: string;
+  closure_to_station?: string;
+  closure_from_minute?: number;
+  closure_to_minute?: number;
+  /** ION train fault: the first train to stop at this terminal from fault_minute is withdrawn */
+  fault_terminal?: "fairway" | "conestoga" | null;
+  fault_minute?: number;
+  /** a Dutton yard lead blocked (scenario) */
+  yard_block_lead?: "north" | "south" | null;
+  yard_block_from_minute?: number;
+  yard_block_to_minute?: number;
+  /** UW Station: a berth taken by an out-of-service bus, or the Phillip St exit blocked */
+  uw_block?: "berth" | "exit" | null;
+  uw_block_berth?: string;
+  uw_block_from_minute?: number;
+  uw_block_to_minute?: number;
 };
 
 export type StopState = {
@@ -93,7 +111,11 @@ export type TrainState = {
   trip_id?: string;
   terminal?: string | null;
   activity?: string;
-  direction: "north" | "south";
+  /** null for a train out of service (in the Dutton yard, pulling out or returning) */
+  direction: "north" | "south" | null;
+  /** fleet state: stored, ready, unavailable, pulling out, in service, returning */
+  state?: string;
+  in_service?: boolean;
   /** metres along the track of the train's nose */
   nose_m: number;
   /** station it is standing at, if any */
@@ -130,6 +152,12 @@ export type Metrics = {
   average_transfer_wait: number;
   ion_trains_peak: number;
   ion_max_delay: number;
+  connection_holds?: number;
+  connection_hold_minutes?: number;
+  hold_onboard_rider_minutes?: number;
+  hold_downstream_rider_minutes?: number;
+  total_wait_rider_minutes?: number;
+  total_transfer_wait_rider_minutes?: number;
 };
 
 export type SimulationEvent = {
@@ -147,6 +175,12 @@ export type CaseResult = {
   timeline: Snapshot[];
   /** this case's ION run (adaptive: dispatch may reassign trips; baseline: holds only) */
   ion?: IonSchedule;
+  /** bus decisions: UW Station agents, station reports, holds and capacity requests */
+  decisions?: RailDecision[];
+  /** every vehicle on UW Station's roadway, second by second (backend/uw_station.py) */
+  uw?: { block: Record<string, unknown> | null; vehicles: import("./motion/uwStation.ts").UwVehicle[];
+    metrics: { corridor_departures: number; mean_station_s: number; corridor_queue_s: number;
+      corridor_stopped_by: Record<string, number>; grt_buses: number; grt_queue_s: number } | null };
 };
 
 export type SimulationResponse = {

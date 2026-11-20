@@ -9,7 +9,8 @@ import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
 import { corridor } from "../lib/motion/scene.ts";
 import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
-import { TERMINALS } from "../lib/motion/railScene.ts";
+import { UW } from "../lib/motion/uwStation.ts";
+import { NETWORK, TERMINALS } from "../lib/motion/railScene.ts";
 import type {
   Controls,
   Network,
@@ -34,6 +35,20 @@ const DEFAULTS: Controls = {
   platform_hold_platform: "2",
   platform_hold_minute: 20,
   platform_hold_minutes: 12,
+  closure_track: null,
+  closure_from_station: "Grand River Hospital Station",
+  closure_to_station: "Central Station",
+  closure_from_minute: 15,
+  closure_to_minute: 45,
+  fault_terminal: null,
+  fault_minute: 15,
+  yard_block_lead: null,
+  yard_block_from_minute: 10,
+  yard_block_to_minute: 50,
+  uw_block: null,
+  uw_block_berth: "P6-1078-1",
+  uw_block_from_minute: 10,
+  uw_block_to_minute: 58,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -42,6 +57,11 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...DEFAULTS, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
   { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
   { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
+  { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...DEFAULTS, closure_track: "south" } },
+  { id: "train-fault", title: "ION train fault", description: "A train arriving at Conestoga from minute 15 is withdrawn to Dutton yard; dispatch can send a spare", controls: { ...DEFAULTS, fault_terminal: "conestoga" } },
+  { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...DEFAULTS, fault_terminal: "conestoga", yard_block_lead: "north" } },
+  { id: "uw-berth-blocked", title: "UW berth blocked", description: "An out-of-service bus holds platform 6's front berth (stop 1078) 10:00–58:00", controls: { ...DEFAULTS, uw_block: "berth" } },
+  { id: "uw-exit-blocked", title: "UW exit blocked", description: "The Phillip Street exit from UW Station is blocked 10:00–58:00", controls: { ...DEFAULTS, uw_block: "exit" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -180,9 +200,10 @@ function Inspector({
         <p className="eyebrow">ION TRAIN · PYTHON SIMULATOR</p>
         <div className="inspectTitle">
           <h3>{live.id}{(trainPose?.tripId ?? live.trip_id) ? ` · ${trainPose?.tripId ?? live.trip_id}` : ""}</h3>
-          <span>{live.direction === "north" ? "Northbound" : "Southbound"}</span>
+          <span>{live.direction === null ? "Out of service" : live.direction === "north" ? "Northbound" : "Southbound"}</span>
         </div>
         <dl>
+          {live.state && <div><dt>Fleet state</dt><dd>{live.state}{live.in_service === false && live.activity ? ` · ${live.activity}` : ""}</dd></div>}
           {/* Position follows the playback clock; delay and riders come from the minute snapshot. */}
           <div><dt>{(trainPose ? trainPose.station : live.station) ? "At" : "Next station"}</dt>
             <dd>{trainPose ? trainPose.station ?? trainPose.nextStation : live.station ?? live.next_station}</dd></div>
@@ -191,7 +212,7 @@ function Inspector({
           <div><dt>Transferring to the bus</dt><dd>{ahead.length
             ? ahead.map(([stop, riders]) => `${riders} at ${stop === "UW" ? "UW" : "Central"}`).join(", ")
             : "None still aboard"}</dd></div>
-          <div><dt>Along the line</dt><dd>{((trainPose?.nose ?? live.nose_m) / 1000).toFixed(2)} km from the {live.direction === "north" ? "Fairway" : "Conestoga"} end</dd></div>
+          {live.direction !== null && <div><dt>Along the line</dt><dd>{((trainPose?.nose ?? live.nose_m) / 1000).toFixed(2)} km from the {live.direction === "north" ? "Fairway" : "Conestoga"} end</dd></div>}
         </dl>
         {decision && <div className="geoDecision">
           <strong>{decision.message}</strong>
@@ -356,6 +377,8 @@ export default function Home() {
             ionSchedule={data?.ion ?? null}
             trafficMultiplier={data?.scenario.traffic_multiplier ?? controls.traffic_multiplier}
             ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
+            busDecisions={data?.smart.decisions ?? []}
+            uwVehicles={data?.smart.uw?.vehicles ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />
@@ -415,7 +438,7 @@ export default function Home() {
           <div className="topMetrics">
             <div><span>WAITING</span><strong>{snapshot?.waiting ?? "—"}</strong></div>
             <div><span>ACTIVE BUSES</span><strong>{snapshot ? poses.length : "—"}</strong></div>
-            <div><span>ION TRAINS</span><strong>{snapshot ? snapshot.trains?.length ?? 0 : "—"}</strong></div>
+            <div><span>ION TRAINS</span><strong>{snapshot ? snapshot.trains?.filter((train) => train.in_service !== false).length ?? 0 : "—"}</strong></div>
             <div><span>AVG WAIT</span><strong>{smart ? `${smart.average_wait.toFixed(1)}m` : "—"}</strong></div>
             <div><span>TRAFFIC</span><strong>{controls.traffic_multiplier.toFixed(2)}×</strong></div>
           </div>
@@ -548,6 +571,110 @@ export default function Home() {
               </label>
             </div>
           )}
+          <label>
+            <div className="labelRow"><span>ION track closure</span><strong>{controls.closure_track
+              ? `${controls.closure_track === "south" ? "Southbound" : "Northbound"} · ${controls.closure_from_minute}–${controls.closure_to_minute} min`
+              : "Off"}</strong></div>
+            <select aria-label="ION track closure track" value={controls.closure_track ?? "off"}
+              onChange={(event) => update("closure_track", event.target.value === "off" ? null : event.target.value as "north" | "south")}>
+              <option value="off">No closure</option><option value="south">Southbound track</option><option value="north">Northbound track</option>
+            </select>
+          </label>
+          {controls.closure_track && (
+            <div className="holdRow">
+              <label>
+                <span>Between</span>
+                <select aria-label="Closure from station" value={controls.closure_from_station}
+                  onChange={(event) => update("closure_from_station", event.target.value)}>
+                  {NETWORK.stations[controls.closure_track].map((st) => <option key={st.name} value={st.name}>{st.name.replace(" Station", "")}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>And</span>
+                <select aria-label="Closure to station" value={controls.closure_to_station}
+                  onChange={(event) => update("closure_to_station", event.target.value)}>
+                  {NETWORK.stations[controls.closure_track].map((st) => <option key={st.name} value={st.name}>{st.name.replace(" Station", "")}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="Closure from minute" type="number" min="0" max="59" value={controls.closure_from_minute}
+                    onChange={(event) => update("closure_from_minute", Number(event.target.value))} />
+                  <input aria-label="Closure to minute" type="number" min="1" max="90" value={controls.closure_to_minute}
+                    onChange={(event) => update("closure_to_minute", Number(event.target.value))} />
+                </span>
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>ION train fault</span><strong>{controls.fault_terminal
+              ? `${controls.fault_terminal === "conestoga" ? "Conestoga" : "Fairway"} · from ${controls.fault_minute} min` : "Off"}</strong></div>
+            <select aria-label="ION train fault terminal" value={controls.fault_terminal ?? "off"}
+              onChange={(event) => update("fault_terminal", event.target.value === "off" ? null : event.target.value as "fairway" | "conestoga")}>
+              <option value="off">No fault</option><option value="conestoga">Train arriving at Conestoga</option><option value="fairway">Train arriving at Fairway</option>
+            </select>
+          </label>
+          {controls.fault_terminal && (
+            <div className="holdRow">
+              <label>
+                <span>From minute</span>
+                <input aria-label="Fault minute" type="number" min="0" max="59" value={controls.fault_minute}
+                  onChange={(event) => update("fault_minute", Number(event.target.value))} />
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>Dutton yard lead blocked</span><strong>{controls.yard_block_lead
+              ? `${controls.yard_block_lead === "north" ? "North" : "South"} lead · ${controls.yard_block_from_minute}–${controls.yard_block_to_minute} min` : "Off"}</strong></div>
+            <select aria-label="Dutton yard lead blocked" value={controls.yard_block_lead ?? "off"}
+              onChange={(event) => update("yard_block_lead", event.target.value === "off" ? null : event.target.value as "north" | "south")}>
+              <option value="off">Both leads open</option><option value="north">North lead (to Northfield)</option><option value="south">South lead (to Albert St crossover)</option>
+            </select>
+          </label>
+          {controls.yard_block_lead && (
+            <div className="holdRow">
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="Yard block from minute" type="number" min="0" max="59" value={controls.yard_block_from_minute}
+                    onChange={(event) => update("yard_block_from_minute", Number(event.target.value))} />
+                  <input aria-label="Yard block to minute" type="number" min="1" max="90" value={controls.yard_block_to_minute}
+                    onChange={(event) => update("yard_block_to_minute", Number(event.target.value))} />
+                </span>
+              </label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>UW Station blockage</span><strong>{controls.uw_block
+              ? `${controls.uw_block === "berth" ? `Berth ${controls.uw_block_berth}` : "Phillip St exit"} · ${controls.uw_block_from_minute}–${controls.uw_block_to_minute} min` : "Off"}</strong></div>
+            <select aria-label="UW Station blockage" value={controls.uw_block ?? "off"}
+              onChange={(event) => update("uw_block", event.target.value === "off" ? null : event.target.value as "berth" | "exit")}>
+              <option value="off">None</option><option value="berth">Out-of-service bus in a berth</option><option value="exit">Phillip Street exit blocked</option>
+            </select>
+          </label>
+          {controls.uw_block && (
+            <div className="holdRow">
+              {controls.uw_block === "berth" && (
+                <label>
+                  <span>Berth</span>
+                  <select aria-label="Blocked berth" value={controls.uw_block_berth}
+                    onChange={(event) => update("uw_block_berth", event.target.value)}>
+                    {UW.platforms.flatMap((p) => p.berths).map((b) => <option key={b.id} value={b.id}>{b.id}</option>)}
+                  </select>
+                </label>
+              )}
+              <label>
+                <span>Minutes</span>
+                <span className="minuteRange">
+                  <input aria-label="UW block from minute" type="number" min="0" max="59" value={controls.uw_block_from_minute}
+                    onChange={(event) => update("uw_block_from_minute", Number(event.target.value))} />
+                  <input aria-label="UW block to minute" type="number" min="1" max="90" value={controls.uw_block_to_minute}
+                    onChange={(event) => update("uw_block_to_minute", Number(event.target.value))} />
+                </span>
+              </label>
+            </div>
+          )}
           <button className="runButton" disabled={loading}>
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>
@@ -607,6 +734,8 @@ export default function Home() {
             <div><span>ION transfers to the bus</span><strong>{smart ? `${smart.ion_transfers_boarded} of ${smart.ion_transfers}` : "—"}</strong></div>
             <div><span>ION transfer wait</span><strong>{smart ? `${smart.average_transfer_wait.toFixed(1)} min` : "—"}</strong></div>
             <div><span>Latest ION train</span><strong>{smart ? `+${smart.ion_max_delay} min` : "—"}</strong></div>
+            <div><span>Connection holds</span><strong>{smart ? `${smart.connection_holds ?? 0} · ${smart.connection_hold_minutes ?? 0} min` : "—"}</strong></div>
+            <div><span>Transfers boarded (baseline → adaptive)</span><strong>{baseline && smart ? `${baseline.ion_transfers_boarded} → ${smart.ion_transfers_boarded} of ${smart.ion_transfers}` : "—"}</strong></div>
           </div>
         </section>
       </div>

@@ -162,10 +162,16 @@ class TransferTests(unittest.TestCase):
                     self.assertEqual(train["nose_m"], plan.nose(by_id[train["trip_id"]], tick["minute"] * 60.0))
 
     def test_adaptive_controller_names_the_ion_train_it_is_staging_for(self):
+        # Stations report the ION trains they expect (predicted from where the
+        # trains are now) and ask for capacity; dispatch answers each request.
         plan = IonPlan(transfer_demand=240, delay_min=4)
         sim = run(plan)
-        decisions = [e for e in sim.events if e["kind"] == "decision" and "ION-" in e.get("reason", "")]
-        self.assertTrue(decisions, "a pre-staging decision cites the incoming ION train")
+        reports = [d for d in sim.decisions if d["level"] == "station" and d["chosen"] == "recommend: request extra capacity"]
+        self.assertTrue(any("ION-" in o["reason"] for d in reports for o in d["options"]),
+                        "a capacity request cites the incoming ION trains")
+        answers = [d for d in sim.decisions if d["level"] == "dispatch" and "asks for extra capacity" in d["trigger"]]
+        self.assertTrue(answers)
+        self.assertTrue(all(len(d["options"]) == 2 and d["chosen"] in [o["option"] for o in d["options"]] for d in answers))
         baseline = run(IonPlan(transfer_demand=240, delay_min=4), intelligent=False)
         self.assertEqual(baseline.metrics.buses_staged, 0)
 

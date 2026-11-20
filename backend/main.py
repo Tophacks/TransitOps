@@ -1,6 +1,6 @@
 from copy import deepcopy
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,6 +38,26 @@ class SimulationRequest(BaseModel):
     platform_hold_platform: Literal["1", "2"] = "2"
     platform_hold_minute: int = Field(default=20, ge=0, le=59)
     platform_hold_minutes: int = Field(default=12, ge=1, le=40)
+    # A track closure on the ION line (e.g. track work): trains of that
+    # direction divert over the other track if a valid single-track section
+    # exists, else hold until it reopens.
+    closure_track: Literal["north", "south"] | None = None
+    closure_from_station: str = "Grand River Hospital Station"
+    closure_to_station: str = "Central Station"
+    closure_from_minute: int = Field(default=15, ge=0, le=59)
+    closure_to_minute: int = Field(default=45, ge=1, le=90)
+    # Dutton yard: a train found faulty on arrival at a terminal from this minute
+    # is withdrawn and returns to the yard; a yard lead can be blocked.
+    fault_terminal: Literal["fairway", "conestoga"] | None = None
+    fault_minute: int = Field(default=15, ge=0, le=59)
+    yard_block_lead: Literal["north", "south"] | None = None
+    yard_block_from_minute: int = Field(default=10, ge=0, le=59)
+    yard_block_to_minute: int = Field(default=50, ge=1, le=90)
+    # UW Station: a berth occupied by an out-of-service bus, or the Phillip Street exit blocked.
+    uw_block: Literal["berth", "exit"] | None = None
+    uw_block_berth: str = "P6-1078-1"
+    uw_block_from_minute: int = Field(default=10, ge=0, le=59)
+    uw_block_to_minute: int = Field(default=58, ge=1, le=90)
 
 
 def metrics_to_dict(metrics):
@@ -55,6 +75,13 @@ def metrics_to_dict(metrics):
         "average_transfer_wait": round(metrics.average_transfer_wait_minutes, 2),
         "ion_trains_peak": metrics.ion_trains_peak,
         "ion_max_delay": round(metrics.ion_max_delay_minutes, 1),
+        "connection_holds": metrics.connection_holds,
+        "connection_hold_minutes": metrics.connection_hold_minutes,
+        "hold_onboard_rider_minutes": round(metrics.hold_onboard_rider_minutes, 1),
+        "hold_downstream_rider_minutes": round(metrics.hold_downstream_rider_minutes, 1),
+        # every rider's wait, including riders still waiting when the hour ends
+        "total_wait_rider_minutes": round(metrics.cumulative_wait_minutes + metrics.unserved_wait_minutes, 1),
+        "total_transfer_wait_rider_minutes": round(metrics.cumulative_transfer_wait + metrics.unserved_transfer_wait_minutes, 1),
     }
 
 
@@ -115,6 +142,48 @@ def platform_hold(payload: SimulationRequest):
     }
 
 
+def closures(payload: SimulationRequest):
+    if payload.closure_track is None:
+        return None
+    import rail_ops
+    names = {st["name"] for st in rail_ops.NETWORK["stations"][payload.closure_track]}
+    for name in (payload.closure_from_station, payload.closure_to_station):
+        if name not in names:
+            raise HTTPException(status_code=422, detail=f"{name!r} is not a {payload.closure_track}bound ION station")
+    return [{
+        "id": "C1", "track": payload.closure_track,
+        "from_station": payload.closure_from_station, "to_station": payload.closure_to_station,
+        "from_minute": payload.closure_from_minute, "to_minute": max(payload.closure_from_minute + 1, payload.closure_to_minute),
+        "reason": "track work",
+    }]
+
+
+def fault(payload: SimulationRequest):
+    if payload.fault_terminal is None:
+        return None
+    return {"terminal": payload.fault_terminal, "minute": payload.fault_minute}
+
+
+def yard_block(payload: SimulationRequest):
+    if payload.yard_block_lead is None:
+        return None
+    return {"lead": payload.yard_block_lead, "from_minute": payload.yard_block_from_minute,
+            "to_minute": max(payload.yard_block_from_minute + 1, payload.yard_block_to_minute)}
+
+
+def uw_block(payload: SimulationRequest):
+    if payload.uw_block is None:
+        return None
+    import uw_station
+    window = {"from_s": payload.uw_block_from_minute * 60.0,
+              "to_s": max(payload.uw_block_from_minute + 1, payload.uw_block_to_minute) * 60.0}
+    if payload.uw_block == "exit":
+        return {"exit": True, **window}
+    if payload.uw_block_berth not in uw_station.BERTHS:
+        raise HTTPException(status_code=422, detail=f"{payload.uw_block_berth!r} is not a UW Station berth")
+    return {"berth": payload.uw_block_berth, **window}
+
+
 def ion_plan(payload: SimulationRequest, reassign: bool = True):
     """The ION run: physical trains through both terminals. The adaptive case
     lets dispatch give a threatened trip to another train; the baseline only
@@ -126,6 +195,9 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
         delay_min=payload.train_delay,
         platform_hold=platform_hold(payload),
         reassign=reassign,
+        closures=closures(payload),
+        fault=fault(payload),
+        yard_block=yard_block(payload),
     )
 
 
@@ -145,6 +217,7 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         surge_passengers=payload.surge_passengers,
         breakdown_minute=payload.breakdown_minute,
         emergency_dispatch_minute=payload.emergency_dispatch_minute,
+        uw_block=uw_block(payload),
     )
     metrics = sim.run()
 
@@ -153,6 +226,11 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         "events": sim.events,
         "timeline": sim.timeline,
         "ion": plan.schedule(),
+        # bus decisions: UW Station agents, station reports, holds, capacity
+        "decisions": sim.decisions,
+        # every vehicle on UW Station's roadway, second by second (uw_station.py)
+        "uw": {"block": uw_block(payload), "vehicles": sim.uw.plans() if sim.uw else [],
+               "metrics": sim.uw.metrics() if sim.uw else None},
     }
 
 

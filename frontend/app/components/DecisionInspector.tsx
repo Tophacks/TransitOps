@@ -21,7 +21,8 @@ type Props = {
   hold?: { terminal: string; platform: string; minute: number; minutes: number } | null;
 };
 
-const LEVEL = { vehicle: "Train", station: "Station control", dispatch: "Dispatch" } as const;
+const LEVEL = { vehicle: "Vehicle agent", station: "Station control", dispatch: "Dispatch" } as const;
+const PLACE: Record<string, string> = { fairway: "Fairway", conestoga: "Conestoga", uw: "UW Station", central: "Central bus stop", line: "ION line", yard: "Dutton yard" };
 
 export function clock(t: number) {
   const s = Math.round(t);
@@ -66,7 +67,7 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
       <header>
         <button type="button" className="inspectorToggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           <strong>Decision Inspector</strong>
-          <span>{vehicle ? `${vehicle} only` : `ION terminals · ${decisions.filter((d) => d.t >= 0 && notable(d)).length} decisions`}</span>
+          <span>{vehicle ? `${vehicle} only` : `ION, yard, UW Station and bus connections · ${decisions.filter((d) => d.t >= 0 && notable(d)).length} decisions`}</span>
         </button>
       </header>
       {open && (
@@ -81,7 +82,7 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
             <article className="decisionCard" data-decision={focus.id}>
               <div className="decisionMeta">
                 <span className={`decisionLevel level-${focus.level}`}>{LEVEL[focus.level]}</span>
-                <span>{clock(focus.t)} · {focus.terminal === "fairway" ? "Fairway" : "Conestoga"}</span>
+                <span>{clock(focus.t)} · {PLACE[focus.terminal] ?? focus.terminal}</span>
               </div>
               <strong>{focus.vehicle_id}{focus.trip_id ? ` · trip ${focus.trip_id}` : ""}</strong>
               <p><em>What changed</em>{focus.trigger}</p>
@@ -103,7 +104,7 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
               </div>
             </article>
           ) : (
-            <p className="decisionEmpty">No terminal decisions yet at {clock(now)}.</p>
+            <p className="decisionEmpty">No decisions yet at {clock(now)}.</p>
           )}
           {listed.length > 1 && (
             <ol className="decisionList">

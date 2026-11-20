@@ -1,7 +1,8 @@
 import { Run, type Curve } from "./kinematics.ts";
 import type { IonTrack } from "./corridor.ts";
 import { bearing, deltaMetres, lerpPath, type LonLat, type PathPoint } from "./path.ts";
-import { lineNose, moveProfile, type TerminalsData } from "./terminals.ts";
+import { lineNose, moveProfile, routeCap, ION_ACCEL as T_ACCEL, ION_DECEL as T_DECEL, type TerminalRoute, type TerminalsData } from "./terminals.ts";
+import { Profile } from "./profile.ts";
 
 // ION light rail from the Python simulator (backend/ion.py). The API returns
 // the timetable: each trip's terminal departure and every station-to-station
@@ -49,6 +50,10 @@ export type IonSchedule = {
   decisions: RailDecision[];
   holds: { vehicle_id: string; terminal: string; platform: string; from_s: number; until_s: number; reason: string }[];
   metrics: RailMetrics;
+  /** line diversions used in this run (closures), keyed by route id */
+  routes?: Record<string, TerminalRoute & { line_s: number[]; stops: { name: string; at_m: number; track: string }[] }>;
+  closures?: { id: string; track: string; from_station: string; to_station: string; from_minute: number; to_minute: number; plan: string; diversion: string | null }[];
+  sections?: Record<string, { vehicle_id: string; trip: string; direction: string; from_s: number; release_s: number | null; role: string }[]>;
   platform_hold: { terminal: string; platform: string; minute: number; minutes: number; reason: string } | null;
 };
 
@@ -85,6 +90,8 @@ export type RailDecision = {
   options: { option: string; feasible: boolean; reason: string; estimate_s: number | null }[];
   chosen: string;
   outcome: string;
+  /** where to look on the map (bus decisions at a stop) */
+  location?: [number, number];
 };
 
 export type RailMetrics = {
@@ -190,18 +197,51 @@ export class IonTimetable {
       return { segment: seg, s: seg.s0 + run.distance(x), speed: run.speedAt(x), path: this.tracks[seg.line].path };
     }
     if (seg.line) return { segment: seg, s: seg.s0, speed: 0, path: this.tracks[seg.line].path };
-    const route = this.terminals.terminals[seg.terminal as "fairway"].routes[seg.route as string];
+    const route = this.route(seg);
     if (seg.kind === "move") {
-      const profile = moveProfile(this.terminals, seg.terminal as string, seg.route as string, seg.s0, seg.s1);
+      const profile = seg.terminal === "network"
+        ? this.networkProfile(seg.route as string, seg.s0, seg.s1)
+        : moveProfile(this.terminals, seg.terminal as string, seg.route as string, seg.s0, seg.s1);
       return { segment: seg, s: seg.s0 + profile.distance(x), speed: profile.speed(x), path: route.path };
     }
     return { segment: seg, s: seg.s0, speed: 0, path: route.path };
+  }
+
+  private readonly networkProfiles = new Map<string, Profile>();
+
+  /** A terminal route, or a line diversion sent with the schedule. */
+  route(seg: PlanSegment): TerminalRoute {
+    if (seg.terminal === "network") return (this.schedule.routes ?? {})[seg.route as string];
+    return this.terminals.terminals[seg.terminal as "fairway"].routes[seg.route as string];
+  }
+
+  private networkProfile(id: string, s0: number, s1: number) {
+    const key = `${id}|${s0.toFixed(3)}|${s1.toFixed(3)}`;
+    let p = this.networkProfiles.get(key);
+    if (!p) {
+      const r = (this.schedule.routes ?? {})[id];
+      p = new Profile(s1 - s0, routeCap(r, s0), { v0: 0, stop: true, accel: T_ACCEL, decel: T_DECEL });
+      this.networkProfiles.set(key, p);
+    }
+    return p;
   }
 
   /** A path position as a distance along the line (rail_ops.line_nose). */
   lineNose(point: PlanPoint) {
     const seg = point.segment;
     if (seg.line) return point.s;
+    if (seg.terminal === "network") {
+      const r = (this.schedule.routes ?? {})[seg.route as string];
+      const path = r.path;
+      for (let i = 0; i + 1 < path.length; i += 1) {
+        if (path[i][2] <= point.s && point.s <= path[i + 1][2]) {
+          const span = path[i + 1][2] - path[i][2];
+          const f = span ? (point.s - path[i][2]) / span : 0;
+          return r.line_s[i] + (r.line_s[i + 1] - r.line_s[i]) * f;
+        }
+      }
+      return point.s <= path[0][2] ? r.line_s[0] : r.line_s[r.line_s.length - 1];
+    }
     const route = this.terminals.terminals[seg.terminal as "fairway"].routes[seg.route as string];
     return lineNose(route, point.s, this.tracks[route.line.direction].length_m);
   }
@@ -252,6 +292,10 @@ export class IonTimetable {
 
   private nextStation(seg: PlanSegment, direction: Direction) {
     if (seg.kind === "run" && seg.leg !== undefined) return this.lines[direction].legs[seg.leg].toStation;
+    if (seg.route && seg.terminal === "network") {
+      const r = (this.schedule.routes ?? {})[seg.route];
+      return r?.stops.find((st) => st.at_m >= seg.s1 - 0.5)?.name;
+    }
     if (seg.route) {
       const route = this.terminals.terminals[seg.terminal as "fairway"].routes[seg.route];
       return route.kind === "arrive" ? this.terminals.terminals[seg.terminal as "fairway"].station : route.line.to_station;

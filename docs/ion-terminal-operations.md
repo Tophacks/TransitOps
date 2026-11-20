@@ -52,8 +52,8 @@ It gives the trip to another train only if all of these hold:
 - the swap gets the trip out at least 2 minutes earlier (`SWAP_GAIN_S`).
 
 The two trains then exchange trips. The rejected options are recorded with
-their reasons, including "send a spare", which is never feasible yet: the
-Dutton Drive yard is not connected to the simulated track.
+their reasons. Spares from the Dutton Drive yard are listed too, with their
+earliest release time; see [ion-yard.md](ion-yard.md).
 
 ## Terminal trackwork and moves
 
@@ -89,7 +89,7 @@ trackwork is drawn from OSM.
 | Stopping point | 7 m short of the track end | Not mapped |
 | Approach speed | 12 m/s from the handover to the home signal | Not mapped |
 | Swap threshold | 2 min | Policy choice |
-| Fleet | sized from the actual round trip: 11 trains at an 8-minute headway | Real fleet is 14 LRVs (spares and maintenance not modelled) |
+| Fleet | sized from the actual round trip: 11 trains at an 8-minute headway | GRT lists 15 LRVs. See [yard fleet allocation](ion-yard.md#fleet-and-states). |
 | Vehicle IDs | `LRV501…` | Illustrative, not real fleet assignments |
 | Platform hold | the train at (or next to stop at) the platform cannot leave until the hold ends | Scenario input ("door fault") |
 

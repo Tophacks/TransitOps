@@ -70,6 +70,11 @@ INTERSECTION_GEO = {
 YARD_GEO = (corridor.STOPS["YARD"]["lon"], corridor.STOPS["YARD"]["lat"])
 
 
+def _clock(seconds):
+    s = int(round(seconds))
+    return f"{s // 60:02d}:{s % 60:02d}"
+
+
 # Rail-to-bus connections are timed in seconds, not whole minutes. A transfer
 # rider can board from the moment their train stops plus the walk to the bus
 # stop; a bus boards everyone already eligible when its doors open, and keeps
@@ -77,6 +82,16 @@ YARD_GEO = (corridor.STOPS["YARD"]["lon"], corridor.STOPS["YARD"]["lat"])
 # DOOR_CLOSE_S before it pulls out. Both values are modelled.
 TRANSFER_WALK_S = {"CENTRAL": 60.0, "UW": 60.0}
 DOOR_CLOSE_S = 5.0
+
+# Connection holds (dispatch, adaptive controller only). When a bus with free
+# seats is about to close its doors at a transfer hub and ION riders will be
+# eligible within CONNECTION_HOLD_MAX_MIN, dispatch weighs holding it for 1..3
+# whole minutes: transfer rider-minutes saved (each rider's exact eligibility,
+# train stop + walk, against the next bus's predicted arrival) versus the
+# rider-minutes the hold costs (riders onboard, and riders waiting at the
+# stops the bus serves next). It holds only for a net saving. Modelled policy.
+CONNECTION_HOLD_STOPS = ("UW", "CENTRAL")
+CONNECTION_HOLD_MAX_MIN = 3
 
 
 class TransitSimulation:
@@ -91,6 +106,8 @@ class TransitSimulation:
     STAGING_MIN_GAP = 7          # minutes since the previous yard release
     STAGING_PULLS_FORWARD = True  # the next 10-minute release is skipped
     STAGING_RESERVE = 1           # buses that must stay in the yard
+    STAGING_MAX_GAP = 15          # minutes from a pulled-forward release to the scheduled one after it
+    STAGING_ON_REQUEST = True     # pre-stage only when a station the bus can reach in time asks for capacity
     def __init__(
         self,
         buses,
@@ -105,8 +122,14 @@ class TransitSimulation:
         surge_minute=None,
         surge_passengers=0,
         emergency_dispatch_minute=None,
+        connection_holds=None,
+        uw_block=None,
+        uw_station=True,
     ):
         self.buses = buses
+        # Connection holds at UW and Central: on with the adaptive controller.
+        self.connection_holds = intelligent if connection_holds is None else connection_holds
+        self.decisions = []
         # ION trains on the real track: their arrivals at Central and UW bring
         # riders who transfer to the corridor bus (see ion.py).
         self.ion = ion_plan
@@ -143,6 +166,15 @@ class TransitSimulation:
         self._spawn_passengers("CENTRAL", initial_queue, initial=True)
         self._spawn_passengers("UW", 12, initial=True)
         self._spawn_passengers("WATERLOO_SQUARE", 8, initial=True)
+        # UW Station in seconds: buses as agents on Transit Plaza Road (uw_station.py).
+        self.reports = {}
+        self.last_recommendation = {}
+        self.last_recommendation_answered = None
+        self.capacity_answered = set()
+        self.uw = None
+        if uw_station:
+            from uw_station import UwStation
+            self.uw = UwStation(self, block=uw_block, seed=seed, adaptive=intelligent)
 
     def log(self, message, kind="info", *, bus_id=None, reason=None, train_id=None):
         event = {"minute": self.time, "message": message, "kind": kind}
@@ -252,13 +284,15 @@ class TransitSimulation:
     def _upcoming_transfers(self, lookahead=10):
         """ION arrivals at Central and UW in the next `lookahead` minutes.
 
-        The controller sees the live ION timetable, delays included.
+        Only what is known now: arrived trains and predicted arrivals (ion.predict_arrival).
         """
         upcoming = []
-        for at, trip, stop_id, riders in self.hub_arrivals:
-            until = math.floor(at / 60) - self.time
-            if 0 < until <= lookahead and riders:
-                upcoming.append((until, trip, stop_id, riders))
+        now = self.time * 60.0
+        for stop_id in ("CENTRAL", "UW"):
+            for at, trip, riders, _ in self._predicted_arrivals(stop_id, now):
+                until = math.floor(at / 60) - self.time
+                if 0 < until <= lookahead and riders:
+                    upcoming.append((until, trip, stop_id, riders))
         return upcoming
 
     def _near_term_hub_demand(self, lookahead=10):
@@ -366,7 +400,20 @@ class TransitSimulation:
             since = None if self.last_release is None else self.time - self.last_release
             spaced = since is None or since >= self.STAGING_MIN_GAP
             spare = len(yard) > self.STAGING_RESERVE
-            if demand > threshold and spaced and spare:
+            asked = [r for r in self.reports.values() if r["recommendation"] == "request extra capacity"]
+            if asked and self.last_recommendation_answered != self.time and \
+                    any(self.last_recommendation.get(r["stop"]) == r["recommendation"] for r in asked):
+                self._answer_capacity(asked, yard, spaced, spare, since, demand, threshold)
+            # Pulling a release forward takes the next scheduled slot, so the gap to the
+            # release after that grows: never beyond STAGING_MAX_GAP minutes.
+            following = (self.time // 10 + 2) * 10
+            bounded = not self.STAGING_PULLS_FORWARD or self.time % 10 == 0 or following - self.time <= self.STAGING_MAX_GAP
+            # A bus from the yard reaches Central first; it can answer only a request
+            # from a station it reaches within the station's horizon.
+            reach = {"CENTRAL": YARD_BASE_MINUTES, "UW": YARD_BASE_MINUTES + 1 + SEGMENT_BASE_MINUTES[3]}
+            requested = (any(reach[r["stop"]] * 60.0 <= self.STATION_HORIZON_S for r in asked)
+                         if self.STAGING_ON_REQUEST else True)
+            if demand > threshold and spaced and spare and bounded and requested:
                 trains = sorted(self._upcoming_transfers(), key=lambda item: -item[3])
                 ion_note = ""
                 if trains and trains[0][3] >= 10:
@@ -381,6 +428,41 @@ class TransitSimulation:
                 )
                 if self.STAGING_PULLS_FORWARD and self.time % 10:
                     self.pulled_forward_slot = (self.time // 10 + 1) * 10
+
+    def _answer_capacity(self, asked, yard, spaced, spare, since, demand, threshold):
+        """Dispatch's answer to a station's request for extra capacity: release a
+        reserve bus now, or not, under the staging rules."""
+        self.last_recommendation_answered = self.time
+        # Answer first the station a bus from the yard reaches soonest (Central).
+        r = sorted(asked, key=lambda x: x["stop"] != "CENTRAL")[0]
+        key = (r["stop"], self.time // 10)
+        if key in self.capacity_answered:
+            return
+        self.capacity_answered.add(key)
+        release_ok = spaced and spare
+        reasons = []
+        if not spaced:
+            reasons.append(f"a bus left the yard {since} min ago (minimum {self.STAGING_MIN_GAP})")
+        if not spare:
+            reasons.append(f"only {len(yard)} bus(es) in the yard, {self.STAGING_RESERVE} kept in reserve")
+        nxt = (self.time // 10 + 1) * 10
+        options = [
+            {"option": f"release {yard[0].bus_id} now", "feasible": release_ok,
+             "reason": ("reaches Central in about " f"{YARD_BASE_MINUTES} min" if release_ok else "; ".join(reasons)),
+             "estimate_s": None},
+            {"option": f"keep the scheduled release at {nxt:02d}:00", "feasible": True,
+             "reason": f"forecast demand {demand} against the staging threshold {threshold}", "estimate_s": None},
+        ]
+        chosen = options[0]["option"] if release_ok and demand > threshold else options[1]["option"]
+        if release_ok and demand <= threshold:
+            options[0]["reason"] += f"; but demand {demand} is under the threshold {threshold}"
+        self.decisions.append({
+            "id": f"C{len(self.decisions) + 1:03d}", "t": self.time * 60.0, "minute": self.time, "level": "dispatch",
+            "terminal": r["stop"].lower(), "vehicle_id": "dispatch", "trip_id": None,
+            "trigger": f"{self.stops[r['stop']].name} asks for extra capacity: {r['reason']}",
+            "options": options, "chosen": chosen, "outcome": "",
+            "location": [GEO_LAYOUT[r['stop']][0], GEO_LAYOUT[r['stop']][1]],
+        })
 
     def _alight_and_board(self, bus, stop_id):
         staying = []
@@ -428,21 +510,309 @@ class TransitSimulation:
         bus.onboard.extend(boarding)
         return boarding
 
-    def _board_until_doors_close(self, bus, stop_id):
+    def _board_until_doors_close(self, bus, stop_id, close_s=None):
         """Riders who became eligible while the bus dwelt board until its doors
         close, DOOR_CLOSE_S before it departs at this minute."""
         if bus.doors_open_s is None:
             return
         stop = self.stops[stop_id]
-        close_s = self.time * 60.0 - DOOR_CLOSE_S
+        close_s = self.time * 60.0 - DOOR_CLOSE_S if close_s is None else close_s
         late = self._board(bus, stop, close_s, bus.doors_open_s)
         if late:
             self.log(f"{bus.bus_id} at {stop.name}: {len(late)} more on before the doors closed", "boarding")
+        decision = getattr(bus, "pending_decision", None)
+        if decision is not None and bus.held_minutes:
+            transfers = sum(1 for p in late if p.source == "ion")
+            decision["outcome"] = (f"held until {_clock(self.time * 60.0)}: {transfers} ION transfer riders and "
+                                   f"{len(late) - transfers} others boarded during the hold")
+            self._check_prediction(decision, stop_id, close_s)
+            bus.pending_decision = None
         bus.doors_open_s = None
+
+    # --- UW Station callbacks (seconds) -------------------------------------------
+    def station_set_down(self, bus, t):
+        """Doors open at the set-down berth: riders for UW get off."""
+        staying, off = [], 0
+        for p in bus.onboard:
+            if p.destination == "UW":
+                p.completed_time = math.floor(t / 60)
+                self.metrics.completed_trips += 1
+                off += 1
+            else:
+                staying.append(p)
+        bus.onboard = staying
+        if off:
+            self.log(f"{bus.bus_id} at UW platform 4: {off} off", "boarding", bus_id=bus.bus_id)
+        return off
+
+    def station_doors_open(self, bus, t):
+        bus.doors_open_s = t
+        stop = self.stops["UW"]
+        boarding = self._board(bus, stop, t, t)
+        if boarding:
+            self.log(f"{bus.bus_id} at UW platform 6: {len(boarding)} on ({_clock(t)})", "boarding", bus_id=bus.bus_id)
+
+    def station_doors_closing(self, bus, t):
+        """Doors due to close at t: board late riders, then dispatch may hold.
+        Returns the seconds to hold (0: close now)."""
+        opened = bus.doors_open_s
+        self._board_until_doors_close(bus, "UW", close_s=t)
+        hold = self._connection_hold(bus, "UW", opened, close_s=t)
+        if hold:
+            bus.doors_open_s = opened
+            return hold * 60.0
+        return 0.0
+
+    def station_exit(self, bus, t):
+        """The bus has turned onto Phillip Street: its next leg starts."""
+        bus.at_station = False
+        bus.doors_open_s = None
+        bus.hold_evaluated = False
+        bus.held_minutes = 0
+        bus.current_stop_index = ROUTE.index("UW")
+        bus.target_stop_index = (bus.current_stop_index + 1) % len(ROUTE)
+        bus.state = BusState.EN_ROUTE
+        bus.segment_elapsed = 0
+        bus.segment_progress = 0.0
+        bus.segment_minutes = self._travel_minutes(bus)
+        bus.station_exit_s = t
+
+    def _predicted_arrivals(self, stop_id, now):
+        """ION arrivals at a hub as known at `now`: confirmed if the train is
+        there, else predicted from where it is (ion.predict_arrival)."""
+        name = next(n for n, s in ion.HUBS.items() if s == stop_id)
+        out = []
+        for trip in self.ion.trips:
+            riders = trip.transfers.get(stop_id, 0)
+            if not riders or not trip.station_times and trip.scheduled_s + trip.trip_hold_s > now + 3600:
+                continue
+            at, kind = self.ion.predict_arrival(trip, name, now)
+            out.append((at, trip, riders, kind))
+        return sorted(out, key=lambda x: (x[0], x[1].train_id))
+
+    def _check_prediction(self, decision, stop_id, close_s):
+        """After a hold: how the predicted eligibility compared with what happened."""
+        name = next(n for n, s in ion.HUBS.items() if s == stop_id)
+        notes = []
+        for train, predicted in decision.get("predicted", {}).items():
+            trip = next(x for x in self.ion.trips if x.train_id == train)
+            actual = trip.station_times.get(name)
+            if actual is not None:
+                actual += TRANSFER_WALK_S[stop_id]
+                notes.append(f"{train} riders eligible {_clock(actual)} (predicted {_clock(predicted)})")
+        if notes:
+            decision["outcome"] += "; " + "; ".join(notes)
+
+    # --- station reports ------------------------------------------------------------
+    STATION_HORIZON_S = 600.0      # predicted transfer arrivals looked at
+    CAPACITY_MARGIN = 10           # riders beyond the seats coming before a station asks for capacity
+
+    def _station_report(self, stop_id, now):
+        """What a hub station reports at `now`, from what it can know then:
+        riders confirmed in its queue, transfer riders predicted from the ION
+        trains' current positions, the buses coming with their free seats, and
+        blocked berths. It recommends a bounded hold or extra capacity."""
+        stop = self.stops[stop_id]
+        walk = TRANSFER_WALK_S[stop_id]
+        queue = [p for p in stop.queue if p.ready_s <= now]
+        predicted = [(at + walk, trip, riders, kind) for at, trip, riders, kind in self._predicted_arrivals(stop_id, now)
+                     if now < at + walk <= now + self.STATION_HORIZON_S]
+        coming = []
+        for b in self.buses:
+            if b.bus_id == self.breakdown_bus_id:
+                continue
+            if getattr(b, "at_station", False) and stop_id == "UW":
+                eta = 0
+            else:
+                eta = self._eta_minutes(b, stop_id)
+                if eta is None:
+                    eta = 0 if b.state == BusState.DWELLING and ROUTE[b.target_stop_index] == stop_id else None
+            if eta is not None and eta * 60.0 <= self.STATION_HORIZON_S:
+                coming.append((eta, b.bus_id, max(0, b.capacity - b.occupancy)))
+        coming.sort()
+        demand = len(queue) + sum(r for _, _, r, _ in predicted)
+        seats = sum(free for _, _, free in coming)
+        blocked = self.uw.blocked(now) if stop_id == "UW" and self.uw is not None else []
+        rec = "none"
+        why = ""
+        at_stop = [c for c in coming if c[0] == 0 and c[2] > 0]
+        soon = [x for x in predicted if x[2] and x[0] - now <= CONNECTION_HOLD_MAX_MIN * 60.0 + 60.0]
+        if at_stop and soon:
+            n = min(CONNECTION_HOLD_MAX_MIN, max(1, math.ceil((soon[0][0] - now - 55.0) / 60.0)))
+            rec = f"hold {at_stop[0][1]} up to {n} min"
+            why = (f"{soon[0][2]} riders from {soon[0][1].train_id} ({soon[0][3]}) eligible {_clock(soon[0][0])}; "
+                   f"{at_stop[0][1]} has {at_stop[0][2]} free seats")
+        elif demand > seats + self.CAPACITY_MARGIN:
+            rec = "request extra capacity"
+            why = f"{demand} riders (queue {len(queue)} + predicted {demand - len(queue)}) for {seats} seats in 10 min"
+        return {
+            "stop": stop_id, "t": now, "queue": len(queue), "transfers_waiting": sum(1 for p in queue if p.source == "ion"),
+            "predicted": [{"train": trip.train_id, "eligible_s": round(at, 1), "riders": r, "basis": kind}
+                          for at, trip, r, kind in predicted],
+            "buses": [{"bus": bid, "eta_min": eta, "free_seats": free} for eta, bid, free in coming],
+            "blocked_berths": blocked, "recommendation": rec, "reason": why,
+        }
+
+    def _station_reports(self):
+        now = self.time * 60.0
+        self.reports = {sid: self._station_report(sid, now) for sid in CONNECTION_HOLD_STOPS}
+        for sid, r in self.reports.items():
+            last = self.last_recommendation.get(sid)
+            # A countdown (hold up to 3, 2, 1 min) is the same recommendation.
+            key = lambda rec: rec.split(" up to ")[0]  # noqa: E731
+            if r["recommendation"] != "none" and (last is None or key(r["recommendation"]) != key(last)) and self.connection_holds:
+                pred = "; ".join(f"{x['train']} {x['riders']} riders eligible {_clock(x['eligible_s'])} ({x['basis']})"
+                                 for x in r["predicted"][:3]) or "no ION transfers predicted"
+                buses = "; ".join(f"{b['bus']} in {b['eta_min']} min with {b['free_seats']} free seats"
+                                  for b in r["buses"][:3]) or "no bus within 10 min"
+                options = [
+                    {"option": "confirmed queue", "feasible": True, "reason": f"{r['queue']} riders "
+                     f"({r['transfers_waiting']} from ION)", "estimate_s": None},
+                    {"option": "predicted transfer arrivals", "feasible": True, "reason": pred, "estimate_s": None},
+                    {"option": "buses coming", "feasible": True, "reason": buses, "estimate_s": None},
+                ]
+                if r["blocked_berths"]:
+                    options.append({"option": "blocked berths", "feasible": False,
+                                    "reason": "; ".join(r["blocked_berths"]), "estimate_s": None})
+                self.decisions.append({
+                    "id": f"S{len(self.decisions) + 1:03d}", "t": now, "minute": self.time, "level": "station",
+                    "terminal": sid.lower(), "vehicle_id": self.stops[sid].name, "trip_id": None,
+                    "trigger": f"Station report: {r['reason']}", "options": options,
+                    "chosen": f"recommend: {r['recommendation']}", "outcome": "",
+                    "location": [GEO_LAYOUT[sid][0], GEO_LAYOUT[sid][1]],
+                })
+            self.last_recommendation[sid] = r["recommendation"]
+
+    def _eta_minutes(self, bus, stop_id):
+        """Dispatch's estimate of the minutes until `bus` opens its doors at
+        `stop_id`: what is left of its current leg, then scheduled leg times
+        and a minute's dwell at each stop on the way. Yard buses: the next
+        10-minute release, then the yard leg."""
+        target = ROUTE.index(stop_id)
+        if bus.state == BusState.YARD:
+            release = (self.time // 10 + 1) * 10 - self.time
+            minutes, index = release + YARD_BASE_MINUTES, 3
+        elif bus.state == BusState.DWELLING:
+            minutes, index = bus.dwell_minutes, bus.target_stop_index
+            if index == target:
+                return None  # standing there now
+            nxt = (index + 1) % len(ROUTE)
+            minutes += self._segment_base_minutes(index, nxt)
+            index = nxt
+        else:
+            minutes, index = max(0, bus.segment_minutes - bus.segment_elapsed), bus.target_stop_index
+        while index != target:
+            nxt = (index + 1) % len(ROUTE)
+            minutes += 1 + self._segment_base_minutes(index, nxt)
+            index = nxt
+        return minutes
+
+    def _connection_hold(self, bus, stop_id, opened, close_s=None):
+        """Weigh holding a bus at a transfer hub for incoming ION riders.
+        Returns the whole minutes to hold (0: leave now) and records the decision.
+
+        Only what is known when the doors are due to close is used: trains that
+        have arrived (confirmed) and the others' predicted arrivals from where
+        they are now (ion.predict_arrival), never the run's actual future."""
+        if not self.connection_holds or stop_id not in CONNECTION_HOLD_STOPS or bus.hold_evaluated or opened is None:
+            return 0
+        bus.hold_evaluated = True
+        close_s = self.time * 60.0 - DOOR_CLOSE_S if close_s is None else close_s
+        horizon = close_s + CONNECTION_HOLD_MAX_MIN * 60.0
+        walk = TRANSFER_WALK_S[stop_id]
+        known = self._predicted_arrivals(stop_id, close_s)
+        incoming = [(at + walk, trip, riders) for at, trip, riders, _ in known if close_s < at + walk <= horizon]
+        basis = {trip.train_id: kind for _, trip, _, kind in known}
+        if not incoming:
+            return 0
+        stop = self.stops[stop_id]
+        seats = max(0, bus.capacity - bus.occupancy)
+        others = [b for b in self.buses if b is not bus and b.bus_id != self.breakdown_bus_id]
+        etas = [(eta, b.bus_id) for b in others if (eta := self._eta_minutes(b, stop_id)) is not None]
+        next_eta, next_bus = min(etas) if etas else (None, None)
+        next_open_s = (self.time + next_eta) * 60.0 if next_eta is not None else (self.duration + 30) * 60.0
+        onboard = bus.occupancy
+        # Riders waiting at the stops this bus serves next also get it later.
+        nxt = (bus.target_stop_index + 1) % len(ROUTE)
+        downstream = sum(len(self.stops[ROUTE[(nxt + k) % len(ROUTE)]].queue) for k in range(2))
+        waiting_now = [p for p in stop.queue]
+        riders_in = sorted((ready, trip.train_id) for ready, trip, n in incoming for _ in range(n))
+        train_names = sorted({trip.train_id for _, trip, _ in incoming})
+        first_ready = riders_in[0][0]
+        options = []
+        best = (0.0, 0, None)
+        depart_cost = sum(max(0.0, max(next_open_s, ready) - ready) for ready, _ in riders_in) / 60.0
+        options.append({
+            "option": "depart on time", "feasible": True,
+            "reason": (f"{len(riders_in)} transfer riders wait for {next_bus or 'the next bus'}"
+                       f"{' (' + _clock(next_open_s) + ')' if next_bus else ''}: {depart_cost:.0f} rider-min"),
+            "estimate_s": None,
+        })
+        for h in range(1, CONNECTION_HOLD_MAX_MIN + 1):
+            new_close = close_s + h * 60.0
+            # Seats go in queue order: riders already waiting, then arrivals by time.
+            free = max(0, seats - len(waiting_now))
+            gained = [ready for ready, _ in riders_in if ready <= new_close][:free]
+            saved = sum(max(next_open_s, ready) - ready for ready in gained) / 60.0
+            cost_onboard = onboard * h
+            cost_down = downstream * h
+            net = saved - cost_onboard - cost_down
+            if seats == 0:
+                reason = "no free seats"
+                feasible = False
+            elif free == 0:
+                reason = f"its {seats} free seats go to the {len(waiting_now)} riders already waiting"
+                feasible = False
+            elif not gained:
+                reason = f"doors would close {_clock(new_close)}, before the first rider is eligible ({_clock(first_ready)})"
+                feasible = False
+            else:
+                reason = (f"boards {len(gained)} of {len(riders_in)} (doors close {_clock(new_close)}); saves "
+                          f"{saved:.0f} rider-min, costs {cost_onboard} onboard + {cost_down} waiting downstream: "
+                          f"net {net:+.0f}")
+                feasible = net > 0
+            options.append({"option": f"hold {h} min", "feasible": feasible, "reason": reason,
+                            "estimate_s": round(new_close + DOOR_CLOSE_S, 1)})
+            if feasible and net > best[0]:
+                best = (net, h, (len(gained), saved, cost_onboard, cost_down))
+        chosen = f"hold {best[1]} min" if best[1] else "depart on time"
+        decision = {
+            "id": f"B{len(self.decisions) + 1:03d}", "t": close_s, "minute": int(close_s // 60),
+            "level": "dispatch", "terminal": stop_id.lower(), "vehicle_id": bus.bus_id,
+            "trip_id": f"{stop_id}→{ROUTE[nxt]}",
+            "trigger": (f"{len(riders_in)} transfer riders from "
+                        f"{', '.join(n + ' (' + basis[n] + ')' for n in train_names)} eligible from "
+                        f"{_clock(first_ready)}; doors due to close {_clock(close_s)}; {seats} free seats, {onboard} onboard"),
+            "predicted": {n: round(min(at for at, trip, _ in incoming if trip.train_id == n), 1) for n in train_names},
+            "options": options, "chosen": chosen, "outcome": "",
+            "location": [GEO_LAYOUT[stop_id][0], GEO_LAYOUT[stop_id][1]],
+        }
+        rec = self._station_report(stop_id, close_s)["recommendation"]
+        if rec.startswith("hold"):
+            decision["trigger"] += f"; station recommended: {rec}"
+        self.decisions.append(decision)
+        bus.pending_decision = decision if best[1] else None
+        if not best[1]:
+            decision["outcome"] = f"doors closed {_clock(close_s)}"
+            self.log(f"{bus.bus_id} left {stop.name} on time: holding would not pay", "hold", bus_id=bus.bus_id,
+                     reason=decision["trigger"] + ". " + "; ".join(f"{o['option']}: {o['reason']}" for o in options))
+            return 0
+        h = best[1]
+        gained, saved, c_on, c_down = best[2]
+        bus.held_minutes = h
+        self.metrics.connection_holds += 1
+        self.metrics.connection_hold_minutes += h
+        self.metrics.hold_onboard_rider_minutes += c_on
+        self.metrics.hold_downstream_rider_minutes += c_down
+        decision["outcome"] = f"held at {stop.name} until {_clock(close_s + DOOR_CLOSE_S + h * 60.0)}"
+        self.log(f"{bus.bus_id} held {h} min at {stop.name} for {gained} ION transfer riders", "hold",
+                 bus_id=bus.bus_id, reason=decision["trigger"] + f". Saves {saved:.0f} rider-min for "
+                 f"{c_on + c_down} rider-min of delay ({c_on} onboard, {c_down} waiting downstream).")
+        return h
 
     def _advance_buses(self):
         for bus in self.buses:
-            if bus.state == BusState.YARD:
+            if bus.state == BusState.YARD or getattr(bus, "at_station", False):
                 continue
             if bus.bus_id == self.breakdown_bus_id and self.time < self.breakdown_until:
                 continue
@@ -453,7 +823,16 @@ class TransitSimulation:
             if bus.state == BusState.DWELLING:
                 bus.dwell_minutes -= 1
                 if bus.dwell_minutes <= 0:
-                    self._board_until_doors_close(bus, ROUTE[bus.target_stop_index])
+                    stop_id = ROUTE[bus.target_stop_index]
+                    opened = bus.doors_open_s
+                    self._board_until_doors_close(bus, stop_id)
+                    hold = self._connection_hold(bus, stop_id, opened)
+                    if hold:
+                        bus.doors_open_s = opened
+                        bus.dwell_minutes = hold
+                        continue
+                    bus.hold_evaluated = False
+                    bus.held_minutes = 0
                     bus.current_stop_index = bus.target_stop_index
                     bus.target_stop_index = (bus.current_stop_index + 1) % len(ROUTE)
                     bus.state = BusState.EN_ROUTE
@@ -466,9 +845,28 @@ class TransitSimulation:
             bus.segment_progress = min(
                 1.0, bus.segment_elapsed / max(1, bus.segment_minutes)
             )
+            if (self.uw is not None and ROUTE[bus.target_stop_index] == "UW"
+                    and bus.segment_elapsed == bus.segment_minutes - 1):
+                # Arriving at UW next minute: the leg was timed to the station, so the
+                # bus enters the roadway early enough to reach its set-down berth then.
+                bus.state = BusState.DWELLING
+                bus.at_station = True
+                bus.schedule_deviation = max(0, bus.segment_minutes - self._segment_base_minutes(
+                    bus.current_stop_index, bus.target_stop_index))
+                self.uw.arrive(bus, (self.time + 1) * 60.0 - self.uw.entry_lead_s())
+                continue
 
             if bus.segment_progress >= 1.0:
                 stop_id = ROUTE[bus.target_stop_index]
+                if stop_id == "UW" and self.uw is not None:
+                    # The station agent takes over at the Ring Road entrance.
+                    bus.state = BusState.DWELLING
+                    bus.at_station = True
+                    bus.segment_progress = 1.0
+                    bus.schedule_deviation = max(0, bus.segment_minutes - self._segment_base_minutes(
+                        bus.current_stop_index, bus.target_stop_index))
+                    self.uw.arrive(bus, self.time * 60.0)
+                    continue
                 self._alight_and_board(bus, stop_id)
                 bus.state = BusState.DWELLING
                 bus.dwell_minutes = 1
@@ -600,8 +998,11 @@ class TransitSimulation:
                 }
             )
 
+        snapshot["stations"] = {sid: {k: v for k, v in r.items() if k != "t"} for sid, r in self.reports.items()}
+        if self.uw is not None:
+            snapshot["uw"] = self.uw.snapshot(self.time * 60.0)
         snapshot["trains"] = self._train_snapshot()
-        self.metrics.ion_trains_peak = max(self.metrics.ion_trains_peak, len(snapshot["trains"]))
+        self.metrics.ion_trains_peak = max(self.metrics.ion_trains_peak, sum(1 for x in snapshot["trains"] if x["in_service"]))
         self.timeline.append(snapshot)
 
     def _train_snapshot(self):
@@ -612,6 +1013,15 @@ class TransitSimulation:
         for pose in self.ion.trains_at(t):
             trip = pose["trip"]
             if trip is None:
+                # A yard train, or one pulling out or returning (out of service).
+                lon, lat = pose["lonlat"]
+                out.append({
+                    "id": pose["vehicle_id"], "trip_id": pose["trip_id"], "direction": None,
+                    "nose_m": pose["nose_line"], "station": pose["station"],
+                    "next_station": pose["station"] or "Dutton yard", "lon": lon, "lat": lat,
+                    "delay_min": 0.0, "hold": "", "terminal": pose["terminal"], "activity": pose["note"],
+                    "transfers_ahead": {}, "state": pose["state"], "in_service": False,
+                })
                 continue
             line = self.ion.lines[trip.direction]
             ahead = [
@@ -636,6 +1046,7 @@ class TransitSimulation:
                 "terminal": pose["terminal"],
                 "activity": pose["note"],
                 "transfers_ahead": {stop_id: riders for stop_id, riders in ahead if riders},
+                "state": pose["state"], "in_service": True,
             })
         return out
 
@@ -659,12 +1070,26 @@ class TransitSimulation:
             self._process_train_arrivals()
             self._log_rail_decisions()
             self._scenario_events()
+            self._station_reports()
             self._dispatch_logic()
             self._advance_buses()
+            if self.uw is not None:
+                self.uw.advance_to((minute + 1) * 60.0)
             self._capture_snapshot()
 
         self.metrics.passengers_left_waiting = sum(
             len(stop.queue) for stop in self.stops.values()
         )
+        # Riders still waiting when the run ends have waited too: count them up
+        # to the end, so policies that leave more people behind are not flattered.
+        end_s = self.duration * 60.0
+        for stop in self.stops.values():
+            for p in stop.queue:
+                if p.ready_s < end_s:
+                    still = (end_s - p.ready_s) / 60.0
+                    self.metrics.unserved_wait_minutes += still
+                    if p.source == "ion":
+                        self.metrics.unserved_transfer_wait_minutes += still
+        self.decisions.sort(key=lambda d: d["t"])
         self.log("Corridor simulation complete", "system")
         return self.metrics

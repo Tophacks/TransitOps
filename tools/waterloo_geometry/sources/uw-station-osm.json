@@ -1,0 +1,823 @@
+{
+"version": "0.6",
+"generator": "OSM API 0.6 map call, bbox -80.5440,43.4705,-80.5375,43.4755 (2026-11-19), filtered",
+"copyright": "OpenStreetMap and contributors",
+"license": "http://opendatacommons.org/licenses/odbl/1-0/",
+"elements": [
+{
+"type": "node",
+"id": 298025663,
+"lat": 43.4749181,
+"lon": -80.5384083
+},
+{
+"type": "node",
+"id": 298025667,
+"lat": 43.4735625,
+"lon": -80.5419193,
+"tags": {
+"check_date": "2026-03-14",
+"direction": "both",
+"highway": "stop",
+"stop": "all"
+}
+},
+{
+"type": "node",
+"id": 1715025801,
+"lat": 43.473597,
+"lon": -80.5418299,
+"tags": {
+"bicycle": "yes",
+"crossing": "uncontrolled",
+"crossing:markings": "yes",
+"highway": "crossing"
+}
+},
+{
+"type": "node",
+"id": 1715025806,
+"lat": 43.4737031,
+"lon": -80.5415557,
+"tags": {
+"crossing:barrier": "yes",
+"crossing:bell": "yes",
+"crossing:light": "yes",
+"maxheight:signed": "no",
+"railway": "level_crossing"
+}
+},
+{
+"type": "node",
+"id": 1976894115,
+"lat": 43.4744807,
+"lon": -80.5395451
+},
+{
+"type": "node",
+"id": 4211142321,
+"lat": 43.4736726,
+"lon": -80.5416345,
+"tags": {
+"crossing:barrier": "yes",
+"crossing:bell": "yes",
+"crossing:light": "yes",
+"maxheight:signed": "no",
+"railway": "level_crossing"
+}
+},
+{
+"type": "node",
+"id": 8001833438,
+"lat": 43.4742269,
+"lon": -80.5402013,
+"tags": {
+"highway": "stop",
+"stop": "all"
+}
+},
+{
+"type": "node",
+"id": 9412123833,
+"lat": 43.4743264,
+"lon": -80.5399442
+},
+{
+"type": "node",
+"id": 9412123840,
+"lat": 43.4744138,
+"lon": -80.5404682
+},
+{
+"type": "node",
+"id": 9412123854,
+"lat": 43.4742175,
+"lon": -80.5398626
+},
+{
+"type": "node",
+"id": 9412123855,
+"lat": 43.4743836,
+"lon": -80.5394236
+},
+{
+"type": "node",
+"id": 9412123864,
+"lat": 43.4741735,
+"lon": -80.5403393,
+"tags": {
+"crossing": "uncontrolled",
+"crossing:markings": "ladder",
+"highway": "crossing",
+"tactile_paving": "yes"
+}
+},
+{
+"type": "node",
+"id": 9412123865,
+"lat": 43.4742714,
+"lon": -80.5400862,
+"tags": {
+"crossing": "uncontrolled",
+"crossing:markings": "ladder",
+"highway": "crossing",
+"tactile_paving": "yes"
+}
+},
+{
+"type": "node",
+"id": 9465038841,
+"lat": 43.4741051,
+"lon": -80.5405163
+},
+{
+"type": "node",
+"id": 9465038842,
+"lat": 43.4739724,
+"lon": -80.5408593
+},
+{
+"type": "node",
+"id": 9465038843,
+"lat": 43.4738022,
+"lon": -80.5412994
+},
+{
+"type": "node",
+"id": 9536176215,
+"lat": 43.4746681,
+"lon": -80.5406596
+},
+{
+"type": "node",
+"id": 9536176216,
+"lat": 43.4746818,
+"lon": -80.5406228
+},
+{
+"type": "node",
+"id": 9536179417,
+"lat": 43.4744199,
+"lon": -80.5404511
+},
+{
+"type": "node",
+"id": 9536179418,
+"lat": 43.4746749,
+"lon": -80.5406412
+},
+{
+"type": "node",
+"id": 9536179447,
+"lat": 43.4748822,
+"lon": -80.5385069,
+"tags": {
+"bicycle": "designated",
+"crossing": "marked",
+"crossing:island": "no",
+"crossing:markings": "dots",
+"highway": "crossing",
+"path": "crossing",
+"segregated": "no",
+"tactile_paving": "yes"
+}
+},
+{
+"type": "node",
+"id": 9536179455,
+"lat": 43.4737395,
+"lon": -80.5414614,
+"tags": {
+"direction": "backward",
+"highway": "stop"
+}
+},
+{
+"type": "node",
+"id": 9536179462,
+"lat": 43.473858,
+"lon": -80.5413839,
+"tags": {
+"bench": "yes",
+"bin": "no",
+"bus": "yes",
+"highway": "bus_stop",
+"name": "University of Waterloo Station",
+"network": "Grand River Transit",
+"network:short": "GRT",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "1260",
+"route_ref": "31;201",
+"shelter": "yes",
+"tactile_paving": "no"
+}
+},
+{
+"type": "node",
+"id": 9536179463,
+"lat": 43.4740364,
+"lon": -80.5409241,
+"tags": {
+"bench": "yes",
+"bus": "yes",
+"highway": "bus_stop",
+"name": "University of Waterloo Station",
+"network": "Grand River Transit",
+"network:short": "GRT",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "1262",
+"route_ref": "30",
+"shelter": "yes"
+}
+},
+{
+"type": "node",
+"id": 9536179464,
+"lat": 43.4740482,
+"lon": -80.5404298,
+"tags": {
+"bench": "yes",
+"bus": "yes",
+"highway": "bus_stop",
+"name": "University of Waterloo Station",
+"network": "Grand River Transit",
+"network:short": "GRT",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "1223",
+"route_ref": "201;19;31",
+"shelter": "yes"
+}
+},
+{
+"type": "node",
+"id": 9536179465,
+"lat": 43.4744791,
+"lon": -80.539797,
+"tags": {
+"bench": "yes",
+"bus": "yes",
+"highway": "bus_stop",
+"name": "University of Waterloo Station",
+"network": "Grand River Transit",
+"network:short": "GRT",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "1264",
+"route_ref": "9;30;301R",
+"shelter": "yes"
+}
+},
+{
+"type": "node",
+"id": 9536179466,
+"lat": 43.4743997,
+"lon": -80.5395392,
+"tags": {
+"bench": "yes",
+"bus": "yes",
+"highway": "bus_stop",
+"name": "University of Waterloo Station",
+"network": "Grand River Transit",
+"network:short": "GRT",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "1078",
+"route_ref": "9;13",
+"shelter": "yes",
+"tactile_paving": "no",
+"wheelchair": "yes"
+}
+},
+{
+"type": "node",
+"id": 9624655612,
+"lat": 43.4745623,
+"lon": -80.5393342
+},
+{
+"type": "node",
+"id": 9624655613,
+"lat": 43.4744077,
+"lon": -80.5404854
+},
+{
+"type": "node",
+"id": 12603085709,
+"lat": 43.4746739,
+"lon": -80.5390455
+},
+{
+"type": "node",
+"id": 12603085711,
+"lat": 43.4738081,
+"lon": -80.5410861
+},
+{
+"type": "node",
+"id": 12603085712,
+"lat": 43.474072,
+"lon": -80.5404038
+},
+{
+"type": "node",
+"id": 12603085713,
+"lat": 43.474015,
+"lon": -80.5403619
+},
+{
+"type": "node",
+"id": 12603085714,
+"lat": 43.4737511,
+"lon": -80.5410442
+},
+{
+"type": "node",
+"id": 12603085715,
+"lat": 43.4738402,
+"lon": -80.5414011
+},
+{
+"type": "node",
+"id": 12603085716,
+"lat": 43.4741875,
+"lon": -80.5404972
+},
+{
+"type": "node",
+"id": 12603085717,
+"lat": 43.4738944,
+"lon": -80.5414407
+},
+{
+"type": "node",
+"id": 12603085718,
+"lat": 43.4742417,
+"lon": -80.5405368
+},
+{
+"type": "node",
+"id": 12603085720,
+"lat": 43.4743756,
+"lon": -80.5400139
+},
+{
+"type": "node",
+"id": 12603085721,
+"lat": 43.4747442,
+"lon": -80.5390678
+},
+{
+"type": "node",
+"id": 12603085722,
+"lat": 43.4747998,
+"lon": -80.5391089
+},
+{
+"type": "node",
+"id": 12603085723,
+"lat": 43.4744311,
+"lon": -80.5400549
+},
+{
+"type": "node",
+"id": 12603085724,
+"lat": 43.4742701,
+"lon": -80.5399003
+},
+{
+"type": "node",
+"id": 12603085726,
+"lat": 43.4744361,
+"lon": -80.5394613
+},
+{
+"type": "node",
+"id": 13927615132,
+"lat": 43.4745594,
+"lon": -80.5389677
+},
+{
+"type": "node",
+"id": 13927615133,
+"lat": 43.4743927,
+"lon": -80.5394068
+},
+{
+"type": "node",
+"id": 13927615134,
+"lat": 43.4744467,
+"lon": -80.5394457
+},
+{
+"type": "node",
+"id": 13927615135,
+"lat": 43.4746737,
+"lon": -80.5386664
+},
+{
+"type": "node",
+"id": 13927615136,
+"lat": 43.4747277,
+"lon": -80.5387054
+},
+{
+"type": "way",
+"id": 1040958965,
+"nodes": [
+298025667,
+1715025801
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 137281106,
+"nodes": [
+1715025801,
+4211142321,
+1715025806,
+9536179455,
+9465038843
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1361353506,
+"nodes": [
+9465038843,
+9465038842
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1361353507,
+"nodes": [
+9465038842,
+9465038841
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1021015929,
+"nodes": [
+9465038841,
+9412123864,
+8001833438,
+9412123865,
+9412123833
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1361353508,
+"nodes": [
+9412123833,
+1976894115
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1021015930,
+"nodes": [
+1976894115,
+9624655612
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1046609782,
+"nodes": [
+9624655612,
+12603085709
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1046609786,
+"nodes": [
+12603085709,
+9536179447
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1040958964,
+"nodes": [
+9536179447,
+298025663
+],
+"tags": {
+"access": "no",
+"bus": "yes",
+"foot": "yes",
+"highway": "service",
+"lanes": "2",
+"lit": "yes",
+"motor_vehicle": "permit",
+"name": "Transit Plaza Road",
+"oneway": "no",
+"surface": "asphalt"
+}
+},
+{
+"type": "way",
+"id": 1020484623,
+"nodes": [
+12603085717,
+12603085718,
+12603085716,
+12603085715,
+12603085717
+],
+"tags": {
+"area": "yes",
+"bench": "yes",
+"covered": "yes",
+"highway": "platform",
+"network": "Grand River Transit",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"passenger_information_display": "yes",
+"public_transport": "platform",
+"ref": "3",
+"shelter": "yes",
+"surface": "concrete"
+}
+},
+{
+"type": "way",
+"id": 1020484622,
+"nodes": [
+12603085711,
+12603085714,
+12603085713,
+12603085712,
+12603085711
+],
+"tags": {
+"area": "yes",
+"bench": "yes",
+"covered": "yes",
+"highway": "platform",
+"network": "Grand River Transit",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"passenger_information_display": "yes",
+"public_transport": "platform",
+"ref": "4",
+"shelter": "yes",
+"surface": "concrete"
+}
+},
+{
+"type": "way",
+"id": 1020484625,
+"nodes": [
+12603085721,
+12603085720,
+12603085723,
+12603085722,
+12603085721
+],
+"tags": {
+"area": "yes",
+"bench": "yes",
+"covered": "yes",
+"highway": "platform",
+"network": "Grand River Transit",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"passenger_information_display": "yes",
+"public_transport": "platform",
+"ref": "5",
+"shelter": "yes",
+"surface": "concrete"
+}
+},
+{
+"type": "way",
+"id": 1020484624,
+"nodes": [
+12603085726,
+9412123855,
+9412123854,
+12603085724,
+12603085726
+],
+"tags": {
+"area": "yes",
+"bench": "yes",
+"bus": "yes",
+"covered": "yes",
+"highway": "platform",
+"network": "Grand River Transit",
+"network:wikidata": "Q3459117",
+"network:wikipedia": "en:Grand River Transit",
+"operator": "Grand River Transit",
+"operator:short": "GRT",
+"operator:wikidata": "Q3459117",
+"operator:wikipedia": "en:Grand River Transit",
+"public_transport": "platform",
+"ref": "6",
+"shelter": "yes"
+}
+},
+{
+"type": "way",
+"id": 1528331878,
+"nodes": [
+13927615134,
+13927615133,
+13927615132,
+13927615135,
+13927615136,
+13927615134
+],
+"tags": {
+"bus": "yes",
+"covered": "yes",
+"departures_board": "no",
+"lit": "yes",
+"network": "GO Transit",
+"operator": "Metrolinx",
+"public_transport": "platform",
+"ref": "6",
+"surface": "paved",
+"wheelchair": "yes"
+}
+},
+{
+"type": "way",
+"id": 1020484620,
+"nodes": [
+9412123840,
+9624655613,
+9536176215,
+9536179418,
+9536176216,
+9536179417,
+9412123840
+],
+"tags": {
+"area": "yes",
+"bus": "yes",
+"covered": "no",
+"departures_board": "no",
+"foot": "yes",
+"highway": "platform",
+"local_ref": "7",
+"motor_vehicle": "designated",
+"network": "GO Transit",
+"operator": "Metrolinx",
+"public_transport": "platform",
+"ref": "7",
+"surface": "asphalt",
+"wheelchair": "yes"
+}
+}
+]
+}
