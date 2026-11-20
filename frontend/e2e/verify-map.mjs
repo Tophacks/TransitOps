@@ -22,6 +22,7 @@ try {
 
 const base = new URL(process.argv[2] ?? "http://localhost:3000");
 base.searchParams.set("e2e", "1");
+base.searchParams.set("fixed", "1");
 const outDir = path.resolve(process.argv[3] ?? "e2e-output");
 mkdirSync(outDir, { recursive: true });
 
@@ -312,7 +313,7 @@ async function run(name, viewport, record) {
   await shot("ion-curve");
 
   // Back to the live fleet.
-  await page.getByRole("button", { name: "Live fleet" }).click();
+  await page.getByRole("button", { name: "Live GPS", exact: true }).click();
   await page.waitForFunction(() => (window.__transitops.map.getSource("grt-vehicles")?._data?.features?.length ?? 0) > 0
     || (window.__transitops.map.getSource("grt-vehicles")?.serialize?.().data?.features?.length ?? 0) > 0, null, { timeout: 45_000 }).catch(() => {});
   await settle(page);
@@ -322,7 +323,7 @@ async function run(name, viewport, record) {
     const hidden = ["vehicle-bodies", "sim-bus-markers", "route-stroke"].every((id) => map.getLayoutProperty(id, "visibility") === "none");
     return { count: features.length, modes: [...new Set(features.map((f) => f.properties.mode))], hidden, text: document.querySelector(".geoFeedStatus")?.textContent ?? "" };
   });
-  check(`${name}: Live fleet restores live GRT and ION tracking`, live.hidden && /GRT bus · \d+/.test(live.text) && /ION train · \d+/.test(live.text),
+  check(`${name}: Live GPS restores live GRT and ION tracking`, live.hidden && /GRT bus · \d+/.test(live.text) && /ION train · \d+/.test(live.text),
     `${live.text.replace(/\s+/g, " ")}; simulation layers hidden: ${live.hidden}`);
   await shot("live");
 

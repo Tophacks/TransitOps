@@ -16,6 +16,7 @@ try {
 }
 const base = new URL(process.argv[2] ?? "http://localhost:3000");
 base.searchParams.set("e2e", "1");
+base.searchParams.set("fixed", "1");
 const outDir = path.resolve(process.argv[3] ?? "e2e-output");
 mkdirSync(outDir, { recursive: true });
 const geo = JSON.parse(readFileSync(new URL("../lib/geo/waterloo-corridor.json", import.meta.url)));
