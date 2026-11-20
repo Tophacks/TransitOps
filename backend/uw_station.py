@@ -24,12 +24,12 @@ Every check uses the bus's full footprint (12.2 m by 2.6 m): whether it fits
 in a berth, whether it can pass a stopped vehicle, and when its rear has
 cleared a lane or a berth.
 
-Other GRT buses (GTFS, 08:00–09:00 on Wednesday 2 December 2026) use the
+Other GRT buses (GTFS, 07:30–08:30 on Wednesday 2 December 2026) use the
 same lanes and berths on their own schedules.
 
 Modelled, not observed: speeds, accelerations, gaps, door and boarding times,
 the Phillip Street traffic stream and the critical gap, the mapping of the
-run's minute 0 to 08:00, the berth assignment of corridor buses, and the
+run's minute 0 to 07:30, the berth assignment of corridor buses, and the
 other buses' dwell times when GTFS gives none. See docs/uw-station.md.
 """
 import json
@@ -204,7 +204,7 @@ class UwStation:
         by_block = {}
         for trip in trips:
             by_block.setdefault(trip["block"], []).append(trip)
-        n = 0
+        visits = {}
         for block, ts in sorted(by_block.items()):
             ts.sort(key=lambda x: x["calls"][0]["arrive_s"])
             current = None
@@ -224,10 +224,11 @@ class UwStation:
                         else:
                             current.calls.append(call)
                         continue
-                    n += 1
+                    visits[block] = visits.get(block, 0) + 1
+                    vid = f"GRT-{block}" + (f"-{visits[block]}" if visits[block] > 1 else "")
                     first_p = to_p(side, BERTHS[next(b for b in BERTHS if BERTHS[b]["stop"] == c["stop"])]["front"])
                     t_enter = c["arrive_s"] - first_p / V0 - 8.0
-                    current = Agent(f"GRT{n:02d}", "grt", side, max(0.0, t_enter), [call], route=trip["route"],
+                    current = Agent(vid, "grt", side, max(0.0, t_enter), [call], route=trip["route"],
                                     label=f"route {trip['route']} (block {block})")
                     self.agents.append(current)
 
