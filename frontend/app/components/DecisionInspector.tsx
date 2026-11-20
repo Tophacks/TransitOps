@@ -34,7 +34,7 @@ export function clock(t: number) {
 
 /** Routine: the preferred option was free and nothing was rejected. */
 export function notable(d: RailDecision) {
-  return d.level !== "vehicle" || d.options.some((o) => !o.feasible) || d.trigger.startsWith("Held");
+  return d.level !== "vehicle" || d.options.some((o) => !o.feasible) || d.trigger.startsWith("Held") || Boolean(d.error);
 }
 
 export default function DecisionInspector({ decisions, now, vehicle, onPick, metrics, hold }: Props) {
@@ -87,6 +87,8 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
               </div>
               <strong>{focus.vehicle_id}{focus.trip_id ? ` · trip ${focus.trip_id}` : ""}</strong>
               <p><em>What changed</em>{focus.trigger}</p>
+              {focus.saw && <p><em>What it saw</em>{focus.saw}</p>}
+              {focus.error && <p className="decisionError"><em>What went wrong</em>{focus.error}</p>}
               <ul className="decisionOptions">
                 {focus.options.map((o) => (
                   <li key={o.option} className={o.option === focus.chosen || focus.chosen.startsWith(o.option) ? "chosen" : o.feasible ? "feasible" : "rejected"}>
@@ -97,7 +99,9 @@ export default function DecisionInspector({ decisions, now, vehicle, onPick, met
                 ))}
               </ul>
               <p><em>Chose</em>{focus.chosen}</p>
+              {focus.control && <p><em>What Control allowed</em>{focus.control}</p>}
               {focus.outcome && <p><em>What happened next</em>{focus.outcome}</p>}
+              {focus.effect && <p><em>Effect on service</em>{focus.effect}</p>}
               <div className="decisionNav">
                 <button type="button" onClick={() => step(-1)} aria-label="Previous decision">◀</button>
                 <button type="button" onClick={() => { setPinned(focus.id); onPick(focus); }}>Show on map</button>

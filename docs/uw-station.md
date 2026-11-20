@@ -61,16 +61,16 @@ The corridor leg is timed to the station's first stop. So the bus enters the roa
 
 ## What the bus agent decides, and when
 
-The agent re-plans every second from what it can observe: the vehicles in its lanes, the crossing lights, the all-way stops, the berths station control grants it, and the gaps in Phillip Street traffic.
+The agent re-plans every second from what it can observe: the vehicles in its lanes, the crossing lights, the all-way stops, the berths station control grants it, and the cars on Phillip Street.
 
 | Situation | Decision | Rule (modelled values) |
 | --- | --- | --- |
-| A vehicle ahead in its lane | slow and follow | 2.5 m standstill gap, 1.2 s headway; berthed buses are in another lane and do not block it |
+| A vehicle ahead in its lane | slow and follow | 2.5 m standstill gap; each driver's own headway (1.0–1.8 s), pace and reaction ([driver-agents.md](driver-agents.md)); berthed buses are in another lane and do not block it |
 | ION crossing lights flashing | stop at the stop line, 6 m before the rails | lights flash while a train's nose is within 260 m until its tail is 50 m past (the map's gate rule), from the rail simulator's train positions; a bus that cannot stop in time continues |
 | All-way stop | full stop, 2 s, then go when the junction is clear | |
 | Berth | ask station control for its stop's front berth; if occupied or blocked, a compatible alternate (another position at the same stop) | station control grants only a berth the bus can reach: free, nothing stopped behind it in the berth lane, its taper (15 m) still ahead, and no vehicle waiting in the through lane between the bus and the berth. A bus that has to wait does so before the platform, never inside the junction |
 | Pull-out | leave only with the through lane clear | beside it and just ahead for its whole length, and no vehicle reaching it within 4 s behind; the bus in the berth ahead matters until the two footprints stop overlapping sideways (12.2 m × 2.6 m) |
-| Exit | yield to Phillip Street traffic | 6 s critical gap in a 600 vehicles/h stream (modelled, seeded) |
+| Exit | yield to Phillip Street traffic | the simulated cars on Phillip Street's southbound lane: room for the whole bus ahead, and 2.4 m plus 3 s at the approaching car's speed behind ([driver-agents.md](driver-agents.md)) |
 
 Each decision is recorded once, when it starts, with the options it weighed. Its outcome, including how long the bus waited, is added when it ends. The map's Decision Inspector shows them under **UW Station**.
 
@@ -133,10 +133,10 @@ The fixed controller's "adaptive must not be worse" check now compares total wai
 | Item | Value |
 | --- | --- |
 | Speed on the roadway | 25 km/h; 1.0 m/s² acceleration, 1.5 m/s² braking |
-| Gaps | 2.5 m standstill, 1.2 s headway; 4 s clearance behind for a pull-out |
+| Gaps | 2.5 m standstill, 1.0–1.8 s headway per driver; 4 s clearance behind for a pull-out |
 | Berths | 12.2 m bus, plus 6 m of swing-out room between stacked positions; 15 m taper in, 6 m out |
 | Doors | open 4 s after stopping; set-down 1.5 s per rider (at least 8 s); loading dwell 60 s as on the corridor; doors close 5 s before pulling out |
-| Phillip Street | 600 vehicles/h, 6 s critical gap |
+| Phillip Street | 250 / 500 / 900 cars/h southbound (light / moderate / heavy, seeded); the pilot's signal cycle at University Ave |
 | Other GRT buses | 12.2 m each; 20 s minimum dwell where GTFS gives none |
 | Corridor buses' berth plan | set down on platform 4, load on platform 6 |
 | Minute 0 | 07:30 on a GTFS Wednesday |

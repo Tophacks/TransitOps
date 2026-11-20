@@ -11,7 +11,7 @@ import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
 import { GARAGES, garagePoses, type GarageVehicle } from "../../lib/motion/garages.ts";
-import { UW, berthStates, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwVehicle } from "../../lib/motion/uwStation.ts";
+import { UW, UW_ROADS, berthStates, carPoses, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwCar, type UwVehicle } from "../../lib/motion/uwStation.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
 import { CAR_LENGTH, CAR_WIDTH, TrafficStream, queuedCars, type CarPose } from "../../lib/motion/traffic.ts";
@@ -51,6 +51,8 @@ type Props = {
   busDecisions?: RailDecision[];
   /** every vehicle on UW Station's roadway, from the simulator (uw_station.py) */
   uwVehicles?: UwVehicle[];
+  /** private cars on Phillip Street at the UW exit, from the simulator (road_traffic.py) */
+  uwCars?: UwCar[];
   /** GRT garage pull-outs and returns, from the simulator (garage_ops.py) */
   garageVehicles?: GarageVehicle[];
 };
@@ -639,6 +641,21 @@ function sceneBuses(timeline: Snapshot[], vehicles: readonly UwVehicle[], t: num
   return out;
 }
 
+/** Is a point on the modelled stretch of Phillip Street (where the simulator's cars run)? */
+function onPhillip(p: [number, number]) {
+  const path = UW_ROADS.phillip.path;
+  for (let i = 0; i + 1 < path.length; i += 1) {
+    const k = 111320 * Math.cos((p[1] * Math.PI) / 180);
+    const ax = (path[i][0] - p[0]) * k, ay = (path[i][1] - p[1]) * 111200;
+    const bx = (path[i + 1][0] - p[0]) * k, by = (path[i + 1][1] - p[1]) * 111200;
+    const dx = bx - ax, dy = by - ay;
+    const len = dx * dx + dy * dy;
+    const f = len ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len)) : 0;
+    if (Math.hypot(ax + dx * f, ay + dy * f) < 9) return true;
+  }
+  return false;
+}
+
 /** GRT garages: site outlines (OSM), driveways and where buses stand. */
 function garageFeatures(): GeoJSON.FeatureCollection {
   return featureCollection(GARAGES.flatMap((g) => [
@@ -714,12 +731,15 @@ export default function GeospatialMap({
   onSeek,
   busDecisions = [],
   uwVehicles = [],
+  uwCars = [],
   garageVehicles = [],
 }: Props) {
   const garageRef = useRef<GarageVehicle[]>([]);
   garageRef.current = garageVehicles;
   const uwRef = useRef<UwVehicle[]>([]);
   uwRef.current = uwVehicles;
+  const uwCarsRef = useRef<UwCar[]>([]);
+  uwCarsRef.current = uwCars;
   // Same timetable and trip model as backend/ion.py: trains sit exactly where
   // the simulator put them at every minute.
   const timetable = useMemo(
@@ -835,6 +855,7 @@ export default function GeospatialMap({
             busDecisions: () => busDecisionsRef.current,
             garages: (t?: number) => garagePoses(garageRef.current, t ?? clock.time()),
             uw: (t?: number) => uwPoses(uwRef.current, t ?? clock.time()),
+            uwCars: (t?: number) => carPoses(uwCarsRef.current, t ?? clock.time()),
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
             frameCosts: frameCosts.current,
             live: () => trackerRef.current.poses(performance.now() / 1000)
@@ -1056,8 +1077,17 @@ export default function GeospatialMap({
           const inView = ([lon, lat]: [number, number]) =>
             lon > bounds.getWest() - pad && lon < bounds.getEast() + pad && lat > bounds.getSouth() - pad && lat < bounds.getNorth() + pad;
           const cars: CarPose[] = [...(trafficRef.current?.cars(t) ?? []), ...queuedCars(corridor, scene.buses)];
-          // Transit Plaza Road (UW Station) is bus-only: no simulated cars on it.
-          for (const car of cars) if (inView(car.centre) && !onStationRoad(car.centre)) carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
+          // Transit Plaza Road (UW Station) is bus-only: no simulated cars on it. On
+          // Phillip Street at the UW exit the simulator's own cars are drawn instead.
+          const phillipSim = uwCarsRef.current.length > 0;
+          for (const car of cars) {
+            if (!inView(car.centre) || onStationRoad(car.centre)) continue;
+            if (phillipSim && onPhillip(car.centre)) continue;
+            carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
+          }
+          for (const car of carPoses(uwCarsRef.current, t)) {
+            if (inView(car.centre)) carBody({ ...car, opacity: 1, kind: "traffic" } as CarPose, bodies, CAR_LENGTH, CAR_WIDTH);
+          }
           for (const gate of gateStates(corridor.data.ion_crossings ?? [], scene.trains)) {
             if (inView([gate.crossing.lon, gate.crossing.lat])) gateBodies(gate, performance.now() / 1000, bodies);
           }

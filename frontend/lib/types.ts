@@ -35,6 +35,17 @@ export type Controls = {
   uw_block_berth?: string;
   uw_block_from_minute?: number;
   uw_block_to_minute?: number;
+  /** private cars on Phillip Street southbound at the UW exit */
+  uw_cars?: "light" | "moderate" | "heavy";
+  /** opt-in driver errors (a demo on B101's first UW visit, or seeded) */
+  driver_error?: "overshoot" | "overshoot_blocked" | "missed_berth" | "wrong_turn" | "seeded" | null;
+  driver_error_rate?: number;
+  error_seed?: number;
+  /** a train overshooting a platform (Rail Control recovery) */
+  rail_overshoot_station?: string | null;
+  rail_overshoot_direction?: "north" | "south";
+  rail_overshoot_minute?: number;
+  rail_overshoot_metres?: number;
 };
 
 export type StopState = {
@@ -182,6 +193,8 @@ export type CaseResult = {
     inventory: Record<string, { t: number; count: number; present: string[]; event: string }[]> };
   /** every vehicle on UW Station's roadway, second by second (backend/uw_station.py) */
   uw?: { block: Record<string, unknown> | null; vehicles: import("./motion/uwStation.ts").UwVehicle[];
+    cars?: import("./motion/uwStation.ts").UwCar[]; car_demand?: string;
+    errors?: { t: number; vehicle_id: string; kind: string; detail: string }[];
     metrics: { corridor_departures: number; mean_station_s: number; corridor_queue_s: number;
       corridor_stopped_by: Record<string, number>; grt_buses: number; grt_queue_s: number } | null };
 };

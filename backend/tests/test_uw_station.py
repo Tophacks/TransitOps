@@ -71,7 +71,7 @@ class AgentTests(unittest.TestCase):
         bad = []
 
         def watch(station, t):
-            act = [a for a in station.active()]
+            act = station.plaza()      # vehicles still on Transit Plaza Road
             for i, a in enumerate(act):
                 for b in act[i + 1:]:
                     if a.side != b.side or not (a.lanes() & b.lanes()):
@@ -87,7 +87,10 @@ class AgentTests(unittest.TestCase):
         for d in uw_decisions(s):
             if d["chosen"].startswith("alternate berth P6"):
                 reacted[d["vehicle_id"]] = d
-        self.assertEqual(sorted(reacted), ["B101", "B102", "B103"])
+        corridor = sorted(v for v in reacted if v.startswith("B1"))
+        self.assertEqual(corridor, ["B101", "B102", "B103"])
+        # GTFS buses calling at 1078 decide the same way, and say so.
+        self.assertTrue(all(v.startswith("GRT") for v in reacted if v not in corridor))
         for d in reacted.values():
             front = next(o for o in d["options"] if o["option"].startswith("berth P6-1078-1"))
             self.assertFalse(front["feasible"])
@@ -97,7 +100,8 @@ class AgentTests(unittest.TestCase):
 
     def test_buses_wait_at_the_berth_while_the_exit_is_blocked(self):
         s = run(uw_block=EXIT_BLOCK)
-        waits = [d for d in uw_decisions(s) if d["chosen"] == "wait at the berth"]
+        # The corridor buses' last call: the scenario closes their exit.
+        waits = [d for d in uw_decisions(s) if d["chosen"] == "wait at the berth" and d["vehicle_id"].startswith("B1")]
         self.assertTrue(waits)
         for d in waits:
             self.assertIn("exit is blocked", d["options"][0]["reason"])

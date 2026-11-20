@@ -49,6 +49,14 @@ const DEFAULTS: Controls = {
   uw_block_berth: "P6-1078-1",
   uw_block_from_minute: 10,
   uw_block_to_minute: 58,
+  uw_cars: "moderate",
+  driver_error: null,
+  driver_error_rate: 0.2,
+  error_seed: 17,
+  rail_overshoot_station: null,
+  rail_overshoot_direction: "north",
+  rail_overshoot_minute: 10,
+  rail_overshoot_metres: 12,
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -62,6 +70,13 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...DEFAULTS, fault_terminal: "conestoga", yard_block_lead: "north" } },
   { id: "uw-berth-blocked", title: "UW berth blocked", description: "An out-of-service bus holds platform 6's front berth (stop 1078) 10:00–58:00", controls: { ...DEFAULTS, uw_block: "berth" } },
   { id: "uw-exit-blocked", title: "UW exit blocked", description: "The Phillip Street exit from UW Station is blocked 10:00–58:00", controls: { ...DEFAULTS, uw_block: "exit" } },
+  { id: "uw-heavy-cars", title: "UW exit, heavy traffic", description: "Heavy car traffic on Phillip St: buses wait for a real gap at the UW exit", controls: { ...DEFAULTS, uw_cars: "heavy" } },
+  { id: "bus-overshoot", title: "Bus overshoot, reverse granted", description: "B101 overshoots its platform 6 berth by 6 m; the path behind is clear, so Control lets it reverse", controls: { ...DEFAULTS, driver_error: "overshoot" } },
+  { id: "bus-overshoot-blocked", title: "Bus overshoot, reverse denied", description: "The same overshoot with a route 9 bus close behind: Control denies the reverse", controls: { ...DEFAULTS, driver_error: "overshoot_blocked" } },
+  { id: "bus-missed-berth", title: "Bus misses a berth", description: "B101 misses the turn into platform 4 and sets down at platform 6", controls: { ...DEFAULTS, driver_error: "missed_berth" } },
+  { id: "bus-wrong-turn", title: "Bus takes the wrong turn", description: "B101 turns left onto Phillip St; Control re-routes it to Waterloo Public Square", controls: { ...DEFAULTS, driver_error: "wrong_turn" } },
+  { id: "train-overshoot", title: "Train overshoot, reverse granted", description: "An ION train overshoots Research and Technology by 12 m and reverses", controls: { ...DEFAULTS, rail_overshoot_station: "Research and Technology Station" } },
+  { id: "train-overshoot-street", title: "Train overshoot on the street", description: "An ION train overshoots Waterloo Public Square (street-running): no reverse, it continues", controls: { ...DEFAULTS, rail_overshoot_station: "Waterloo Public Square Station" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -379,6 +394,7 @@ export default function Home() {
             ionBaselineMetrics={data?.baseline.ion?.metrics ?? null}
             busDecisions={data?.smart.decisions ?? []}
             uwVehicles={data?.smart.uw?.vehicles ?? []}
+            uwCars={data?.smart.uw?.cars ?? []}
             garageVehicles={data?.smart.garages?.vehicles ?? []}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
@@ -676,6 +692,43 @@ export default function Home() {
               </label>
             </div>
           )}
+          <label>
+            <div className="labelRow"><span>Phillip St car traffic (UW exit)</span><strong>{controls.uw_cars}</strong></div>
+            <select aria-label="Phillip Street car traffic" value={controls.uw_cars}
+              onChange={(event) => update("uw_cars", event.target.value as "light" | "moderate" | "heavy")}>
+              <option value="light">Light (250 cars/h)</option><option value="moderate">Moderate (500 cars/h)</option><option value="heavy">Heavy (900 cars/h)</option>
+            </select>
+          </label>
+          <label>
+            <div className="labelRow"><span>Driver errors</span><strong>{controls.driver_error ?? "Off"}</strong></div>
+            <select aria-label="Driver errors" value={controls.driver_error ?? "off"}
+              onChange={(event) => update("driver_error", event.target.value === "off" ? null : event.target.value as NonNullable<Controls["driver_error"]>)}>
+              <option value="off">Off</option>
+              <option value="overshoot">B101 overshoots a berth</option>
+              <option value="overshoot_blocked">B101 overshoots, bus behind</option>
+              <option value="missed_berth">B101 misses a berth entry</option>
+              <option value="wrong_turn">B101 takes the wrong turn</option>
+              <option value="seeded">Occasional, from a seed</option>
+            </select>
+          </label>
+          {controls.driver_error === "seeded" && (
+            <div className="holdRow">
+              <label><span>Rate</span>
+                <input aria-label="Driver error rate" type="number" min="0" max="1" step="0.05" value={controls.driver_error_rate}
+                  onChange={(event) => update("driver_error_rate", Number(event.target.value))} /></label>
+              <label><span>Seed</span>
+                <input aria-label="Driver error seed" type="number" value={controls.error_seed}
+                  onChange={(event) => update("error_seed", Number(event.target.value))} /></label>
+            </div>
+          )}
+          <label>
+            <div className="labelRow"><span>ION platform overshoot</span><strong>{controls.rail_overshoot_station?.replace(" Station", "") ?? "Off"}</strong></div>
+            <select aria-label="ION platform overshoot" value={controls.rail_overshoot_station ?? "off"}
+              onChange={(event) => update("rail_overshoot_station", event.target.value === "off" ? null : event.target.value)}>
+              <option value="off">Off</option>
+              {NETWORK.stations[controls.rail_overshoot_direction ?? "north"].map((st) => <option key={st.name} value={st.name}>{st.name.replace(" Station", "")}</option>)}
+            </select>
+          </label>
           <button className="runButton" disabled={loading}>
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>
