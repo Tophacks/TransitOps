@@ -136,28 +136,28 @@ class IonPlan:
     """
 
     def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0,
-                 platform_hold=None, reassign=True, closures=None, yard_block=None, fault=None, rail_overshoot=None):
+                 platform_hold=None, reassign=True, closures=None, yard_block=None, fault=None, rail_overshoot=None, continuous=False):
         import rail_ops
+        self.continuous = continuous
         self.headway_s = headway_min * 60.0
         self.duration_s = duration_min * 60.0
         self.lines = {"north": Line("north"), "south": Line("south")}
         self.trips = []
         cycle = self.lines["north"].trip_seconds + self.lines["south"].trip_seconds + 2 * rail_ops.TURN_S
         warm = cycle + 2 * self.headway_s
-        for direction, offset in (("north", 0.0), ("south", self.headway_s / 2.0)):
-            first = math.floor((-warm - offset) / self.headway_s)
-            last = math.floor((self.duration_s - offset) / self.headway_s)
-            for k in range(first, last + 1):
-                t = offset + k * self.headway_s
-                prefix = "N" if direction == "north" else "S"
-                self.trips.append(Trip(f"ION-{prefix}{k}", direction, t, t))
+        self.scheduled_through = self.duration_s
+        self.trips.extend(self.timetable(-warm, self.scheduled_through, warmup=True))
         self.platform_hold = platform_hold
         self.events = self._assign_events(transfer_demand, delay_min)
         self.closures = closures or []
         self.yard_block = yard_block
         self.fault = fault
         self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign, closures=self.closures,
-                                    yard_block=yard_block, fault=fault, overshoot=rail_overshoot).run()
+                                    yard_block=yard_block, fault=fault, overshoot=rail_overshoot)
+        if continuous:
+            self.extend_rail(self.duration_s)
+        else:
+            self.ops.run()
         for trip in self.trips:
             if trip.station_times:
                 trip.depart_s = trip.depart_s  # set by RailOps at departure
@@ -165,6 +165,25 @@ class IonPlan:
                 if late > 1 and not trip.hold_reason:
                     trip.hold_reason = getattr(trip, "depart_reason", "")
         self._assign_transfers(transfer_demand)
+
+    def timetable(self, start, end, warmup=False):
+        for direction, offset in (("north", 0.0), ("south", self.headway_s / 2.0)):
+            first = math.floor((start - offset) / self.headway_s) + (0 if warmup else 1)
+            last = math.floor((end - offset) / self.headway_s)
+            prefix = "N" if direction == "north" else "S"
+            for k in range(first, last + 1):
+                t = offset + k * self.headway_s
+                yield Trip(f"ION-{prefix}{k}", direction, t, t)
+
+    def extend_rail(self, end_s):
+        # Keep trips in the dispatcher’s planning window before processing due events.
+        through = end_s + 1800.0
+        new_trips = sorted(self.timetable(self.scheduled_through, through), key=lambda trip: trip.scheduled_s)
+        self.trips.extend(new_trips)
+        for trip in new_trips:
+            self.ops.schedule_trip(trip)
+        self.scheduled_through = through
+        self.ops.advance(end_s)
 
     def _assign_events(self, demand, delay_min):
         """The two big transfer waves ride the first northbound trains due at
@@ -278,11 +297,13 @@ class IonPlan:
         """Every train in service at t: vehicle, trip and position."""
         return self.ops.poses(t)
 
-    def schedule(self):
-        import rail_ops
+    def schedule(self, replay_start=None):
         """Everything the browser needs to reproduce train positions exactly:
         the line legs, each physical train's movement plan, and the decisions."""
-        window = [t for t in self.trips if 0 <= t.scheduled_s < self.duration_s]
+        import rail_ops
+        start = 0 if replay_start is None else replay_start
+        history_start = -600 if replay_start is None else replay_start
+        window = [t for t in self.trips if start <= t.scheduled_s < self.duration_s]
         return {
             "headway_min": self.headway_s / 60.0,
             "dwell_s": DWELL_S,
@@ -310,12 +331,12 @@ class IonPlan:
                 }
                 for trip in self.trips
                 if trip.station_times and min(trip.station_times.values()) < self.duration_s + 600
-                and max(trip.station_times.values()) > -600
+                and max(trip.station_times.values()) > history_start
             ],
             "vehicles": self.ops.plans(),
-            "decisions": [d.to_dict() for d in self.ops.decisions if -600 <= d.t <= self.duration_s + 600],
+            "decisions": [d.to_dict() for d in self.ops.decisions if history_start <= d.t <= self.duration_s + 600],
             "holds": self.ops.holds,
-            "metrics": self.ops.metrics(window),
+            "metrics": self.ops.metrics(window, start),
             "platform_hold": self.platform_hold,
             "closures": [
                 {**cp["closure"], "plan": cp["kind"], "diversion": cp["route"]["id"] if cp["kind"] == "diversion" else None}

@@ -10,6 +10,7 @@ export class PlaybackClock {
   private rate = 1;
   private running = false;
   private end: number;
+  private start = 0;
   private readonly now: () => number;
 
   constructor(end: number, now: () => number = () => performance.now()) {
@@ -21,7 +22,7 @@ export class PlaybackClock {
   time() {
     if (!this.running) return this.base;
     const t = this.base + ((this.now() - this.anchor) / 1000) * this.rate;
-    return Math.min(this.end, Math.max(0, t));
+    return Math.min(this.end, Math.max(this.start, t));
   }
 
   get playing() {
@@ -36,14 +37,15 @@ export class PlaybackClock {
     return this.end;
   }
 
-  setDuration(end: number) {
+  setDuration(end: number, start = 0) {
     this.rebase();
     this.end = end;
-    this.base = Math.min(this.base, end);
+    this.start = start;
+    this.base = Math.min(end, Math.max(start, this.base));
   }
 
   play() {
-    if (this.time() >= this.end) this.base = 0;
+    if (this.time() >= this.end) this.base = this.start;
     this.rebase();
     this.running = true;
   }
@@ -60,7 +62,7 @@ export class PlaybackClock {
   }
 
   seek(t: number) {
-    this.base = Math.min(this.end, Math.max(0, t));
+    this.base = Math.min(this.end, Math.max(this.start, t));
     this.anchor = this.now();
   }
 

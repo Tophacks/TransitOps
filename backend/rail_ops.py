@@ -359,6 +359,7 @@ class RailOps:
         self.events = []
         self.queue = []
         self.seq = 0
+        self.decision_count = 0
         self.last_departure = {"north": -math.inf, "south": -math.inf}
         self.departed = []          # (trip, t)
         self.holds = []             # applied platform holds
@@ -369,14 +370,7 @@ class RailOps:
         self.closures = []
         self.terminal_of = {"north": "fairway", "south": "conestoga"}  # where a direction's trips start
         for trip in sorted(plan.trips, key=lambda t: (t.scheduled_s, t.train_id)):
-            trip.vehicle_id = None
-            trip.platform = None
-            trip.station_times = {}
-            trip.arrived_s = None
-            trip.dispatch_note = ""
-            trip.decisions = []
-            trip.trip_hold_s = getattr(trip, "trip_hold_s", 0.0)
-            self.push(trip.scheduled_s, 3, "due", trip=trip)
+            self.schedule_trip(trip)
         if platform_hold:
             self.push(platform_hold["minute"] * 60.0, 0, "hold", spec=platform_hold)
         import yard_ops
@@ -385,6 +379,16 @@ class RailOps:
         for cp in self.closures:
             if cp.get("section"):
                 self.push(cp["end"], 1, "closure_end", section=cp["section"])
+
+    def schedule_trip(self, trip):
+        trip.vehicle_id = None
+        trip.platform = None
+        trip.station_times = {}
+        trip.arrived_s = None
+        trip.dispatch_note = ""
+        trip.decisions = []
+        trip.trip_hold_s = getattr(trip, "trip_hold_s", 0.0)
+        self.push(trip.scheduled_s, 3, "due", trip=trip)
 
     def trip_seconds(self, direction):
         """Platform to platform on the preferred routes, dwells included."""
@@ -404,17 +408,19 @@ class RailOps:
         heapq.heappush(self.queue, (t, priority, self.seq, kind, data))
 
     def decide(self, t, level, terminal, train, trip, trigger, options, chosen):
-        d = Decision(f"D{len(self.decisions) + 1:03d}", t, level, terminal,
+        self.decision_count += 1
+        d = Decision(f"D{self.decision_count:03d}", t, level, terminal,
                      train.vehicle_id if train else "-", trip.train_id if trip else None, trigger, options, chosen)
         self.decisions.append(d)
         return d
 
     def run(self):
         self.now = self.start_s
-        while self.queue:
+        return self.advance(self.end_s)
+
+    def advance(self, end_s):
+        while self.queue and self.queue[0][0] <= end_s:
             t, _, _, kind, data = heapq.heappop(self.queue)
-            if t > self.end_s:
-                break
             self.now = t
             if kind.startswith("yard_"):
                 getattr(self.yard, f"on_{kind[5:]}")(t, **data)
@@ -1816,19 +1822,19 @@ class RailOps:
             station = TERMINALS[seg.terminal]["station"]
         return {"nose_line": self.line_nose(seg, s), "station": station, "leg": leg}
 
-    def metrics(self, trips):
+    def metrics(self, trips, start_s=0):
         """Service in the window: departure delays, queueing at terminals, platform use."""
         departed = [t for t in trips if t.station_times]
         delays = [max(0.0, t.depart_s - t.scheduled_s) for t in departed]
         waits = []
         for train in self.trains:
             for seg in train.segments:
-                if seg.kind == "stand" and seg.note.startswith("waited") and 0 <= seg.t0 < self.plan.duration_s and seg.t1 - seg.t0 >= 1.0:
+                if seg.kind == "stand" and seg.note.startswith("waited") and start_s <= seg.t0 < self.plan.duration_s and seg.t1 - seg.t0 >= 1.0:
                     waits.append(seg.t1 - seg.t0)
-        arrivals = [t for t in self.plan.trips if getattr(t, "arrived_s", None) is not None and 0 <= t.arrived_s < self.plan.duration_s]
+        arrivals = [t for t in self.plan.trips if getattr(t, "arrived_s", None) is not None and start_s <= t.arrived_s < self.plan.duration_s]
         alternate = sum(1 for t in arrivals
                         if getattr(t, "arrival_platform", None) != TERMINALS["conestoga" if t.direction == "north" else "fairway"]["preference"][0])
-        swaps = sum(1 for d in self.decisions if d.chosen.startswith("swap") and 0 <= d.t < self.plan.duration_s)
+        swaps = sum(1 for d in self.decisions if d.chosen.startswith("swap") and start_s <= d.t < self.plan.duration_s)
         return {
             "departures": len(departed),
             "late_departures": sum(1 for d in delays if d > 60.0),

@@ -64,8 +64,9 @@ export type SegmentClamp = (from: string, to: string, motion?: { detour?: boolea
 export function busPoses(corridor: Corridor, timeline: readonly TimelineFrame[], seconds: number, clamp?: SegmentClamp): BusPose[] {
   if (!timeline.length) return [];
   const last = timeline.length - 1;
-  const minute = Math.min(last, Math.max(0, Math.floor(seconds / 60)));
-  const frac = minute >= last ? 0 : Math.min(1, Math.max(0, seconds / 60 - minute));
+  const offset = seconds / 60 - (timeline[0].minute ?? 0);
+  const minute = Math.min(last, Math.max(0, Math.floor(offset)));
+  const frac = minute >= last ? 0 : Math.min(1, Math.max(0, offset - minute));
   // (frac is 0 on the final snapshot, where `next` is the same frame)
   const now = timeline[minute];
   const next = timeline[Math.min(last, minute + 1)];

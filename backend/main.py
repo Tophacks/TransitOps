@@ -1,13 +1,15 @@
-from copy import deepcopy
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
-from typing import Literal
 
 from pydantic import BaseModel, Field
 
 import rail_ops
 from ion import IonPlan
 from models import Bus
+from scenario_result import case_result, simulation_result
 from simulation_engine import (
     GEO_LAYOUT,
     INTERSECTION_GEO,
@@ -69,32 +71,6 @@ class SimulationRequest(BaseModel):
     rail_overshoot_direction: Literal["north", "south"] = "north"
     rail_overshoot_minute: int = Field(default=10, ge=0, le=59)
     rail_overshoot_metres: float = Field(default=12.0, ge=2.0, le=40.0)
-
-
-def metrics_to_dict(metrics):
-    return {
-        "passengers_arrived": metrics.total_passengers_arrived,
-        "passengers_boarded": metrics.total_passengers_boarded,
-        "completed_trips": metrics.completed_trips,
-        "left_waiting": metrics.passengers_left_waiting,
-        "average_wait": round(metrics.average_wait_minutes, 2),
-        "max_queue": metrics.max_queue,
-        "buses_staged": metrics.buses_staged,
-        "signal_priority_requests": metrics.signal_priority_requests,
-        "ion_transfers": metrics.ion_transfers,
-        "ion_transfers_boarded": metrics.ion_transfers_boarded,
-        "average_transfer_wait": round(metrics.average_transfer_wait_minutes, 2),
-        "ion_trains_peak": metrics.ion_trains_peak,
-        "ion_max_delay": round(metrics.ion_max_delay_minutes, 1),
-        "connection_holds": metrics.connection_holds,
-        "missed_stops": getattr(metrics, "missed_stops", 0),
-        "connection_hold_minutes": metrics.connection_hold_minutes,
-        "hold_onboard_rider_minutes": round(metrics.hold_onboard_rider_minutes, 1),
-        "hold_downstream_rider_minutes": round(metrics.hold_downstream_rider_minutes, 1),
-        # every rider's wait, including riders still waiting when the hour ends
-        "total_wait_rider_minutes": round(metrics.cumulative_wait_minutes + metrics.unserved_wait_minutes, 1),
-        "total_transfer_wait_rider_minutes": round(metrics.cumulative_transfer_wait + metrics.unserved_transfer_wait_minutes, 1),
-    }
 
 
 def network_definition():
@@ -225,13 +201,15 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
     """The ION run: physical trains through both terminals. The adaptive case
     lets dispatch give a threatened trip to another train; the baseline only
     holds departures."""
-    return IonPlan(
-        duration_min=60,
+    return IonPlan(duration_min=60, reassign=reassign, **rail_settings(payload))
+
+
+def rail_settings(payload):
+    return dict(
         headway_min=payload.ion_headway,
         transfer_demand=payload.passenger_demand,
         delay_min=payload.train_delay,
         platform_hold=platform_hold(payload),
-        reassign=reassign,
         closures=closures(payload),
         fault=fault(payload),
         yard_block=yard_block(payload),
@@ -239,15 +217,8 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
     )
 
 
-def run_case(payload: SimulationRequest, intelligent: bool):
-    buses = [Bus(f"B{101 + i}") for i in range(payload.fleet_size)]
-    plan = ion_plan(payload, reassign=intelligent)
-
-    sim = TransitSimulation(
-        buses=deepcopy(buses),
-        ion_plan=plan,
-        intelligent=intelligent,
-        duration=60,
+def bus_settings(payload):
+    return dict(
         traffic_multiplier=payload.traffic_multiplier,
         seed=payload.seed,
         demand_multiplier=payload.demand_multiplier,
@@ -259,23 +230,18 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         uw_cars=payload.uw_cars,
         driver_errors=driver_errors(payload),
     )
-    metrics = sim.run()
 
-    return {
-        "metrics": metrics_to_dict(metrics),
-        "events": sim.events,
-        "timeline": sim.timeline,
-        "ion": plan.schedule(),
-        # bus decisions: UW Station agents, station reports, holds, capacity
-        "decisions": sim.decisions,
-        # every vehicle on UW Station's roadway, second by second (uw_station.py)
-        "uw": {"block": uw_block(payload), "vehicles": sim.uw.plans() if sim.uw else [],
-               "cars": sim.uw.cars() if sim.uw else [], "car_demand": payload.uw_cars,
-               "errors": sim.uw.errors.used if sim.uw else [],
-               "metrics": sim.uw.metrics() if sim.uw else None},
-        # GRT garages: pull-outs and returns, inventories (garage_ops.py)
-        "garages": sim.garages.plans(),
-    }
+
+def run_case(payload: SimulationRequest, intelligent: bool):
+    sim = TransitSimulation(
+        buses=[Bus(f"B{101 + i}") for i in range(payload.fleet_size)],
+        ion_plan=ion_plan(payload, reassign=intelligent),
+        intelligent=intelligent,
+        duration=60,
+        **bus_settings(payload),
+    )
+    metrics = sim.run()
+    return case_result(sim, metrics, payload.uw_cars, sim.garages)
 
 
 @app.get("/api/health")
@@ -288,28 +254,29 @@ def simulate(payload: SimulationRequest):
     baseline = run_case(payload, intelligent=False)
     smart = run_case(payload, intelligent=True)
 
-    impact = {
-        "average_wait_reduction": round(
-            baseline["metrics"]["average_wait"] - smart["metrics"]["average_wait"], 2
-        ),
-        "max_queue_reduction": (
-            baseline["metrics"]["max_queue"] - smart["metrics"]["max_queue"]
-        ),
-        "additional_completed_trips": smart["metrics"]["completed_trips"] - baseline["metrics"]["completed_trips"],
-        "fewer_left_waiting": (
-            baseline["metrics"]["left_waiting"] - smart["metrics"]["left_waiting"]
-        ),
-        "transfer_wait_reduction": round(
-            baseline["metrics"]["average_transfer_wait"] - smart["metrics"]["average_transfer_wait"], 2
-        ),
-    }
+    return simulation_result(payload.model_dump(), network_definition(), baseline, smart)
 
+# The browser worker runs the same standard-library-only engine. Serve an
+# explicit list so a request cannot select any other file in the deployment.
+WORKER_MODULES = ("continuous.py", "scenario_result.py", "simulation_engine.py", "ion.py",
+                  "rail_ops.py", "yard_ops.py", "corridor.py", "uw_station.py", "road_traffic.py",
+                  "drivers.py", "models.py", "garage_ops.py", "waterloo_corridor.json",
+                  "ion_terminals.json", "ion_network.json", "ion_platforms.json", "uw_station.json",
+                  "uw_roads.json", "bus_garages.json")
+
+
+@lru_cache(maxsize=1)
+def worker_sources():
+    root = Path(__file__).resolve().parent
+    return {name: (root / name).read_text(encoding="utf-8") for name in WORKER_MODULES}
+
+
+@app.post("/api/simulate/continuous")
+def continuous_settings(payload: SimulationRequest):
     return {
         "scenario": payload.model_dump(),
         "network": network_definition(),
-        # The map plays the adaptive run; each case also carries its own ION run.
-        "ion": smart["ion"],
-        "baseline": baseline,
-        "smart": smart,
-        "impact": impact,
+        "rail": rail_settings(payload),
+        "bus": bus_settings(payload),
+        "sources": worker_sources(),
     }

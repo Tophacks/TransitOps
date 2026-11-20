@@ -755,7 +755,7 @@ export default function GeospatialMap({
     return new TrafficStream(corridor, timeline, {
       traffic: trafficMultiplier,
       phaseAt: (signalId, minute) =>
-        timeline[Math.min(timeline.length - 1, minute)]?.intersections.find((i) => i.id === signalId)?.phase ?? "GREEN",
+        timeline[Math.min(timeline.length - 1, Math.max(0, minute - (timeline[0]?.minute ?? 0)))]?.intersections.find((i) => i.id === signalId)?.phase ?? "GREEN",
     });
   }, [timeline, trafficMultiplier]);
   const trafficRef = useRef(traffic);
