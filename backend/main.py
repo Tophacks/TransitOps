@@ -231,6 +231,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         # every vehicle on UW Station's roadway, second by second (uw_station.py)
         "uw": {"block": uw_block(payload), "vehicles": sim.uw.plans() if sim.uw else [],
                "metrics": sim.uw.metrics() if sim.uw else None},
+        # GRT garages: pull-outs and returns, inventories (garage_ops.py)
+        "garages": sim.garages.plans(),
     }
 
 

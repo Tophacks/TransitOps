@@ -28,7 +28,7 @@ from the simulator's trace (`backend/uw_station.py`).
 
 Berth positions run back from each stop pole, which marks the front of the first bus. Each position is a 12.2 m bus plus 6 m of room to swing out past the bus in front (modelled). They end at the next pole or the end of the platform.
 
-**Unload-only calls.** GTFS marks drop-off-only calls with `pickup_type=1`. None of the platforms is unload-only for every route, so the drop-off-only calls are kept per route. In the 08:00–09:00 hour:
+**Unload-only calls.** GTFS marks drop-off-only calls with `pickup_type=1`. None of the platforms is unload-only for every route, so the drop-off-only calls are kept per route. In the 07:30–08:30 hour:
 
 | Route | Drop-off-only stop | Platform |
 | --- | --- | --- |
@@ -47,7 +47,7 @@ GO Transit's unload platform (OSM `GO 7`) is mapped but not used, because GO coa
 - the all-way stop at Ring Road;
 - the exit onto Phillip Street, which has no traffic control mapped.
 
-**Other GRT buses** follow every GTFS call at these stops from 08:00 to 09:00 on Wednesday 2 December 2026: 35 trips and 31 vehicle visits. Run minute 0 is taken as 08:00 (modelled). When consecutive trips of one block call at the same stop, the bus stays on the berth through the layover between them.
+**Other GRT buses** follow every GTFS call at these stops from 07:30 to 08:30 on Wednesday 2 December 2026: 32 trips. Run minute 0 is taken as 07:30 (modelled), the same hour as the garages in [bus-garages.md](bus-garages.md). Each bus keeps its block's ID (`GRT-<block>`), so the route 13 bus that sets down here at 45:00 is the bus that then returns to the Northfield garage. When consecutive trips of one block call at the same stop, the bus stays on the berth through the layover between them.
 
 ## The corridor bus's trip at UW
 
@@ -113,14 +113,14 @@ Agent behaviour on the roadway is the same in both. It is driving, not policy.
 
 | Scenario | Policies | UW departures | Mean time in station | Corridor buses stopped (s) | Other GRT buses stopped (s) | Transfers boarded (of 110) | Riders still waiting | Onboard delay from holds (rider-min) | Total waiting (rider-min) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| no blockage | off | 3 | 170 s | 40 (follow 6, merge 25, stop 9) | 251 | 69 | 176 | 0 | 9008 |
-| no blockage | on | 3 | 176 s | 46 (follow 4, merge 33, stop 9) | 251 | 84 | 167 | 28 | 7978 |
-| platform 6 front berth blocked 10–58 | off | 3 | 170 s | 26 (follow 12, merge 5, stop 9) | 274 | 69 | 176 | 0 | 9005 |
-| platform 6 front berth blocked 10–58 | on | 3 | 173 s | 24 (follow 10, merge 5, stop 9) | 274 | 84 | 167 | 28 | 7975 |
-| Phillip St exit blocked 10–58 | off | 3 | 1234 s | 552 (follow 494, merge 32, stop 9, wait for berth 17) | 16982 | 37 | 290 | 0 | 10323 |
-| Phillip St exit blocked 10–58 | on | 3 | 1214 s | 479 (follow 421, merge 32, stop 9, wait for berth 17) | 16982 | 61 | 281 | 28 | 9125 |
+| no blockage | off | 3 | 170 s | 40 (follow 6, merge 25, stop 9) | 311 | 69 | 176 | 0 | 9008 |
+| no blockage | on | 3 | 176 s | 46 (follow 4, merge 33, stop 9) | 311 | 84 | 167 | 28 | 7978 |
+| platform 6 front berth blocked 10–58 | off | 3 | 170 s | 26 (follow 12, merge 5, stop 9) | 334 | 69 | 176 | 0 | 9005 |
+| platform 6 front berth blocked 10–58 | on | 3 | 173 s | 24 (follow 10, merge 5, stop 9) | 334 | 84 | 167 | 28 | 7975 |
+| Phillip St exit blocked 10–58 | off | 3 | 1201 s | 495 (follow 472, merge 14, stop 9) | 12004 | 37 | 290 | 0 | 10297 |
+| Phillip St exit blocked 10–58 | on | 3 | 1184 s | 433 (follow 409, merge 15, stop 9) | 12406 | 61 | 281 | 28 | 9117 |
 
-**Blocked berth.** All three corridor buses (B101 at 30:32, B102 at 39:33 and B103) find platform 6's front berth held by the out-of-service bus. Each asks for and takes the rear berth. The station costs them almost nothing, because the alternate berth works.
+**Blocked berth.** All three corridor buses (B101 at 30:32, B102 at 39:33 and B103 at 51:36) find platform 6's front berth held by the out-of-service bus. Each asks for and takes the rear berth. The station costs them almost nothing, because the alternate berth works.
 
 **Blocked exit.** Buses finish loading and wait at the berth with their doors closed, and the queue backs up behind them. Leaving by Ring Road is listed and rejected: there is no space to turn a 12.2 m bus on the two-lane roadway.
 
@@ -139,5 +139,5 @@ The fixed controller's "adaptive must not be worse" check now compares total wai
 | Phillip Street | 600 vehicles/h, 6 s critical gap |
 | Other GRT buses | 12.2 m each; 20 s minimum dwell where GTFS gives none |
 | Corridor buses' berth plan | set down on platform 4, load on platform 6 |
-| Minute 0 | 08:00 on a GTFS Wednesday |
+| Minute 0 | 07:30 on a GTFS Wednesday |
 | Blockages | scenario inputs |
