@@ -1,4 +1,4 @@
-import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.mjs";
+import { loadPyodide } from "./pyodide/pyodide.mjs";
 
 let advance;
 
@@ -6,7 +6,7 @@ self.onmessage = async ({ data }) => {
   try {
     if (data.type === "start") {
       const [python, response] = await Promise.all([
-        loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/" }),
+        loadPyodide(),
         fetch("/api/simulate/continuous", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
