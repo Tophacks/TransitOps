@@ -71,7 +71,7 @@ class AgentTests(unittest.TestCase):
         bad = []
 
         def watch(station, t):
-            act = [a for a in station.active()]
+            act = station.plaza()      # vehicles still on Transit Plaza Road
             for i, a in enumerate(act):
                 for b in act[i + 1:]:
                     if a.side != b.side or not (a.lanes() & b.lanes()):

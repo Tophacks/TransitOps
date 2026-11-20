@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+import rail_ops
 from ion import IonPlan
 from models import Bus
 from simulation_engine import (
@@ -58,6 +59,16 @@ class SimulationRequest(BaseModel):
     uw_block_berth: str = "P6-1078-1"
     uw_block_from_minute: int = Field(default=10, ge=0, le=59)
     uw_block_to_minute: int = Field(default=58, ge=1, le=90)
+    # Private cars on Phillip Street southbound (UW Station exit) and driver errors.
+    uw_cars: Literal["light", "moderate", "heavy"] = "moderate"
+    driver_error: Literal["overshoot", "overshoot_blocked", "missed_berth", "wrong_turn", "seeded"] | None = None
+    driver_error_rate: float = Field(default=0.2, ge=0.0, le=1.0)
+    error_seed: int = 17
+    # A train overshooting a platform (opt-in); recovery through Rail Control.
+    rail_overshoot_station: str | None = None
+    rail_overshoot_direction: Literal["north", "south"] = "north"
+    rail_overshoot_minute: int = Field(default=10, ge=0, le=59)
+    rail_overshoot_metres: float = Field(default=12.0, ge=2.0, le=40.0)
 
 
 def metrics_to_dict(metrics):
@@ -76,6 +87,7 @@ def metrics_to_dict(metrics):
         "ion_trains_peak": metrics.ion_trains_peak,
         "ion_max_delay": round(metrics.ion_max_delay_minutes, 1),
         "connection_holds": metrics.connection_holds,
+        "missed_stops": getattr(metrics, "missed_stops", 0),
         "connection_hold_minutes": metrics.connection_hold_minutes,
         "hold_onboard_rider_minutes": round(metrics.hold_onboard_rider_minutes, 1),
         "hold_downstream_rider_minutes": round(metrics.hold_downstream_rider_minutes, 1),
@@ -171,6 +183,31 @@ def yard_block(payload: SimulationRequest):
             "to_minute": max(payload.yard_block_from_minute + 1, payload.yard_block_to_minute)}
 
 
+def driver_errors(payload: SimulationRequest):
+    """Driver errors: off, seeded (reproducible from error_seed), or a demo on B101's first UW visit."""
+    e = payload.driver_error
+    if e is None:
+        return None
+    if e == "seeded":
+        return {"mode": "seeded", "rate": payload.driver_error_rate, "seed": payload.error_seed}
+    demo = {"overshoot": ("overshoot", "P6"), "overshoot_blocked": ("overshoot", "P6"),
+            "missed_berth": ("missed_berth", "P4"), "wrong_turn": ("wrong_turn", "exit")}[e]
+    out = {"mode": "demo", "kind": demo[0], "vehicle": "B101", "visit": 1, "where": demo[1], "metres": 6.0}
+    if e == "overshoot_blocked":
+        out["follower"] = True
+    return out
+
+
+def rail_overshoot(payload: SimulationRequest):
+    if not payload.rail_overshoot_station:
+        return None
+    names = {st["name"] for st in rail_ops.NETWORK["stations"][payload.rail_overshoot_direction]}
+    if payload.rail_overshoot_station not in names:
+        raise HTTPException(status_code=422, detail=f"{payload.rail_overshoot_station!r} is not an ION station")
+    return {"station": payload.rail_overshoot_station, "direction": payload.rail_overshoot_direction,
+            "after_minute": payload.rail_overshoot_minute, "metres": payload.rail_overshoot_metres}
+
+
 def uw_block(payload: SimulationRequest):
     if payload.uw_block is None:
         return None
@@ -198,6 +235,7 @@ def ion_plan(payload: SimulationRequest, reassign: bool = True):
         closures=closures(payload),
         fault=fault(payload),
         yard_block=yard_block(payload),
+        rail_overshoot=rail_overshoot(payload),
     )
 
 
@@ -218,6 +256,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         breakdown_minute=payload.breakdown_minute,
         emergency_dispatch_minute=payload.emergency_dispatch_minute,
         uw_block=uw_block(payload),
+        uw_cars=payload.uw_cars,
+        driver_errors=driver_errors(payload),
     )
     metrics = sim.run()
 
@@ -230,6 +270,8 @@ def run_case(payload: SimulationRequest, intelligent: bool):
         "decisions": sim.decisions,
         # every vehicle on UW Station's roadway, second by second (uw_station.py)
         "uw": {"block": uw_block(payload), "vehicles": sim.uw.plans() if sim.uw else [],
+               "cars": sim.uw.cars() if sim.uw else [], "car_demand": payload.uw_cars,
+               "errors": sim.uw.errors.used if sim.uw else [],
                "metrics": sim.uw.metrics() if sim.uw else None},
     }
 
