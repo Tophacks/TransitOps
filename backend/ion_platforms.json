@@ -1,0 +1,138 @@
+{
+ "attribution": "Bus streets from GRT GTFS shapes (Region of Waterloo Open Data Licence).",
+ "rule": "track within 12 m and 20 degrees of a GRT bus street at two or more of four points 20-40 m either side of the platform",
+ "platforms": {
+  "north": [
+   {
+    "name": "Fairway Station",
+    "street_running": false
+   },
+   {
+    "name": "Block Line Station",
+    "street_running": false
+   },
+   {
+    "name": "Mill Station",
+    "street_running": false
+   },
+   {
+    "name": "Borden Station",
+    "street_running": true
+   },
+   {
+    "name": "Kitchener Market Station",
+    "street_running": true
+   },
+   {
+    "name": "Frederick Station",
+    "street_running": true
+   },
+   {
+    "name": "Kitchener City Hall Station",
+    "street_running": true
+   },
+   {
+    "name": "Central Station",
+    "street_running": true
+   },
+   {
+    "name": "Grand River Hospital Station",
+    "street_running": true
+   },
+   {
+    "name": "Allen Station",
+    "street_running": true
+   },
+   {
+    "name": "Waterloo Public Square Station",
+    "street_running": true
+   },
+   {
+    "name": "Laurier-Waterloo Park Station",
+    "street_running": false
+   },
+   {
+    "name": "University Of Waterloo Station",
+    "street_running": false
+   },
+   {
+    "name": "Research and Technology Station",
+    "street_running": false
+   },
+   {
+    "name": "Northfield Station",
+    "street_running": false
+   },
+   {
+    "name": "Conestoga Station",
+    "street_running": false
+   }
+  ],
+  "south": [
+   {
+    "name": "Conestoga Station",
+    "street_running": false
+   },
+   {
+    "name": "Northfield Station",
+    "street_running": false
+   },
+   {
+    "name": "Research and Technology Station",
+    "street_running": false
+   },
+   {
+    "name": "University Of Waterloo Station",
+    "street_running": false
+   },
+   {
+    "name": "Laurier-Waterloo Park Station",
+    "street_running": false
+   },
+   {
+    "name": "Willis Way Station",
+    "street_running": true
+   },
+   {
+    "name": "Allen Station",
+    "street_running": true
+   },
+   {
+    "name": "Grand River Hospital Station",
+    "street_running": true
+   },
+   {
+    "name": "Central Station",
+    "street_running": true
+   },
+   {
+    "name": "Victoria Park Station",
+    "street_running": true
+   },
+   {
+    "name": "Queen Station",
+    "street_running": true
+   },
+   {
+    "name": "Kitchener Market Station",
+    "street_running": true
+   },
+   {
+    "name": "Borden Station",
+    "street_running": true
+   },
+   {
+    "name": "Mill Station",
+    "street_running": false
+   },
+   {
+    "name": "Block Line Station",
+    "street_running": false
+   },
+   {
+    "name": "Fairway Station",
+    "street_running": true
+   }
+  ]
+ }
+}
