@@ -36,6 +36,11 @@ def run(intelligent=True, **kw):
     return s, m
 
 
+def corridor(s):
+    """The corridor buses' IDs (fleet numbers like the GTFS buses', so told apart by kind)."""
+    return {a.id for a in s.uw.agents if a.kind == "corridor"}
+
+
 def uw(s, vehicle="B101"):
     return [d for d in s.decisions if d["terminal"] == "uw" and d["vehicle_id"] == vehicle]
 
@@ -70,7 +75,7 @@ class GapTests(unittest.TestCase):
         def waits(s):
             out = {}
             for d in s.decisions:
-                if d["terminal"] == "uw" and d["chosen"] == "yield and wait" and d["vehicle_id"].startswith("B1") \
+                if d["terminal"] == "uw" and d["chosen"] == "yield and wait" and d["vehicle_id"] in corridor(s) \
                         and "after waiting" in d["outcome"]:
                     out[d["vehicle_id"]] = out.get(d["vehicle_id"], 0) + int(d["outcome"].split("after waiting ")[1].split(" s")[0])
             return out
@@ -89,7 +94,7 @@ class GapTests(unittest.TestCase):
 
     def test_no_cars_no_wait(self):
         s, _ = run(uw_cars=0)
-        self.assertFalse([d for d in s.decisions if d["chosen"] == "yield and wait" and d["vehicle_id"].startswith("B1")])
+        self.assertFalse([d for d in s.decisions if d["chosen"] == "yield and wait" and d["vehicle_id"] in corridor(s)])
 
 
 class SharedRoadTests(unittest.TestCase):
@@ -146,12 +151,14 @@ class SharedRoadTests(unittest.TestCase):
                         self.assertAlmostEqual(sum(parts), 12.2, delta=0.05)
 
     def test_gtfs_bus_merge_decision_names_the_cars(self):
+        gtfs = {getattr(a, "vehicle_id", a.id) for a in self.sim.uw.agents if a.kind == "grt"}
         waits = [d for d in self.sim.decisions if d["terminal"] == "uw" and d["chosen"] == "yield and wait"
-                 and d["vehicle_id"].startswith("GRT") and d.get("blockers")]
+                 and d["vehicle_id"] in gtfs and d.get("blockers")]
         self.assertTrue(waits)
         d = waits[0]
         self.assertIn(d["trip_id"], self.trips)
-        self.assertTrue(all(b.startswith("car-") or b.startswith("GRT") or b.startswith("B1") for b in d["blockers"]))
+        known = {a.id for a in self.sim.uw.agents} | {getattr(a, "vehicle_id", a.id) for a in self.sim.uw.agents}
+        self.assertTrue(all(b.startswith("car-") or b in known for b in d["blockers"]), d["blockers"])
         self.assertIn("Phillip St southbound", d["saw"])
 
 

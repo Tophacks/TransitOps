@@ -3,7 +3,7 @@ import random
 
 import corridor
 import ion
-from models import BusState, Intersection, Passenger, SimulationMetrics, Stop
+from models import Bus, BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
 ROUTE = [
@@ -127,6 +127,13 @@ class TransitSimulation:
         uw_station=True,
         uw_cars="moderate",
         driver_errors=None,
+        lines=("7",),
+        line_block=None,
+        fleet_inventory=300,
+        breakdown_kind="hold",
+        breakdown_target="corridor",
+        breakdown_vehicle=None,
+        commands=(),
     ):
         self.buses = buses
         # Connection holds at UW and Central: on with the adaptive controller.
@@ -147,6 +154,16 @@ class TransitSimulation:
         self.breakdown_bus_id = None
         self.breakdown_until = -1
         self.breakdown_minutes = 6
+        # "hold": the old six-minute roadside hold; "out_of_service": the bus is withdrawn
+        # and dispatch sends a ready spare from a garage (fleet.py).
+        self.breakdown_kind = breakdown_kind
+        self.breakdown_target = breakdown_target
+        self.breakdown_vehicle = breakdown_vehicle
+        self.spares = []
+        self._pending_spares = []
+        # Dispatcher orders (the Fleet panel), applied at their minute: part of the
+        # run's inputs, so a seed and its commands replay exactly.
+        self.commands = sorted((dict(c) for c in commands), key=lambda c: c["minute"])
         self.metrics = SimulationMetrics()
         self.events = []
         self.timeline = []
@@ -173,10 +190,38 @@ class TransitSimulation:
         self.last_recommendation = {}
         self.last_recommendation_answered = None
         self.capacity_answered = set()
+        # The regional fleet: every modelled vehicle, its garage, state and driver (fleet.py).
+        from fleet import Fleet
+        self.fleet = Fleet(fleet_inventory, seed, corridor_buses=[b.bus_id for b in buses],
+                           duration_s=duration * 60.0, simulated_blocks=self._simulated_blocks(lines, uw_station))
         self.uw = None
         if uw_station:
             from uw_station import UwStation
             self.uw = UwStation(self, block=uw_block, seed=seed, adaptive=intelligent, cars=uw_cars, errors=driver_errors)
+        # Scheduled GRT lines end to end, on the same clock (lines.py).
+        self.lines = None
+        if lines:
+            from drivers import Errors
+            from lines import LineService
+            self.lines = LineService(tuple(lines), seed=seed, duration_s=duration * 60.0, fleet=self.fleet,
+                                     traffic=self.traffic_multiplier, ion_plan=ion_plan, demand=self.demand_multiplier,
+                                     station_block=line_block,
+                                     errors=self.uw.errors if self.uw is not None else Errors(driver_errors, seed))
+
+    @staticmethod
+    def _simulated_blocks(lines, uw_station):
+        """GTFS blocks whose buses drive in this run: the modelled lines, UW Station's
+        GTFS buses and the garage pull-outs and returns."""
+        out = set()
+        if lines:
+            from lines import LINES
+            out |= {t["block"] for r in lines if r in LINES["routes"] for t in LINES["routes"][r]["trips"]}
+        if uw_station:
+            from uw_station import GEO
+            out |= {t["block"] for t in GEO["gtfs"]["trips"]}
+        from garage_ops import GARAGES
+        out |= {g[k]["block"] for g in GARAGES["garages"] for k in ("out", "in")}
+        return out
 
     def log(self, message, kind="info", *, bus_id=None, reason=None, train_id=None):
         event = {"minute": self.time, "message": message, "kind": kind}
@@ -259,10 +304,17 @@ class TransitSimulation:
                 self.metrics.ion_transfers += riders
 
     def _scenario_events(self):
+        for c in [c for c in self.commands if c["minute"] == self.time]:
+            self._command(c)
         if self.surge_minute is not None and self.time == self.surge_minute:
             self._spawn_passengers("UW", self.surge_passengers)
             self.log(f"Event surge: +{self.surge_passengers} passengers at UW", "surge")
-        if self.breakdown_minute is not None and self.time == self.breakdown_minute:
+        if self.breakdown_minute is not None and self.time == self.breakdown_minute and self.breakdown_target == "line":
+            if self.lines is not None:
+                self.lines.breakdown(self.time * 60.0, self.breakdown_vehicle)
+        elif self.breakdown_minute is not None and self.time == self.breakdown_minute and self.breakdown_kind == "out_of_service":
+            self._withdraw()
+        elif self.breakdown_minute is not None and self.time == self.breakdown_minute:
             active = next((bus for bus in self.buses if bus.state != BusState.YARD), None)
             if active:
                 self.breakdown_bus_id = active.bus_id
@@ -282,6 +334,167 @@ class TransitSimulation:
                 )
             else:
                 self.log("Emergency dispatch requested, but no bus is available", "emergency")
+
+    def _add_corridor_spare(self, plan, from_label):
+        spare = Bus(plan["vehicle"])
+        spare.state = BusState.EN_ROUTE
+        spare.current_stop_index = -1
+        spare.target_stop_index = 3
+        spare.segment_elapsed = 0
+        spare.segment_minutes = max(1, math.ceil((plan["arrive_s"] - self.time * 60.0) / 60.0))
+        spare.segment_progress = 0.0
+        spare.deadhead = plan["deadhead"]
+        self.buses.append(spare)
+        self.spares.append(plan)
+        self.log(f"{spare.bus_id} sent from {from_label} to Central", "dispatch", bus_id=spare.bus_id,
+                 reason=plan.get("decision", {}).get("outcome", ""))
+        return spare
+
+    def _command(self, c):
+        """A dispatcher's order from the Fleet panel: checked against the vehicle's
+        availability and route access, then carried out or refused, with the reason."""
+        from fleet import clock as fclock
+        t = self.time * 60.0
+        action, vid, target = c.get("action"), c.get("vehicle"), c.get("target", "corridor")
+        checks, effect, outcome = [], "", ""
+        ok = True
+        stop = None
+        fleet = self.fleet
+
+        def check(name, good, why):
+            nonlocal ok
+            checks.append({"option": name, "feasible": bool(good), "reason": why, "estimate_s": None})
+            ok = ok and bool(good)
+
+        line_bus = self.lines.active_bus(block=target) if (self.lines and target != "corridor") else None
+        if action == "dispatch_spare":
+            good, why = fleet.availability(t, vid)
+            check("the vehicle is available", good, why)
+            if target == "corridor":
+                stop = "1901"
+            elif line_bus is None:
+                check("the block is running on a modelled line", False, f"block {target} has no bus in service now")
+            else:
+                stop = line_bus.pattern["stops"][self.lines.relief_index(line_bus)]["stop"]
+            if ok and stop:
+                dh = fleet.deadhead(f"garage:{fleet.vehicles[vid].garage}", f"stop:{stop}")
+                check("route access", dh is not None,
+                      f"legal road route from its garage to {stop} ({dh['time_s'] / 60:.1f} min)" if dh else
+                      "no legal road route from its garage")
+        elif action == "reassign":
+            bus = self.lines.active_bus(vehicle=vid) if self.lines else None
+            v = fleet.vehicles.get(vid)
+            if v is None:
+                check("the vehicle exists", False, f"{vid} is not in the modelled fleet")
+            elif bus is None:
+                st = v.state_at(t)
+                check("the vehicle is in service on a modelled line", False,
+                      f"{vid} is {st[1] if st else 'unknown'}: only a bus in service on a modelled line can be "
+                      f"reassigned (corridor buses: send a spare instead)")
+            else:
+                check("the vehicle is in service on a modelled line", True, f"{vid} is on block {bus.block}")
+                if target != "corridor":
+                    check("the target is the corridor run", False, "a bus in service can be reassigned to the corridor run")
+                k = self.lines.relief_index(bus)
+                stop = bus.pattern["stops"][k]["stop"]
+                dh = fleet.deadhead(f"stop:{stop}", "stop:1901") if stop != "1901" else {"time_s": 0.0, "path": []}
+                check("route access", dh is not None, f"legal road route from {stop} to Central" if dh else "no road route")
+                lost = [bus.trip["trip_id"]] + self.lines.later_trips(bus)
+                effect = (f"block {bus.block} loses coverage from {self.lines.stops[stop]['name']}: trip "
+                          f"{lost[0]} (rest of it)" + (f" and trips {', '.join(lost[1:])}" if len(lost) > 1 else "")
+                          + "; the corridor gains a bus")
+        elif action == "breakdown":
+            corridor = next((b for b in self.buses if b.bus_id == vid and b.state != BusState.YARD
+                             and not getattr(b, "out_of_service", False)), None)
+            line = self.lines.active_bus(vehicle=vid) if self.lines else None
+            check("the vehicle is in service", corridor is not None or line is not None,
+                  f"{vid} is {'in service' if corridor or line else 'not in service in this run'}")
+        else:
+            check("a known order", False, f"unknown action {action!r}")
+
+        d = {"id": f"C{len([x for x in self.decisions if x['terminal'] == 'fleet']) + 1:03d}", "t": t,
+             "minute": self.time, "level": "dispatch", "terminal": "fleet", "vehicle_id": vid, "trip_id": None,
+             "trigger": f"Dispatcher order at {fclock(t)}: {action.replace('_', ' ')} {vid} -> {target}",
+             "options": checks, "chosen": "accepted" if ok else "refused", "location": None,
+             "control": "; ".join(o["reason"] for o in checks if not o["feasible"]) or "all checks passed",
+             "outcome": "", "effect": effect, "command": c}
+        self.decisions.append(d)
+        if not ok:
+            d["outcome"] = "refused: " + d["control"]
+            return
+        if action == "dispatch_spare":
+            v = fleet.vehicles[vid]
+            label = "the corridor run" if target == "corridor" else f"block {target} from {self.lines.stops[stop]['name']}"
+            plan = fleet.send(t, v, f"garage:{v.garage}", stop, label, prep=True)
+            plan["decision"] = d
+            if target == "corridor":
+                self._add_corridor_spare(plan, f"the {fleet.garages[v.garage]['name']}")
+                d["effect"] = d["effect"] or f"the corridor gains {vid} from {fclock(plan['arrive_s'])}"
+            else:
+                k = self.lines.relief_index(line_bus)
+                self.lines.replace(t, line_bus, k, plan)
+                d["effect"] = (f"{vid} relieves {line_bus.vehicle_id} at {self.lines.stops[stop]['name']}; "
+                               f"{line_bus.vehicle_id} then returns to its garage")
+            d["outcome"] = f"{vid} leaves at {fclock(plan['leave_s'])}, at {stop} {fclock(plan['arrive_s'])}"
+        elif action == "reassign":
+            bus = self.lines.active_bus(vehicle=vid)
+            k = self.lines.relief_index(bus)
+
+            def released(vehicle, sid, t_rel, put_off):
+                v = fleet.vehicles[vehicle]
+                plan = fleet.send(t_rel, v, f"stop:{sid}", "1901", "the corridor run (reassigned)")
+                self._pending_spares.append(plan)
+                d["outcome"] = (f"{vehicle} left the line at {self.lines.stops[sid]['name']} {fclock(t_rel)} "
+                                f"({put_off} riders wait for the next bus); at Central {fclock(plan['arrive_s'])}")
+            self.lines.release(t, bus, k, released)
+            d["outcome"] = f"{vid} leaves the line at its next relief point"
+        elif action == "breakdown":
+            if any(b.bus_id == vid for b in self.buses):
+                self.breakdown_vehicle = vid
+                self._withdraw()
+            else:
+                self.lines.breakdown(t, vid)
+            d["outcome"] = f"{vid} withdrawn"
+
+    def _withdraw(self):
+        """A corridor bus breaks down for good: its riders step off to its next
+        stop, and dispatch sends a ready spare from a garage to Central."""
+        cand = [b for b in self.buses if b.state != BusState.YARD and not getattr(b, "at_station", False)
+                and not getattr(b, "out_of_service", False) and not getattr(b, "deadhead", None)]
+        if self.breakdown_vehicle:
+            cand = [b for b in cand if b.bus_id == self.breakdown_vehicle]
+        if not cand:
+            self.log("Breakdown skipped: no corridor bus on the road", "disruption")
+            return
+        bus = cand[0]
+        t = self.time * 60.0
+        bus.out_of_service = True
+        where = ROUTE[bus.target_stop_index]
+        riders = len(bus.onboard)
+        motion = self._bus_motion(bus)
+        walk_m = max(0.0, motion["length_m"] - motion["distance_m"]) if motion else 0.0
+        walk_s = walk_m / 1.2                      # walking speed 1.2 m/s (modelled)
+        for p in bus.onboard:
+            if p.destination == where:
+                p.completed_time = self.time + math.ceil(walk_s / 60)   # walked the rest
+                continue
+            # They walk on to the next stop and wait there for another bus (a second wait,
+            # counted from the end of the walk; they are not counted as boarding twice).
+            p.eligible_s = t + walk_s
+            p.stranded = True
+            self.stops[where].queue.append(p)
+        bus.onboard = []
+        self.metrics.breakdowns = getattr(self.metrics, "breakdowns", 0) + 1
+        self.fleet.breakdown(t, bus.bus_id, f"on the corridor towards {self.stops[where].name}")
+        self.log(f"{bus.bus_id} broke down {walk_m:.0f} m before {self.stops[where].name}; {riders} riders walk on "
+                 f"to the stop ({walk_s / 60:.0f} min)",
+                 "disruption", bus_id=bus.bus_id, reason="Withdrawn from service (scenario).")
+        plan = self.fleet.request_spare(t, "1901", f"{bus.bus_id} broke down on the corridor", "the corridor run",
+                                        decide=self.decisions.append)
+        if plan is None:
+            self.log("No spare available: the corridor runs one bus short", "disruption")
+            return
+        self._add_corridor_spare(plan, f"the {self.fleet.garages[plan['garage']]['name']}")
 
     def _upcoming_transfers(self, lookahead=10):
         """ION arrivals at Central and UW in the next `lookahead` minutes.
@@ -504,8 +717,12 @@ class TransitSimulation:
             passenger.boarded_time = math.floor(board_s / 60)
             passenger.boarded_s = board_s
             wait_min = max(0.0, board_s - passenger.ready_s) / 60.0
-            self.metrics.total_passengers_boarded += 1
             self.metrics.cumulative_wait_minutes += wait_min
+            if getattr(passenger, "stranded", False):
+                passenger.stranded = False
+                self.metrics.stranded_reboarded = getattr(self.metrics, "stranded_reboarded", 0) + 1
+                continue
+            self.metrics.total_passengers_boarded += 1
             if passenger.source == "ion":
                 self.metrics.ion_transfers_boarded += 1
                 self.metrics.cumulative_transfer_wait += wait_min
@@ -838,7 +1055,7 @@ class TransitSimulation:
 
     def _advance_buses(self):
         for bus in self.buses:
-            if bus.state == BusState.YARD or getattr(bus, "at_station", False):
+            if bus.state == BusState.YARD or getattr(bus, "at_station", False) or getattr(bus, "out_of_service", False):
                 continue
             if bus.bus_id == self.breakdown_bus_id and self.time < self.breakdown_until:
                 continue
@@ -893,6 +1110,9 @@ class TransitSimulation:
                         bus.current_stop_index, bus.target_stop_index))
                     self.uw.arrive(bus, self.time * 60.0)
                     continue
+                if getattr(bus, "deadhead", None):
+                    bus.deadhead = None           # the spare is at Central: in service from here
+                    self.log(f"{bus.bus_id} in service at Central", "recovery", bus_id=bus.bus_id)
                 self._alight_and_board(bus, stop_id)
                 bus.detour_arrival = False
                 bus.state = BusState.DWELLING
@@ -955,6 +1175,9 @@ class TransitSimulation:
             # After an unintended turn the bus reached this stop on another road
             # (the UW Station replay draws that route).
             **({"detour": True} if getattr(bus, "detour_arrival", False) and origin == "UW" else {}),
+            # A spare out of service from its garage (drawn on its own road route; fleet.py).
+            **({"deadhead": True} if getattr(bus, "deadhead", None) else {}),
+            **({"broken": True} if getattr(bus, "out_of_service", False) else {}),
         }
 
     def _bus_geo(self, bus, motion=None):
@@ -1105,6 +1328,12 @@ class TransitSimulation:
             self._advance_buses()
             if self.uw is not None:
                 self.uw.advance_to((minute + 1) * 60.0)
+            if self.lines is not None:
+                self.lines.advance_to((minute + 1) * 60.0)
+            # Buses a line released this minute join the corridor (reassignments).
+            for plan in self._pending_spares:
+                self._add_corridor_spare(plan, "its line")
+            self._pending_spares = []
             self._capture_snapshot()
 
         self.metrics.passengers_left_waiting = sum(
@@ -1123,6 +1352,9 @@ class TransitSimulation:
         # GRT garages: pull-outs and returns on real roads (garage_ops.py).
         from garage_ops import Garages
         self.garages = Garages(self).run()
+        if self.lines is not None:
+            self.lines.finish()
+            self.decisions.extend(self.lines.decisions)
         self.decisions.sort(key=lambda d: d["t"])
         self.log("Corridor simulation complete", "system")
         return self.metrics

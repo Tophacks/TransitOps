@@ -4,6 +4,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
 import GeospatialMap from "./components/GeospatialMap";
+import FleetPanel from "./components/FleetPanel";
 import { useSumoStream } from "../lib/useSumoStream";
 import { PLAYBACK_SPEEDS, usePlayback } from "../lib/usePlayback";
 import { busPoses, type BusPose } from "../lib/motion/playback.ts";
@@ -57,6 +58,18 @@ const DEFAULTS: Controls = {
   rail_overshoot_direction: "north",
   rail_overshoot_minute: 10,
   rail_overshoot_metres: 12,
+  duration_min: 60,
+  lines: ["7"],
+  line_block_stop: null,
+  line_block_from_minute: 20,
+  line_block_to_minute: 30,
+  missed_stop_stop: "2540",
+  missed_stop_after_minute: 10,
+  fleet_inventory: 300,
+  breakdown_kind: "hold",
+  breakdown_target: "corridor",
+  breakdown_vehicle: null,
+  commands: [],
 };
 
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
@@ -77,6 +90,11 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "bus-wrong-turn", title: "Bus takes the wrong turn", description: "B101 turns left onto Phillip St; Control re-routes it to Waterloo Public Square", controls: { ...DEFAULTS, driver_error: "wrong_turn" } },
   { id: "train-overshoot", title: "Train overshoot, reverse granted", description: "An ION train overshoots Research and Technology by 12 m and reverses", controls: { ...DEFAULTS, rail_overshoot_station: "Research and Technology Station" } },
   { id: "train-overshoot-street", title: "Train overshoot on the street", description: "An ION train overshoots Waterloo Public Square (street-running): no reverse, it continues", controls: { ...DEFAULTS, rail_overshoot_station: "Waterloo Public Square Station" } },
+  { id: "route-7", title: "Route 7 end to end", description: "Every Route 7 King bus, Conestoga ↔ Fairway, for two hours: stops, layovers and the next trip", controls: { ...DEFAULTS, duration_min: 120 } },
+  { id: "route-7-station-delay", title: "Route 7: Central blocked", description: "Central Station's berths are blocked 07:50–08:10: the delay reaches later stops, connections and the next trip", controls: { ...DEFAULTS, duration_min: 120, line_block_stop: "1901", line_block_from_minute: 20, line_block_to_minute: 40 } },
+  { id: "route-7-missed-stop", title: "Route 7: driver misses a stop", description: "The first bus due at Grand River Hospital after 07:40 misses the lane change and passes it", controls: { ...DEFAULTS, duration_min: 120, driver_error: "missed_stop" } },
+  { id: "spare-corridor", title: "Breakdown, spare from a garage", description: "Three corridor buses; one breaks down for good at minute 15 and dispatch sends a ready spare from a garage", controls: { ...DEFAULTS, fleet_size: 3, breakdown_minute: 15, breakdown_kind: "out_of_service" } },
+  { id: "spare-route-7", title: "Route 7 breakdown, spare", description: "A Route 7 bus breaks down at minute 20; a spare takes over its block at the next station", controls: { ...DEFAULTS, duration_min: 120, breakdown_minute: 20, breakdown_kind: "out_of_service", breakdown_target: "line" } },
   { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
 ];
 
@@ -256,6 +274,8 @@ export default function Home() {
   const playback = usePlayback(30);
   const { seconds, playing, speed } = playback;
   const [selected, setSelected] = useState<Selection>(null);
+  // The fleet vehicle picked in the Fleet panel or tapped on the map.
+  const [fleetPick, setFleetPick] = useState<string | null>(null);
   const [mapView, setMapView] = useState<"geographic" | "schematic">("geographic");
   const [liveMap, setLiveMap] = useState(true);
   const sumo = useSumoStream();
@@ -303,8 +323,9 @@ export default function Home() {
     setControls((current) => ({ ...current, [key]: value }));
   }
 
-  async function runSimulation(event?: FormEvent) {
+  async function runSimulation(event?: FormEvent, override?: Controls, resumeAt?: number) {
     event?.preventDefault();
+    const body = override ?? controls;
     setLoading(true);
     setError("");
     playback.pause();
@@ -316,7 +337,7 @@ export default function Home() {
       const response = await fetch("/api/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(controls),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
@@ -326,6 +347,7 @@ export default function Home() {
       const result = (await response.json()) as SimulationResponse;
       setData(result);
       playback.load(Math.max(0, result.smart.timeline.length - 1) * 60);
+      if (resumeAt !== undefined) playback.seek(resumeAt);
       playback.play();
     } catch (reason) {
       setError(
@@ -336,6 +358,19 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  /** A dispatcher order: added to the run's inputs, then the run replays (same seed). */
+  function issueCommand(command: NonNullable<Controls["commands"]>[number]) {
+    const next = { ...controls, commands: [...(controls.commands ?? []), command] };
+    setControls(next);
+    void runSimulation(undefined, next, command.minute * 60);
+  }
+
+  function clearCommands() {
+    const next = { ...controls, commands: [] };
+    setControls(next);
+    void runSimulation(undefined, next, seconds);
   }
 
   function togglePlayback() {
@@ -396,6 +431,10 @@ export default function Home() {
             uwVehicles={data?.smart.uw?.vehicles ?? []}
             uwCars={data?.smart.uw?.cars ?? []}
             garageVehicles={data?.smart.garages?.vehicles ?? []}
+            lineVehicles={data?.smart.lines?.vehicles ?? []}
+            fleetVehicles={data?.smart.fleet?.vehicles ?? []}
+            focusVehicle={fleetPick}
+            onFocusVehicle={setFleetPick}
             seconds={seconds}
             onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
           />
@@ -535,8 +574,22 @@ export default function Home() {
           </label>
 
           <label>
-            <div className="labelRow"><span>Available fleet</span><strong>{controls.fleet_size}</strong></div>
+            <div className="labelRow"><span>Buses assigned to this run (corridor)</span><strong>{controls.fleet_size}</strong></div>
             <input type="range" min="1" max="6" step="1" value={controls.fleet_size} onChange={(event) => update("fleet_size", Number(event.target.value))} />
+            <span className="controlNote">Taken from the regional fleet below; Route 7 and UW Station's GTFS buses are assigned by block.</span>
+          </label>
+
+          <label>
+            <div className="labelRow"><span>Regional fleet (conventional buses)</span><strong>{controls.fleet_inventory}</strong></div>
+            <input type="range" min="260" max="360" step="5" value={controls.fleet_inventory ?? 300} onChange={(event) => update("fleet_inventory", Number(event.target.value))} />
+            <span className="controlNote">GRT publishes “more than 300”; garage shares are modelled. MobilityPLUS (35) is kept separate.</span>
+          </label>
+
+          <label>
+            <div className="labelRow"><span>Run length from 07:30</span><strong>{controls.duration_min} min</strong></div>
+            <select value={String(controls.duration_min ?? 60)} onChange={(event) => update("duration_min", Number(event.target.value))}>
+              <option value="60">60 min</option><option value="90">90 min</option><option value="120">120 min (a Route 7 round trip)</option>
+            </select>
           </label>
 
           <label>
@@ -551,6 +604,14 @@ export default function Home() {
             <div className="labelRow"><span>Breakdown event</span><strong>{controls.breakdown_minute === null ? "Off" : "Minute " + controls.breakdown_minute}</strong></div>
             <select value={controls.breakdown_minute === null ? "off" : String(controls.breakdown_minute)} onChange={(event) => update("breakdown_minute", event.target.value === "off" ? null : Number(event.target.value))}>
               <option value="off">Disabled</option><option value="15">Minute 15</option><option value="20">Minute 20</option><option value="35">Minute 35</option>
+            </select>
+            <select aria-label="Breakdown kind" value={`${controls.breakdown_kind}:${controls.breakdown_target}`} onChange={(event) => {
+              const [kind, target] = event.target.value.split(":") as ["hold" | "out_of_service", "corridor" | "line"];
+              setControls((c) => ({ ...c, breakdown_kind: kind, breakdown_target: target }));
+            }}>
+              <option value="hold:corridor">Corridor bus: six-minute roadside hold</option>
+              <option value="out_of_service:corridor">Corridor bus withdrawn: spare from a garage</option>
+              <option value="out_of_service:line">Route 7 bus withdrawn: spare from a garage</option>
             </select>
           </label>
           <label>
@@ -708,6 +769,7 @@ export default function Home() {
               <option value="overshoot_blocked">B101 overshoots, bus behind</option>
               <option value="missed_berth">B101 misses a berth entry</option>
               <option value="wrong_turn">B101 takes the wrong turn</option>
+              <option value="missed_stop">A Route 7 driver misses a stop (Grand River Hospital)</option>
               <option value="seeded">Occasional, from a seed</option>
             </select>
           </label>
@@ -749,6 +811,19 @@ export default function Home() {
             trainPose={selected?.type === "train" ? timetable?.trains(seconds).find((train) => train.id === selected.data.id) : undefined}
           />
         </section>
+
+        <FleetPanel
+          fleet={data?.smart.fleet ?? null}
+          lineVehicles={data?.smart.lines?.vehicles ?? []}
+          decisions={data?.smart.decisions ?? []}
+          now={seconds}
+          commands={controls.commands ?? []}
+          onCommand={issueCommand}
+          onClear={clearCommands}
+          selected={fleetPick}
+          onSelect={setFleetPick}
+          busy={loading}
+        />
 
         <section className="decisionPanel">
           <div className="panelHeading">
