@@ -136,7 +136,7 @@ class IonPlan:
     """
 
     def __init__(self, duration_min=60, headway_min=8, transfer_demand=110, delay_min=0,
-                 platform_hold=None, reassign=True, closures=None, yard_block=None, fault=None):
+                 platform_hold=None, reassign=True, closures=None, yard_block=None, fault=None, rail_overshoot=None):
         import rail_ops
         self.headway_s = headway_min * 60.0
         self.duration_s = duration_min * 60.0
@@ -157,7 +157,7 @@ class IonPlan:
         self.yard_block = yard_block
         self.fault = fault
         self.ops = rail_ops.RailOps(self, platform_hold=platform_hold, reassign=reassign, closures=self.closures,
-                                    yard_block=yard_block, fault=fault).run()
+                                    yard_block=yard_block, fault=fault, overshoot=rail_overshoot).run()
         for trip in self.trips:
             if trip.station_times:
                 trip.depart_s = trip.depart_s  # set by RailOps at departure

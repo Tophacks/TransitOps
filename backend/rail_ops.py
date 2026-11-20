@@ -55,6 +55,10 @@ TERMINALS = json.loads((Path(__file__).resolve().parent / "ion_terminals.json").
 NETWORK = json.loads((Path(__file__).resolve().parent / "ion_network.json").read_text())
 DIVERSIONS = {d["id"]: d for d in NETWORK["diversions"]}
 YARD_ROUTES = {r["id"]: r for r in NETWORK["yard"]["routes"]}
+PLATFORMS = json.loads((Path(__file__).resolve().parent / "ion_platforms.json").read_text())["platforms"]
+OVERRUN_MPS = 1.2          # average speed over the overrun past the stopping point (modelled)
+REVERSE_MPS = 1.0          # reversing to the stopping point (modelled)
+RECOVERY_AUTH_S = 10.0     # request to authority for a recovery move (modelled)
 
 
 def route_def(terminal, name):
@@ -87,9 +91,14 @@ class Decision:
     options: list           # [{"option", "feasible", "reason", "estimate_s"}]
     chosen: str
     outcome: str = ""       # what happened next (filled in later)
+    saw: str = ""           # what the agent observed
+    error: str = ""         # what went wrong (driver error)
+    control: str = ""       # what Control allowed
+    effect: str = ""        # how service was affected
 
     def to_dict(self):
-        return {
+        extra = {k: getattr(self, k) for k in ("saw", "error", "control", "effect") if getattr(self, k)}
+        return {**extra, 
             "id": self.id, "t": round(self.t, 1), "minute": math.floor(self.t / 60.0), "level": self.level,
             "terminal": self.terminal, "vehicle_id": self.vehicle_id, "trip_id": self.trip_id,
             "trigger": self.trigger, "options": self.options, "chosen": self.chosen, "outcome": self.outcome,
@@ -214,14 +223,17 @@ class Segment:
     station: str | None = None
     note: str = ""
     lights: dict = field(default_factory=dict)  # stand: {"off": t, "on": t} for a cab change
+    into: float = 0.0       # run: seconds into the leg's profile it starts (after an overshoot)
 
     def to_dict(self):
         out = {"kind": self.kind, "t0": self.t0, "t1": self.t1, "lead": self.lead,
                "trip": self.trip_id}
         if self.kind in ("move", "stand") and self.route:
             out.update({"terminal": self.terminal, "route": self.route, "s0": self.s0, "s1": self.s1})
-        if self.kind == "run" or (self.kind == "stand" and self.line):
+        if self.kind in ("run", "creep") or (self.kind == "stand" and self.line):
             out.update({"line": self.line, "leg": self.leg, "s0": self.s0, "s1": self.s1})
+        if self.into:
+            out["into"] = self.into
         if self.station:
             out["station"] = self.station
         if self.note:
@@ -324,7 +336,7 @@ class RailOps:
     """Runs every trip of an IonPlan with physical trains (see module docstring)."""
 
     def __init__(self, plan, platform_hold=None, reassign=True, start_s=None, end_s=None, closures=None,
-                 yard_block=None, fault=None):
+                 yard_block=None, fault=None, overshoot=None):
         import ion
         self.ion = ion
         self.plan = plan
@@ -341,6 +353,8 @@ class RailOps:
         self.stations = {key: StationControl(self, key) for key in TERMINALS}
         self.trains = []
         self.spawned = 0
+        self.overshoot_spec = dict(overshoot) if overshoot else None
+        self.recoveries = []
         self.decisions = []
         self.events = []
         self.queue = []
@@ -897,9 +911,12 @@ class RailOps:
             train.platform_wait = None
         self.release_platform(t, trip.direction, index, train)
         lead = train.lead
-        train.add(Segment("run", t, t + leg.run_s, lead, trip.train_id, line=trip.direction, leg=index,
-                          s0=leg.from_m, s1=leg.to_m))
-        tt = t + leg.run_s
+        # After an overshoot it starts past the platform: part-way into the leg's run.
+        into = run_time_at(leg.run(), train.start_offset) if getattr(train, "start_offset", 0.0) else 0.0
+        train.start_offset = 0.0
+        train.add(Segment("run", t, t + leg.run_s - into, lead, trip.train_id, line=trip.direction, leg=index,
+                          s0=leg.from_m, s1=leg.to_m, into=round(into, 3)))
+        tt = t + leg.run_s - into
         trip.station_times[leg.to_station] = tt
         pending = getattr(train, "pending_release", None)
         if pending is not None and leg.from_m <= pending["line_m"] <= leg.to_m:
@@ -910,10 +927,166 @@ class RailOps:
             if getattr(train, "section_decision", None) is not None:
                 train.section_decision.outcome += f"; section released at {fmt(release)} when its rear cleared"
             train.pending_release = None
+        over = self.overshoot_at(train, trip, index + 1, tt)
+        if over:
+            self.rail_overshoot(train, trip, index, leg, tt, over)
+            return
         train.add(Segment("stand", tt, tt + self.ion.DWELL_S, lead, trip.train_id, line=trip.direction, leg=index,
                           s0=leg.to_m, s1=leg.to_m, station=leg.to_station))
         self.platform_at[nxt] = (train, tt + self.ion.DWELL_S)
         self.plan_line(train, trip, index + 1, tt + self.ion.DWELL_S)
+
+    # --- platform overshoot and Rail Control recovery (simulation assumptions) ----------
+    def overshoot_at(self, train, trip, index, t):
+        """Metres a train overshoots the platform at stops[index] (opt-in error), or 0."""
+        spec = self.overshoot_spec
+        if not spec or getattr(trip, "nonrevenue", None) or index >= len(self.plan.lines[trip.direction].legs) - 1:
+            return 0.0
+        name = self.plan.lines[trip.direction].stops[index][0]
+        if spec.get("mode") == "seeded":
+            from drivers import _unit
+            if _unit(spec.get("seed", 17), train.vehicle_id, trip.train_id, name, "overshoot") < float(spec.get("rate", 0.05)):
+                return round(4.0 + 10.0 * _unit(spec.get("seed", 17), train.vehicle_id, trip.train_id, name, "m"), 1)
+            return 0.0
+        if spec.get("done") or spec.get("station") != name or spec.get("direction", trip.direction) != trip.direction \
+                or t < spec.get("after_minute", 0) * 60.0:
+            return 0.0
+        spec["done"] = True
+        return float(spec.get("metres", 10.0))
+
+    def reverse_check(self, train, direction, index, stop_m, over, t):
+        """Rail Control: can the train back `over` metres to its stopping point?
+        Returns (area_ok, blockers [(who, why, temporary)])."""
+        name = self.plan.lines[direction].stops[index][0]
+        plat = next((p for p in PLATFORMS[direction] if p["name"] == name), {"street_running": False})
+        area_ok = not plat["street_running"]
+        L = self.ion.ION_LENGTH
+        p0, p1 = stop_m - L - 5.0, stop_m + over
+        blockers = []
+        dur = RECOVERY_AUTH_S + over / REVERSE_MPS
+        for o in self.trains:
+            if o is train:
+                continue
+            found = self.where(o, t)
+            if found is not None:
+                seg, s, _ = found
+                if seg.line == direction and p0 - 60.0 <= s <= p1 + L:
+                    blockers.append((o.vehicle_id, f"on the track behind ({s - p0 + 60:.0f} m from the swept path)", True))
+                    continue
+            for seg in o.segments:
+                if seg.kind == "run" and seg.line == direction and seg.leg == index - 1 and seg.t0 < t + dur and seg.t1 > t:
+                    blockers.append((o.vehicle_id, "authorized to run into this platform's block", True))
+                    break
+        for cp in self.closures:
+            sec = self.sections.get(cp.get("section")) if cp.get("section") else None
+            if not sec:
+                continue
+            inside = ((direction == cp["travel"] and cp["entry_index"] <= index <= cp["exit_index"]) or
+                      (direction == cp.get("opposing") and cp["opp_entry_index"] <= index <= cp["opp_exit_index"]))
+            others = [v for v, h in sec["holders"].items() if v != train.vehicle_id and h["direction"] != direction]
+            if inside and others:
+                blockers.append((others[0], f"holds the single-track section {cp['section']}", True))
+        for c in NETWORK["crossovers"]:
+            for e in c["ends"]:
+                if e["track"] == direction and p0 <= self._track_to_line(direction, e) <= p1:
+                    reserved = [cp for cp in self.closures if cp["kind"] == "diversion" and c["way"] in cp["route"]["via"]
+                                and any(v != train.vehicle_id for v in self.sections[cp["section"]]["holders"])]
+                    if reserved:
+                        blockers.append((f"switch {e['node']}", f"crossover {c['way']} set for the diversion", True))
+        return area_ok, blockers
+
+    def _track_to_line(self, direction, end):
+        """A crossover end's position along this direction's line (projected)."""
+        import corridor
+        path = corridor.DATA["ion"][direction]["path"]
+        best = None
+        for (lo0, la0, s0), (lo1, la1, s1) in zip(path, path[1:]):
+            dx, dy = (lo1 - lo0) * 80700, (la1 - la0) * 111200
+            px, py = (end["lon"] - lo0) * 80700, (end["lat"] - la0) * 111200
+            n = dx * dx + dy * dy
+            f = max(0.0, min(1.0, (px * dx + py * dy) / n)) if n else 0.0
+            d = math.hypot(px - dx * f, py - dy * f)
+            if best is None or d < best[0]:
+                best = (d, s0 + (s1 - s0) * f)
+        return best[1]
+
+    def rail_overshoot(self, train, trip, index, leg, tt, over):
+        """The driver stopped `over` metres past the stopping point: doors stay
+        closed; it asks Rail Control for a recovery move."""
+        lead = train.lead
+        direction = trip.direction
+        nxt_i = index + 1
+        name = leg.to_station
+        short = name.replace(" Station", "")
+        creep = round(over / OVERRUN_MPS, 1)
+        train.add(Segment("creep", tt, tt + creep, lead, trip.train_id, line=direction, leg=index,
+                          s0=leg.to_m, s1=leg.to_m + over, note=f"overshot {short} by {over:.0f} m"))
+        t1 = tt + creep
+        trip.station_times.pop(name, None)
+        d1 = self.decide(t1, "vehicle", "line", train, trip, f"Stopped {over:.0f} m past {short}'s stopping point",
+                         [{"option": "open the doors here", "feasible": False,
+                           "reason": "the train is beyond the platform's boarding edge", "estimate_s": None},
+                          {"option": "ask Rail Control for a recovery move", "feasible": True, "reason": "", "estimate_s": None}],
+                         "keep the doors closed and ask Rail Control for a recovery move")
+        d1.error = f"driver error (scenario): overshot {short} by {over:.0f} m"
+        trip.decisions.append(d1)
+        area_ok, blockers = self.reverse_check(train, direction, nxt_i, leg.to_m, over, t1)
+        nxt_leg = self.plan.lines[direction].legs[nxt_i] if nxt_i < len(self.plan.lines[direction].legs) - 1 else None
+        options = [{"option": f"reverse {over:.0f} m to the stopping point", "feasible": area_ok and not blockers,
+                    "reason": ("street-running platform: no reverse along the street (simulation assumption)" if not area_ok
+                               else "; ".join(f"{w}: {why}" for w, why, _ in blockers) if blockers else
+                               f"swept path {leg.to_m - self.ion.ION_LENGTH - 5:.0f}–{leg.to_m + over:.0f} m clear and reserved; "
+                               "no switch in it set for another route"),
+                    "estimate_s": None}]
+        temporary = area_ok and blockers and all(tmp for _, _, tmp in blockers)
+        options.append({"option": "hold until the swept path clears, then reverse", "feasible": bool(temporary),
+                        "reason": "blocked only for now" if temporary else "not a temporary block", "estimate_s": None})
+        if nxt_leg is not None:
+            options.append({"option": f"continue to {nxt_leg.to_station.replace(' Station', '')} with the doors closed",
+                            "feasible": True, "reason": f"riders for {short} ride on one stop; the next platform's block is "
+                                                        "authorized as usual", "estimate_s": None})
+        chosen = next(o["option"] for o in options if o["feasible"])
+        d2 = self.decide(t1, "station", "line", train, trip, f"{train.vehicle_id} asks to recover at {short}", options, chosen)
+        d2.saw = f"{over:.0f} m past the stopping point; " + ("platform on its own right-of-way" if area_ok else "street-running platform")
+        d2.control = ("granted: swept path reserved" if chosen.startswith("reverse") else
+                      "denied: " + options[0]["reason"])
+        trip.decisions.append(d2)
+        self.recoveries.append({"vehicle_id": train.vehicle_id, "trip": trip.train_id, "station": name, "t": round(t1, 1),
+                                "metres": over, "decision": chosen})
+        if chosen.startswith("hold"):
+            # Re-ask when the blocking movement is over (simple: after its run ends).
+            wait = max([seg.t1 for o in self.trains if o is not train for seg in o.segments
+                        if seg.kind == "run" and seg.line == direction and seg.leg == nxt_i - 1 and seg.t1 > t1] + [t1 + 30.0])
+            train.add(Segment("stand", t1, wait, lead, trip.train_id, line=direction, leg=index,
+                              s0=leg.to_m + over, s1=leg.to_m + over, note="overshot: holding for a clear path"))
+            t1 = wait
+            chosen = "reverse"
+            d2.outcome = f"held until {fmt(wait)}, then reversed"
+        if chosen.startswith("reverse"):
+            t_auth = t1 + RECOVERY_AUTH_S
+            train.add(Segment("stand", t1, t_auth, lead, trip.train_id, line=direction, leg=index,
+                              s0=leg.to_m + over, s1=leg.to_m + over, note="overshot: reverse authorized"))
+            t_back = t_auth + over / REVERSE_MPS
+            train.add(Segment("creep", t_auth, t_back, lead, trip.train_id, line=direction, leg=index,
+                              s0=leg.to_m + over, s1=leg.to_m, note="reversing to the stopping point"))
+            trip.station_times[name] = t_back
+            train.add(Segment("stand", t_back, t_back + self.ion.DWELL_S, lead, trip.train_id, line=direction, leg=index,
+                              s0=leg.to_m, s1=leg.to_m, station=name))
+            self.platform_at[(direction, nxt_i)] = (train, t_back + self.ion.DWELL_S)
+            d2.outcome = (d2.outcome + "; " if d2.outcome else "") + f"doors opened {fmt(t_back)}"
+            d2.effect = f"{t_back - tt:.0f} s later at {short} than without the overshoot"
+            self.plan_line(train, trip, nxt_i, t_back + self.ion.DWELL_S)
+            return
+        # Forward: on to the next platform with the doors closed.
+        t_go = t1 + RECOVERY_AUTH_S
+        train.add(Segment("stand", t1, t_go, lead, trip.train_id, line=direction, leg=index,
+                          s0=leg.to_m + over, s1=leg.to_m + over, note="overshot: doors closed, continuing"))
+        trip.skipped = getattr(trip, "skipped", []) + [name]
+        self.platform_at[(direction, nxt_i)] = (train, t_go)
+        train.start_offset = over
+        d2.outcome = f"left {short} without opening the doors at {fmt(t_go)}"
+        d2.effect = f"{short} not served by {trip.train_id}; its riders wait for the next train"
+        self.plan_line(train, trip, nxt_i, t_go)
 
     def release_platform(self, t, direction, index, train):
         key = (direction, index)
@@ -1556,7 +1729,10 @@ class RailOps:
             return seg, seg.s0 + prof.distance(x), prof.speed(x)
         if seg.kind == "run":
             run = self.plan.lines[seg.line].legs[seg.leg].run()
-            return seg, seg.s0 + run.distance(x), run.speed_at(x) if hasattr(run, "speed_at") else 0.0
+            return seg, seg.s0 + run.distance(x + seg.into), run.speed_at(x + seg.into) if hasattr(run, "speed_at") else 0.0
+        if seg.kind == "creep":
+            f = min(1.0, x / max(1e-9, seg.t1 - seg.t0))
+            return seg, seg.s0 + (seg.s1 - seg.s0) * f, abs(seg.s1 - seg.s0) / max(1e-9, seg.t1 - seg.t0)
         return seg, seg.s0, 0.0
 
     def state_at(self, train, t):
