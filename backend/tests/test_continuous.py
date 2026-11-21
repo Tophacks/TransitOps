@@ -1,4 +1,9 @@
+import copy
 import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from continuous import ContinuousRun, REPLAY_MINUTES
@@ -47,6 +52,9 @@ class ContinuousRunTests(unittest.TestCase):
         cut = (run.minute - REPLAY_MINUTES) * 60
         self.assertTrue(all(x[0] >= cut for v in lines["vehicles"] for x in v["trace"]))
         self.assertTrue(any(v["trace"] for v in lines["vehicles"]))
+        for z in lines["zones"]:
+            self.assertTrue(z["cars"])
+            self.assertTrue(all(v["trace"][-1][0] >= cut for v in z["cars"]))
         self.assertIsNotNone(result["fleet"])
 
     def test_natural_incidents_reach_both_continuous_policies(self):
@@ -64,10 +72,42 @@ class ContinuousRunTests(unittest.TestCase):
             self.assertTrue(output[case]["incidents"])
             self.assertIn("incidents_applied", output[case]["report"])
 
-    def test_worker_bundle_contains_the_engine_and_geometry(self):
+    def test_worker_bundle_runs_in_isolation(self):
         settings = continuous_settings(SimulationRequest())
-        self.assertIn("class ContinuousRun", settings["sources"]["continuous.py"])
-        self.assertIn("ion_network.json", settings["sources"])
-        for name in ("lines.py", "fleet.py", "lines.json", "deadheads.json"):
-            self.assertIn(name, settings["sources"])
-        self.assertNotIn("main.py", settings["sources"])
+        with tempfile.TemporaryDirectory() as root:
+            for name, contents in settings.pop("sources").items():
+                (Path(root) / name).write_text(contents, encoding="utf-8")
+            # No site packages, PYTHONPATH, working tree or inherited imports.
+            subprocess.run([sys.executable, "-I", "-S", "-c",
+                            "import sys,json;sys.path.insert(0,'.');"
+                            "from continuous import ContinuousRun;"
+                            "r=ContinuousRun(json.load(sys.stdin)).extend();"
+                            "assert r['smart']['lines']['vehicles']"],
+                           cwd=root, input=json.dumps(settings), text=True, check=True)
+
+    def test_zone_pruning_preserves_live_traffic(self):
+        sim = ContinuousRun(continuous_settings(SimulationRequest())).cases[1]
+        sim.lines.advance_to(900)
+        lanes = [z["lane_model"] for z in sim.lines.zones]
+        # Isolate the next lane step from bus-controller changes in both copies.
+        controls = copy.deepcopy(lanes)
+        active = [[v for v in lane.vehicles if not v.done] for lane in lanes]
+        expired = [{v.id for v in lane.vehicles if v.kind == "car" and v.done and v.trace[-1][0] < 870}
+                   for lane in lanes]
+        self.assertTrue(all(expired))
+        # The public prune API takes minutes. Cut through active traces.
+        ContinuousRun.prune(sim, 14.5)
+        replay = {z["id"]: z["cars"] for z in sim.lines.zone_cars()}
+        def occupancy(model):
+            return [(v.id, v.front, v.speed) for v in model.ordered()]
+
+        for lane, control, live, gone in zip(lanes, controls, active, expired):
+            self.assertTrue(live)
+            self.assertFalse(gone.intersection(v["id"] for v in replay[lane.name]))
+            self.assertEqual([v for v in lane.vehicles if not v.done], live)
+            self.assertTrue(all(sum(t <= 870 for t, _ in v.trace) <= 1 for v in lane.vehicles))
+            for t in range(900, 960):
+                lane.step(t)
+                control.step(t)
+                self.assertEqual(occupancy(lane), occupancy(control))
+                self.assertEqual(lane.cars, control.cars)

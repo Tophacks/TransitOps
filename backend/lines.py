@@ -34,6 +34,7 @@ less any slack in the scheduled layovers (modelled).
 Modelled values (rates, dwell, run share, variation) are listed in
 docs/regional-lines.md.
 """
+from bisect import bisect_right
 import json
 import math
 import random
@@ -104,7 +105,7 @@ class LineBus:
         self.onboard = []
         self.delay_s = 0.0           # carried lateness
         self.segments = []           # [t0, t1, pattern, s0, s1, kind] (coarse: layovers, deadheads)
-        self.trace = []              # [t, s, v, lateral] every second on a route variant (line_driver.py)
+        self.trace = []              # [t, s, v] every second on a route variant (line_driver.py)
         self.trips_log = []          # [t0, t1, trip, pattern, headsign, route]
         self.cap = ld.TOP            # cruising speed for the current segment
         self.committed = False       # decided to stop at the next stop
@@ -121,6 +122,19 @@ class LineBus:
         self.served = 0
         self.unmodelled = []         # trips of the block on routes that are not modelled
         self.broken = False
+
+    def replay_trace(self):
+        # Each step ending at the trip-change time still used the old pattern.
+        # Compress within trips so even a stationary relief bus keeps its first
+        # in-service sample, independent of when the worker sends a checkpoint.
+        result = []
+        first = 0
+        for start, *_ in self.trips_log:
+            stop = bisect_right(self.trace, start, lo=first, key=lambda row: row[0])
+            result.extend(ld.simplify(self.trace[first:stop]))
+            first = stop
+        result.extend(ld.simplify(self.trace[first:]))
+        return result
 
     def where(self):
         return {"pattern": self.pattern["id"] if self.pattern else None, "s": round(self.s, 1)}
@@ -343,7 +357,7 @@ class LineService:
             if t >= bus.until:
                 self.leave_stop(bus, t)
 
-    def next_trip(self, bus, t):
+    def next_trip(self, bus, t, at_terminal=False):
         """Start the block's next trip when it is due (modelled trips are driven;
         others are worked off the modelled network, carrying lateness)."""
         if bus.row >= len(bus.rows):
@@ -363,7 +377,7 @@ class LineService:
                     bus.delay_s = max(0.0, end + bus.delay_s - (nxt - MIN_LAYOVER_S)) if nxt < math.inf else 0.0
             return
         trip = self.trips[row["trip_id"]]
-        if t < start - 600:
+        if not at_terminal and t < start - 600:
             return            # not yet: the bus is elsewhere in its block
         bus.trip = trip
         bus.pattern = self.patterns[trip["pattern"]]
@@ -908,7 +922,7 @@ class LineService:
             ready = t + MIN_LAYOVER_S
             bus.delay_s = max(0.0, ready - (nxt["start"] - HOUR0))
             if nxt["modelled"]:
-                self.next_trip(bus, t)
+                self.next_trip(bus, t, at_terminal=nxt["from"] == bus.pattern["stops"][-1]["stop"])
                 if bus.state == "layover":
                     bus.until = max(bus.until, ready)
                     bus.segments[-1][1] = bus.until
@@ -1105,8 +1119,8 @@ class LineService:
     def plans(self):
         return [{"vehicle_id": b.vehicle_id, "block": b.block, "driver": b.driver.describe(),
                  "operator": b.driver.vehicle_id,
-                 # the motion the simulator drove: [t, s, v, lateral], simplified (line_driver.simplify)
-                 "trace": ld.simplify(b.trace), "trips": b.trips_log,
+                 # the motion the simulator drove: [t, s, v], simplified (line_driver.simplify)
+                 "trace": b.replay_trace(), "trips": b.trips_log,
                  "stops": b.stops_log, "unmodelled": b.unmodelled,
                  "deadhead": getattr(b, "deadhead", None), "replaces": getattr(b, "replaces", None) or
                  getattr(b, "relieved", None), "broken": b.broken}

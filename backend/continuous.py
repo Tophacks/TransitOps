@@ -1,4 +1,5 @@
 """Stateful run owned by a dedicated browser worker."""
+from bisect import bisect_right
 import json
 
 from garage_ops import Garages
@@ -91,10 +92,22 @@ class ContinuousRun:
         # Scheduled lines: only the replay window's trajectory and stops are sent
         # (metrics are kept separately and cover the whole run).
         if getattr(sim, "lines", None) is not None:
+            for zone in sim.lines.zones:
+                lane = zone["lane_model"]
+                # Live occupancy uses the vehicle objects. Merge decisions already
+                # snapshot blocker IDs and distances, and lane.cars owns the ID sequence.
+                lane.vehicles[:] = [v for v in lane.vehicles if not v.done or
+                                    (v.trace and v.trace[-1][0] >= cut)]
+                for vehicle in lane.vehicles:
+                    boundary = bisect_right(vehicle.trace, cut, key=lambda row: row[0]) - 1
+                    if boundary > 0:
+                        del vehicle.trace[:boundary]
             for bus in sim.lines.buses:
                 bus.segments[:] = [seg for seg in bus.segments if seg[1] >= cut]
                 bus.trace[:] = [x for x in bus.trace if x[0] >= cut]
-                bus.trips_log[:] = [x for x in bus.trips_log if x[1] is None or x[1] >= cut]
+                # The spare's first trip identifies the service handover from its road deadhead.
+                relief = bus.trips_log[:1] if getattr(bus, "deadhead", None) else []
+                bus.trips_log[:] = relief + [x for x in bus.trips_log[len(relief):] if x[1] is None or x[1] >= cut]
                 bus.stops_log[:] = [x for x in bus.stops_log if x["dep"] >= cut]
 
         # Keep a service-cycle margin behind replay for trip lookup and
