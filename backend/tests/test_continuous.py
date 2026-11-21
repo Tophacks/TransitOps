@@ -45,7 +45,8 @@ class ContinuousRunTests(unittest.TestCase):
         self.assertTrue(later)                                   # served stops after 08:30
         self.assertGreater(lines["metrics"]["trips_covered"], 10)
         cut = (run.minute - REPLAY_MINUTES) * 60
-        self.assertTrue(all(seg[1] >= cut for v in lines["vehicles"] for seg in v["segments"]))
+        self.assertTrue(all(x[0] >= cut for v in lines["vehicles"] for x in v["trace"]))
+        self.assertTrue(any(v["trace"] for v in lines["vehicles"]))
         self.assertIsNotNone(result["fleet"])
 
     def test_natural_incidents_reach_both_continuous_policies(self):

@@ -11,7 +11,7 @@ import { ION_DEPOT, ION_DEPOT_BOUNDARY } from "../../lib/geo/ion-depot";
 import type { PlaybackClock } from "../../lib/motion/clock.ts";
 import { busPoses, type BusPose } from "../../lib/motion/playback.ts";
 import { GARAGES, garagePoses, type GarageVehicle } from "../../lib/motion/garages.ts";
-import { LINES, linePoses, sparePoses, type FleetVehicle, type LineVehicle } from "../../lib/motion/lines.ts";
+import { LINES, linePoses, sparePoses, zoneCarPoses, type FleetVehicle, type LineVehicle, type LineZone } from "../../lib/motion/lines.ts";
 import { UW, UW_ROADS, berthStates, carPoses, inStation, onStationRoad, roadPoint, stationClamp, uwPoses, type UwCar, type UwVehicle } from "../../lib/motion/uwStation.ts";
 import { ION_LENGTH, IonTimetable, articulatePath, type IonSchedule, type TrainPose } from "../../lib/motion/ion.ts";
 import { busBody, carBody, emptyBodies, gateBodies, lighting, trainBody, type BodyLayers } from "../../lib/motion/bodies.ts";
@@ -57,6 +57,8 @@ type Props = {
   garageVehicles?: GarageVehicle[];
   /** buses on the scheduled lines (lines.py) and the regional fleet's spares (fleet.py) */
   lineVehicles?: LineVehicle[];
+  /** shared-traffic lanes on the lines and their cars (lines.py zones) */
+  lineZones?: LineZone[];
   fleetVehicles?: FleetVehicle[];
   /** a fleet vehicle picked in the Fleet panel or tapped on the map */
   focusVehicle?: string | null;
@@ -74,7 +76,7 @@ const SIMULATION_SOURCES = ["route", "stops", "intersections", "buses", "traffic
 const SIMULATION_LAYERS = [
   "terminal-routes", "terminal-signals", "ion-closure",
   "route-stroke", "stops-circle", "stops-label", "signals-circle", "yard-circle", "sumo-traffic",
-  "sim-bus-markers", "vehicle-ground", "vehicle-bodies",
+  "sim-bus-markers", "line-bus-markers", "line-bus-labels", "vehicle-ground", "vehicle-bodies",
 ];
 // Live GPS vehicles drawn as 3D bodies at street zoom.
 const LIVE_LAYERS = ["live-ground", "live-bodies"];
@@ -549,6 +551,20 @@ function addLayers(map: MapInstance) {
   map.addLayer({ id: "signals-circle", type: "circle", source: "intersections", paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 18, 8], "circle-color": ["match", ["get", "phase"], "GREEN", "#63c68f", "#e9a064"], "circle-pitch-alignment": "map" } });
   map.addLayer({ id: "yard-circle", type: "circle", source: "yard", paint: { "circle-radius": 9, "circle-color": "#adbed3", "circle-stroke-color": "#203541", "circle-stroke-width": 3 } });
   map.addLayer({ id: "sumo-traffic", type: "circle", source: "traffic", paint: { "circle-radius": 3, "circle-color": "#748d9c", "circle-opacity": 0.8 } });
+  // Route 7 and other scheduled-line buses: route number and destination, a marker when zoomed out.
+  map.addSource("line-buses", { type: "geojson", data: featureCollection([]) });
+  map.addLayer({
+    id: "line-bus-markers", type: "symbol", source: "line-buses", maxzoom: BODY_MIN_ZOOM + 0.2,
+    layout: { "icon-image": "grt-bus", "icon-size": ["interpolate", ["linear"], ["zoom"], 9, 0.55, 13, 0.82, 16, 1], "icon-allow-overlap": true },
+  });
+  map.addLayer({
+    id: "line-bus-labels", type: "symbol", source: "line-buses", minzoom: 12.5,
+    layout: {
+      "text-field": ["get", "label"], "text-size": ["interpolate", ["linear"], ["zoom"], 13, 10, 18, 13],
+      "text-offset": [0, -1.9], "text-anchor": "bottom", "text-allow-overlap": true, "text-font": ["Noto Sans Regular"],
+    },
+    paint: { "text-color": "#ffffff", "text-halo-color": "#1f5fb4", "text-halo-width": 2.2 },
+  });
   map.addLayer({
     id: "sim-bus-markers",
     type: "symbol",
@@ -668,6 +684,24 @@ function sceneBuses(timeline: Snapshot[], vehicles: readonly UwVehicle[], t: num
   return out;
 }
 
+/** Is a point on a Route 7 shared-traffic lane (where the simulator's own cars run)? */
+function onZoneLane(zones: readonly LineZone[], p: [number, number]) {
+  for (const z of zones) {
+    if (!z.cars.length) continue;
+    const path = z.lane;
+    const k = 111320 * Math.cos((p[1] * Math.PI) / 180);
+    for (let i = 0; i + 1 < path.length; i += 1) {
+      const ax = (path[i][0] - p[0]) * k, ay = (path[i][1] - p[1]) * 111200;
+      const bx = (path[i + 1][0] - p[0]) * k, by = (path[i + 1][1] - p[1]) * 111200;
+      const dx = bx - ax, dy = by - ay;
+      const len = dx * dx + dy * dy;
+      const f = len ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len)) : 0;
+      if (Math.hypot(ax + dx * f, ay + dy * f) < 9) return true;
+    }
+  }
+  return false;
+}
+
 /** Is a point on the modelled stretch of Phillip Street (where the simulator's cars run)? */
 function onPhillip(p: [number, number]) {
   const path = UW_ROADS.phillip.path;
@@ -776,6 +810,7 @@ export default function GeospatialMap({
   uwCars = [],
   garageVehicles = [],
   lineVehicles = [],
+  lineZones = [],
   fleetVehicles = [],
   focusVehicle = null,
   onFocusVehicle,
@@ -784,6 +819,8 @@ export default function GeospatialMap({
 }: Props) {
   const lineRef = useRef<LineVehicle[]>([]);
   lineRef.current = lineVehicles;
+  const zonesRef = useRef<LineZone[]>([]);
+  zonesRef.current = lineZones;
   const simFleetRef = useRef<FleetVehicle[]>([]);
   simFleetRef.current = fleetVehicles;
   const focusRef = useRef<string | null>(null);
@@ -910,6 +947,7 @@ export default function GeospatialMap({
             map: currentMap,
             scene: () => sceneRef.current,
             seek: (seconds: number) => clock.seek(seconds),
+            now: () => clock.time(),
             // The ION run being played: physical trains, plans and decisions.
             ion: () => timetableRef.current?.schedule ?? null,
             busDecisions: () => busDecisionsRef.current,
@@ -917,7 +955,8 @@ export default function GeospatialMap({
             uw: (t?: number) => uwPoses(uwRef.current, t ?? clock.time()),
             uwCars: (t?: number) => carPoses(uwCarsRef.current, t ?? clock.time()),
             uwPlans: () => uwRef.current.map((v) => ({ id: v.id, kind: v.kind })),
-            lines: (t?: number) => linePoses(lineRef.current, t ?? clock.time()),
+            lines: (t?: number) => linePoses(lineRef.current, t ?? clock.time(), zonesRef.current),
+            zoneCars: (t?: number) => zoneCarPoses(zonesRef.current, t ?? clock.time()),
             spares: (t?: number) => sparePoses(simFleetRef.current, t ?? clock.time(), new Set(lineRef.current.map((v) => v.vehicle_id))),
             inspecting: () => selectedTrainRef.current,
             // Milliseconds spent building each simulation frame (scene + bodies + setData).
@@ -947,7 +986,7 @@ export default function GeospatialMap({
           if (disposed) return;
           addLayers(currentMap);
           const clickable = [
-            "stops-circle", "signals-circle", "yard-circle", "sim-bus-markers", "vehicle-bodies",
+            "stops-circle", "signals-circle", "yard-circle", "sim-bus-markers", "line-bus-markers", "vehicle-bodies",
             "grt-points", "grt-route-labels", "live-bodies", "ion-depot-marker", "ion-depot-label",
           ].filter((id) => currentMap.getLayer(id));
           currentMap.on("click", clickable, (event) => {
@@ -977,6 +1016,7 @@ export default function GeospatialMap({
                 break;
               }
               case "vehicle-bodies":
+              case "line-bus-markers":
               case "sim-bus-markers": {
                 if (current.sumoSnapshot) {
                   setSelectedSumo(id);
@@ -1120,10 +1160,13 @@ export default function GeospatialMap({
         // Scheduled lines (Route 7 and the others modelled), driven by their own drivers,
         // and spares on their way out of a garage.
         const onLine = new Set(lineRef.current.map((v) => v.vehicle_id));
-        for (const bus of linePoses(lineRef.current, t)) {
-          busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, bus.id === focusRef.current, bodies,
-            bus.state === "broken" ? "stale" : "live");
+        const linePosesNow = linePoses(lineRef.current, t, zonesRef.current);
+        for (const bus of linePosesNow) {
+          busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, bus.id === focusRef.current, bodies, "live");
         }
+        // Route number and destination over each line bus (and its marker when zoomed out).
+        setData(map, "line-buses", featureCollection(linePosesNow.map((bus) =>
+          point(bus.centre[0], bus.centre[1], { id: bus.id, label: bus.label, route: bus.route }))));
         for (const bus of sparePoses(simFleetRef.current, t, onLine)) {
           busBody({ id: bus.id, centre: bus.centre, heading: bus.heading }, bus.id === focusRef.current, bodies, "live");
         }
@@ -1167,7 +1210,12 @@ export default function GeospatialMap({
           for (const car of cars) {
             if (!inView(car.centre) || onStationRoad(car.centre)) continue;
             if (phillipSim && onPhillip(car.centre)) continue;
+            if (onZoneLane(zonesRef.current, car.centre)) continue;
             carBody(car, bodies, CAR_LENGTH, CAR_WIDTH);
+          }
+          // Cars in the shared-traffic lanes on Route 7 (King / KCI, Fairway bay exit), from the simulator.
+          for (const car of zoneCarPoses(zonesRef.current, t)) {
+            if (inView(car.centre)) carBody({ ...car, opacity: 1, kind: "traffic" } as CarPose, bodies, CAR_LENGTH, CAR_WIDTH);
           }
           for (const car of carPoses(uwCarsRef.current, t)) {
             if (inView(car.centre)) carBody({ ...car, opacity: 1, kind: "traffic" } as CarPose, bodies, CAR_LENGTH, CAR_WIDTH);

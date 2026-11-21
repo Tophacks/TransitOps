@@ -142,6 +142,13 @@ class ClosureTests(unittest.TestCase):
                 for (a0, a1, va), (b0, b1, vb) in zip(spans, spans[1:]):
                     self.assertLessEqual(a1, b0 + 1e-6, f"{va} and {vb} both at {key}")
 
+    def test_hub_arrivals_are_predicted_for_diverted_trains(self):
+        # Under a closure, trains record stations the timetabled line does not
+        # list (Waterloo Public Square); the station reports must still run.
+        import main
+        r = main.run_case(main.SimulationRequest(closure_track="south", incidents="off", capacity_spares=0), True)
+        self.assertTrue(r["decisions"])
+
     def test_same_closure_same_decisions(self):
         a = json.dumps(run(GRH_CENTRAL).schedule(), sort_keys=True, default=str)
         b = json.dumps(run(GRH_CENTRAL).schedule(), sort_keys=True, default=str)

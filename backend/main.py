@@ -99,6 +99,8 @@ class SimulationRequest(BaseModel):
     uw_block_to_minute: int = Field(default=58, ge=1, le=90)
     # Private cars on Phillip Street southbound (UW Station exit) and driver errors.
     uw_cars: Literal["light", "moderate", "heavy"] = "moderate"
+    # Cars in the shared-traffic lanes modelled on Route 7 (King / KCI curbside stop, Fairway bay exit).
+    line_cars: Literal["light", "moderate", "heavy"] = "moderate"
     driver_error: Literal["overshoot", "overshoot_blocked", "missed_berth", "wrong_turn", "missed_stop", "seeded"] | None = None
     driver_error_rate: float = Field(default=0.2, ge=0.0, le=1.0)
     error_seed: int = 17
@@ -306,6 +308,7 @@ def bus_settings(payload, horizon_min=None):
         driver_errors=driver_errors(payload),
         lines=lines(payload),
         line_block=line_block(payload),
+        line_cars=payload.line_cars,
         fleet_inventory=payload.fleet_inventory,
         breakdown_kind=payload.breakdown_kind,
         breakdown_target=payload.breakdown_target,

@@ -62,18 +62,23 @@ class RoadVehicle:
         return self.entry is not None and self.front - self.length < self.entry
 
 
-class Phillip:
-    """One southbound lane from north of the exit, past the merge, to beyond University Ave."""
+class Lane:
+    """One lane of shared traffic: cars arrive at its start (seeded), follow the
+    vehicle ahead, stop at a red signal if it has one, and leave at its end.
+    Vehicles driven by their own controller (`external`, e.g. a Route 7 bus) are
+    leaders the cars follow; the lane does not move them."""
 
-    def __init__(self, demand="moderate", seed=17):
-        self.length = PH["length_m"]
-        self.merge = PH["merge_m"]
-        self.signal = PH["signal_m"]
-        cyc = PH["signal_cycle"]
+    def __init__(self, length, merge, demand="moderate", seed=17, speed=None, signal=None, cycle=None, name="lane"):
+        self.name = name
+        self.length = length
+        self.merge = merge
+        self.signal = signal
+        cyc = cycle or {"period_s": 1, "red_from_s": 0, "red_to_s": 0}
         self.period, self.red0, self.red1 = cyc["period_s"], cyc["red_from_s"], cyc["red_to_s"]
+        self.speed_mps = speed or PH["speed_mps"]
         self.flow = CAR_DEMAND.get(demand, demand) if isinstance(demand, str) else float(demand)
         self.seed = seed
-        self.rng = random.Random(seed * 104729 + 7)
+        self.rng = random.Random(seed * 104729 + 7 + (0 if name == "lane" else sum(map(ord, name))))
         self.vehicles = []
         self.cars = 0
         self.next_car = self._headway() if self.flow > 0 else math.inf
@@ -83,16 +88,20 @@ class Phillip:
         return max(1.5, self.rng.expovariate(self.flow / 3600.0))
 
     def red(self, t):
-        return self.red0 <= (t % self.period) < self.red1
+        return self.signal is not None and self.red0 <= (t % self.period) < self.red1
 
     def ordered(self):
         return sorted((v for v in self.vehicles if not v.done), key=lambda v: -v.front)
 
-    def merge_blockers(self, length, t):
-        """Vehicles that stop a bus of `length` entering at the merge now."""
-        rear, front = self.merge, self.merge + length
+    def merge_blockers(self, length, t, rear=None, exclude=None):
+        """Vehicles that stop a bus of `length` entering with its rear at `rear`
+        (the merge point by default) now."""
+        rear = self.merge if rear is None else rear
+        front = rear + length
         out = []
         for v in self.ordered():
+            if v.id == exclude:
+                continue
             if v.front <= rear:
                 if rear - v.front < ROAD_GAP + MERGE_HEADWAY_S * v.speed:
                     out.append(v)
@@ -100,10 +109,19 @@ class Phillip:
                 out.append(v)
         return out
 
-    def enter(self, vid, length, speed, t, driver=None):
-        v = RoadVehicle(vid, "bus", self.merge, length, speed, driver, entry=self.merge)
+    def enter(self, vid, length, speed, t, driver=None, front=None, entry="merge", external=False):
+        """A bus joins the lane: by default turning in at the merge point."""
+        front = self.merge if front is None else front
+        v = RoadVehicle(vid, "bus", front, length, speed, driver,
+                        entry=(self.merge if entry == "merge" else entry))
+        v.external = external
         self.vehicles.append(v)
         return v
+
+    def leave(self, vid):
+        for v in self.vehicles:
+            if v.id == vid and not v.done:
+                v.done = True
 
     def step(self, t):
         # Cars arrive at the north end when the entry is clear (else they wait upstream).
@@ -112,17 +130,21 @@ class Phillip:
             if first > CAR_LENGTH + ROAD_GAP:
                 self.cars += 1
                 from drivers import Driver
-                car = RoadVehicle(f"car-{self.cars}", "car", CAR_LENGTH, 11.0, 0, Driver(f"car-{self.cars}", self.seed))
+                cid = f"car-{self.cars}" if self.name == "lane" else f"{self.name}-car-{self.cars}"
+                car = RoadVehicle(cid, "car", CAR_LENGTH, min(11.0, self.speed_mps), 0, Driver(cid, self.seed))
                 self.vehicles.append(car)
                 self.next_car = t + self._headway()
         red = self.red(t)
         ahead = None
         for v in self.ordered():
+            if getattr(v, "external", False):
+                ahead = v                 # driven by its own controller; a leader for those behind
+                continue
             limit = ahead.rear - ROAD_GAP if ahead is not None else math.inf
             if red and v.front <= self.signal + 0.01:
                 limit = min(limit, self.signal)
             d = v.driver
-            cruise = PH["speed_mps"] * (d.pace if d else 1.0)
+            cruise = self.speed_mps * (d.pace if d else 1.0)
             headway = d.headway if d else 1.3
             spd = following_speed(v.speed, cruise, limit - v.front, headway)
             adv = min(spd * STEP, max(0.0, limit - v.front))
@@ -132,3 +154,12 @@ class Phillip:
             if v.rear >= self.length:
                 v.done = True
             ahead = v
+
+
+class Phillip(Lane):
+    """Phillip Street southbound at UW Station: from north of the exit, past the
+    merge, to beyond University Ave (the pilot's lane and signal)."""
+
+    def __init__(self, demand="moderate", seed=17):
+        super().__init__(PH["length_m"], PH["merge_m"], demand, seed, speed=PH["speed_mps"],
+                         signal=PH["signal_m"], cycle=PH["signal_cycle"])

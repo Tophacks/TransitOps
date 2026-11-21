@@ -6,12 +6,17 @@ order and times. One physical bus works each block, with its own driver.
 Route, trip, stop and vehicle IDs stay distinct: a trip belongs to a block;
 a vehicle is assigned to the block.
 
-What a driver does, second by second:
+What a driver does, second by second (the motion: line_driver.py):
 
-- runs each stop-to-stop segment in its scheduled running time, stretched
-  by traffic and by its own pace, with seeded variation (modelled);
-- stops where riders are waiting or want to get off (GRT stops on request)
-  and passes the others;
+- drives each stop-to-stop segment with the corridor buses' motion
+  (pull-away, cruise fitted to the scheduled running time stretched by
+  traffic, its own pace and seeded variation, slowing for curves);
+- decides, once the stop is within braking distance, whether riders are
+  waiting or want to get off (GRT stops on request) and passes the others;
+- brakes progressively, creeps into position, stops fully, then opens the doors;
+- where traffic is modelled (lines.json zones, road_traffic.Lane: the UW Station
+  lane rules), follows the cars ahead and waits for a gap to pull out of a
+  curbside stop or a terminal bay;
 - asks for a berth; if the stop's berths are taken or blocked, it waits
   behind the bus that holds one, and says which;
 - holds at a timepoint (a station or terminal) rather than leave early;
@@ -34,15 +39,18 @@ import math
 import random
 from pathlib import Path
 
+import line_driver as ld
 from drivers import Driver, Errors, _unit
+from road_traffic import Lane
 
 LINES = json.loads((Path(__file__).resolve().parent / "lines.json").read_text())
 HOUR0 = 7 * 3600 + 30 * 60            # run second 0 = 07:30, as for the garages and UW Station
 STEP = 1.0
 
 # Modelled values (docs/regional-lines.md).
-RUN_SHARE = 0.75          # share of the scheduled stop-to-stop time spent moving; calibrated so the median
-                          # Route 7 trip reaches its terminal on schedule at the default traffic (docs)
+RUN_SHARE = 0.68          # share of the scheduled stop-to-stop time spent moving; with CATCH_UP, calibrated so
+                          # the median Route 7 trip reaches its terminal on schedule at the default traffic (docs)
+CATCH_UP = 0.5            # share of its lateness a driver tries to recover on each segment (modelled)
 TRAFFIC_REF = 1.25        # the API's default traffic multiplier: scheduled conditions
 MAX_SPEED = 60 / 3.6      # never faster than 60 km/h between stops
 VARIATION = 0.08          # seeded run-time variation per segment (log-normal sigma)
@@ -95,7 +103,18 @@ class LineBus:
         self.v = 0.0
         self.onboard = []
         self.delay_s = 0.0           # carried lateness
-        self.segments = []           # [t0, t1, pattern, s0, s1, kind]
+        self.segments = []           # [t0, t1, pattern, s0, s1, kind] (coarse: layovers, deadheads)
+        self.trace = []              # [t, s, v, lateral] every second on a route variant (line_driver.py)
+        self.trips_log = []          # [t0, t1, trip, pattern, headsign, route]
+        self.cap = ld.TOP            # cruising speed for the current segment
+        self.committed = False       # decided to stop at the next stop
+        self.berth_ok = False        # a berth is held for it there
+        self.skip_i = None           # a stop it will pass by mistake
+        self.last_stop_s = None      # where it last stopped (for pulling out to the lane)
+        self.lane = None             # (zone, RoadVehicle) while in a shared-traffic lane
+        self.hold_passed = False     # past this trip's bay-exit stop line
+        self.reacting = 0
+        self.merge_episode = None
         self.stops_log = []          # per stop served: trip, stop, sched, arr, dep, on, off, passed
         self.berth_stop = None
         self.waited_for = None
@@ -109,7 +128,7 @@ class LineBus:
 
 class LineService:
     def __init__(self, routes=("7",), seed=17, duration_s=3600.0, traffic=TRAFFIC_REF, ion_plan=None,
-                 demand=1.0, station_block=None, errors=None, vehicles=None, data=None, fleet=None):
+                 demand=1.0, station_block=None, errors=None, vehicles=None, data=None, fleet=None, cars="moderate"):
         self.data = data or LINES
         self.fleet = fleet
         if fleet is not None and vehicles is None:
@@ -119,6 +138,15 @@ class LineService:
         self.demand = demand
         self.stops = self.data["stops"]
         self.patterns = {p["id"]: p for r in self.routes for p in self.data["routes"][r]["patterns"]}
+        self.envelopes = {pid: ld.Envelope(p) for pid, p in self.patterns.items()}
+        self._free = {}
+        # Shared traffic where it is modelled (UW Station lane rules): one lane per zone.
+        self.cars = cars
+        self.zones = []
+        for z in self.data.get("zones", []):
+            if z["pattern"] in self.patterns:
+                lane = Lane(z["lane"][-1][2], z["merge_rear_m"], cars, seed, speed=13.9, name=z["id"])
+                self.zones.append(dict(z, lane_model=lane))
         self.trips = {t["trip_id"]: dict(t, route=r) for r in self.routes for t in self.data["routes"][r]["trips"]}
         self.block = station_block           # {"stop", "from_s", "to_s"}: berths unavailable (scenario)
         self.blocks = [station_block] if station_block else []
@@ -252,6 +280,9 @@ class LineService:
             self._next_rider += 1
         for bus in self.buses:
             self.drive(bus, t)
+            self.record(bus, t)
+        for z in self.zones:
+            z["lane_model"].step(t)
 
     # --- one bus -------------------------------------------------------------------------
     def sched(self, bus, i):
@@ -261,7 +292,14 @@ class LineService:
         return bus.trip["gtfs"][i][1] - HOUR0
 
     def drive(self, bus, t):
-        if bus.state == "done" or bus.broken:
+        if bus.broken:
+            if bus.v > 0 and bus.pattern is not None:          # brakes to a stop where it failed
+                for _ in range(int(1 / ld.DT)):
+                    v_new = max(0.0, bus.v - ld.HARD_DECEL * ld.DT)
+                    bus.s += (bus.v + v_new) / 2 * ld.DT
+                    bus.v = v_new
+            return
+        if bus.state == "done":
             return
         if bus.state == "off":
             self.next_trip(bus, t)
@@ -277,15 +315,24 @@ class LineService:
                     return
                 bus.state = "queue"         # in service from here
                 bus.arrived_at = t
+                bus.v = 0.0
+                self.open_trip(bus, t)
                 self.try_berth(bus, t)
             return
         if bus.state == "standby":
             return
         if bus.state == "run":
-            stop_s = bus.pattern["stops"][bus.i]["s"]
-            bus.s = min(stop_s, bus.s + bus.v * STEP)
-            if bus.s >= stop_s - 1e-6:
-                self.reach_stop(bus, t + STEP)
+            self.run_step(bus, t)
+            return
+        if bus.state == "stopped":
+            if t >= bus.until:                       # stationary: now the doors
+                self.open_doors(bus, bus.pattern["stops"][bus.i]["stop"], t)
+            return
+        if bus.state == "queued":
+            self.berth_check(bus, t)
+            return
+        if bus.state == "merge_wait":
+            self.merge_step(bus, t)
             return
         if bus.state == "queue":
             self.try_berth(bus, t)
@@ -328,7 +375,11 @@ class LineService:
             return
         bus.state = "layover"
         bus.until = max(start, t)
+        bus.v = 0.0
+        bus.hold_passed = False
+        bus.last_stop_s = None
         bus.segments.append([t, bus.until, bus.pattern["id"], bus.s, bus.s, "layover"])
+        self.open_trip(bus, t)
 
     def place_mid_trip(self, bus, t):
         trip = bus.trip
@@ -342,7 +393,9 @@ class LineService:
         f = (t - times[i - 1]) / max(1.0, times[i] - times[i - 1])
         bus.i = i
         bus.s = stops[i - 1]["s"] + f * (stops[i]["s"] - stops[i - 1]["s"])
+        self.open_trip(bus, t)
         self.start_run(bus, t, remaining=max(1.0, times[i] - t))
+        bus.v = bus.cap * 0.8                      # already under way
 
     def depart_terminal(self, bus, t):
         sched = self.gtfs_dep(bus, 0)
@@ -359,40 +412,283 @@ class LineService:
                         effect=f"trip {bus.trip['trip_id']} starts {late / 60:.1f} min late")
         self.serve(bus, 0, t)
 
-    def run_time(self, bus, i):
-        """Seconds to run from stop i-1 to stop i."""
+    def free_flow(self, pattern, i):
+        """The fastest legal run from stop i-1 to stop i, stopping at both
+        (corridor motion: pull-away, curves, braking, at most BUS_TOP_SPEED)."""
+        key = (pattern["id"], i)
+        if key not in self._free:
+            import corridor
+            st = pattern["stops"]
+            s0, s1 = st[i - 1]["s"], st[i]["s"]
+            env = self.envelopes[pattern["id"]]
+            curves = tuple((x - s0, v) for x, v in env.curves if s0 < x < s1)
+            v = corridor._speed_profile(max(1.0, s1 - s0), curves, corridor.BUS_TOP_SPEED, None,
+                                        corridor.BUS_ACCEL, corridor.BUS_DECEL)
+            self._free[key] = corridor._run_time(max(1.0, s1 - s0), v)
+        return self._free[key]
+
+    def run_time(self, bus, i, late_s=0.0):
+        """Seconds allowed to run from stop i-1 to stop i: a share of the scheduled
+        time (the rest is dwell), stretched by traffic, the driver's pace and seeded
+        variation. A late driver takes CATCH_UP of the lateness out of the segment,
+        never below the fastest legal run (corridor motion)."""
         stops = bus.pattern["stops"]
         d = stops[i]["s"] - stops[i - 1]["s"]
         sched = max(0.0, bus.trip["sched"][i] - bus.trip["sched"][i - 1])
         base = max(d / MAX_SPEED, sched * RUN_SHARE)
         noise = math.exp(VARIATION * _gauss(self.seed, "run", bus.trip["trip_id"], i))
-        return max(1.0, base * (self.traffic / TRAFFIC_REF) * (PACE_REF / bus.driver.pace) * noise)
+        t = base * (self.traffic / TRAFFIC_REF) * (PACE_REF / bus.driver.pace) * noise
+        if late_s > 0:
+            t = max(self.free_flow(bus.pattern, i) * 0.85, t - CATCH_UP * late_s)
+        return max(1.0, t)
+
+    def open_trip(self, bus, t):
+        if not bus.trips_log or bus.trips_log[-1][2] != bus.trip["trip_id"]:
+            bus.trips_log.append([t, None, bus.trip["trip_id"], bus.pattern["id"], bus.trip["headsign"], bus.trip["route"]])
+
+    def close_trip(self, bus, t):
+        if bus.trips_log and bus.trips_log[-1][1] is None:
+            bus.trips_log[-1][1] = t
 
     def start_run(self, bus, t, remaining=None):
+        """Leave a stop for the next: the cruising speed is fitted, as for the
+        corridor, to the scheduled running time (stretched by traffic and pace)."""
         stops = bus.pattern["stops"]
-        dur = remaining if remaining is not None else self.run_time(bus, bus.i)
-        bus.v = max(0.01, (stops[bus.i]["s"] - bus.s) / dur)
+        dur = remaining if remaining is not None else self.run_time(bus, bus.i, self.lateness(bus, t))
+        bus.cap = self.envelopes[bus.pattern["id"]].cruise(bus.s, stops[bus.i]["s"], dur)
+        bus.committed, bus.berth_ok = False, False
         bus.state = "run"
         bus.segments.append([t, t + dur, bus.pattern["id"], round(bus.s, 1), stops[bus.i]["s"], "run"])
 
-    def reach_stop(self, bus, t):
+    # --- the drive (line_driver.py) ------------------------------------------------------
+    def zone_at(self, bus, sid=None, kind=None):
+        for z in self.zones:
+            if z["pattern"] == bus.pattern["id"] and (sid is None or z["stop"] == sid) and (kind is None or z["kind"] == kind):
+                return z
+        return None
+
+    def leader_gap(self, bus):
+        """Metres to the rear of the nearest vehicle ahead: another line bus on the
+        same street, or a car in a shared lane the bus is in."""
+        best = None
+        for o in self.buses:
+            if o is bus or o.pattern is None or o.state in ("off", "done", "deadhead", "standby"):
+                continue
+            if o.broken:                    # pulled over out of the lane: the buses behind drive round it
+                continue
+            if o.pattern["direction"] != bus.pattern["direction"] or o.pattern["id"] != bus.pattern["id"]:
+                continue
+            if o.state in ("layover",) and o.s <= 1.0:
+                continue
+            gap = o.s - ld.BUS_L - bus.s
+            if 0 <= o.s - bus.s < 250 and (best is None or gap < best[0]):
+                best = (gap, o.v)
+        if bus.lane is not None:
+            z, rv = bus.lane
+            for v in z["lane_model"].ordered():
+                if v is rv or v.done:
+                    continue
+                if v.rear > rv.front - 0.01:
+                    gap = v.rear - rv.front
+                    if best is None or gap < best[0]:
+                        best = (gap, v.speed)
+        return best
+
+    def sync_lane(self, bus):
+        """Enter, follow in, and leave a zone's lane as the bus moves along its route."""
+        if bus.lane is not None:
+            z, rv = bus.lane
+            pos = bus.s - z["offset_m"]
+            rv.front, rv.speed = pos, bus.v
+            pulled_in = z["kind"] == "curbside" and bus.committed and z["stop"] == bus.pattern["stops"][bus.i]["stop"] \
+                and bus.s >= z["pull_in_s"]
+            if pos - ld.BUS_L > z["lane_model"].length or pulled_in:
+                z["lane_model"].leave(bus.vehicle_id)
+                bus.lane = None
+            return
+        for z in self.zones:
+            if z["pattern"] != bus.pattern["id"] or z["kind"] != "curbside":
+                continue
+            a, b = z["shared"]
+            near_stop = bus.committed and z["stop"] == bus.pattern["stops"][bus.i]["stop"] and bus.s >= z["pull_in_s"]
+            # Driving along the street into the zone (a bus leaving the zone's stop joins it by merging).
+            if a <= bus.s < b and bus.state == "run" and not near_stop:
+                rv = z["lane_model"].enter(bus.vehicle_id, ld.BUS_L, bus.v, 0, bus.driver, front=bus.s - z["offset_m"],
+                                           entry=None, external=True)
+                bus.lane = (z, rv)
+                return
+
+    def run_step(self, bus, t):
+        stops = bus.pattern["stops"]
+        env = self.envelopes[bus.pattern["id"]]
+        last = len(stops) - 1
+        for k in range(int(round(1 / ld.DT))):
+            tt = t + k * ld.DT
+            # Stops it is passing.
+            while not bus.committed and bus.i < last and bus.s >= stops[bus.i]["s"] - 0.01:
+                self.pass_stop(bus, tt)
+            nxt = stops[bus.i]
+            d = nxt["s"] - bus.s
+            if not bus.committed and bus.skip_i != bus.i:
+                decide_at = bus.v * bus.v / (2 * ld.DECEL) + ld.CREEP_M + 2.0 * bus.v + 5.0
+                if d <= decide_at:
+                    self.decide_stop(bus, tt)
+            target = None
+            if bus.committed:
+                target = d if bus.berth_ok else max(0.0, d - (ld.BUS_L + ld.GAP) * (1 + self.queue_ahead(bus)))
+            bay = self.zone_at(bus, kind="bay")
+            if bay is not None and not bus.hold_passed and bus.s < bay["hold_s"]:
+                h = bay["hold_s"] - bus.s
+                target = h if target is None else min(target, h)
+            lead = self.leader_gap(bus)
+            s_new, v_new, arrived = ld.advance(bus.s, bus.v, bus.cap, env, target,
+                                               lead[0] if lead else None, lead[1] if lead else 0.0, bus.driver.headway)
+            bus.s, bus.v = s_new, v_new
+            # Every half second while driving: acceleration is constant within each step,
+            # so the map reproduces the motion exactly from these samples.
+            bus.trace.append([round(tt + ld.DT, 2), round(bus.s, 2), round(bus.v, 2)])
+            self.sync_lane(bus)
+            if arrived:
+                bus.v = 0.0
+                if bay is not None and not bus.hold_passed and abs(bus.s - bay["hold_s"]) < 0.05:
+                    bus.state, bus.zone_wait = "merge_wait", bay
+                    bus.reacting = 0
+                    return
+                bus.arrived_at = tt + ld.DT
+                if bus.berth_ok:
+                    bus.state, bus.until = "stopped", tt + ld.DT + ld.DOORS_AFTER_STOP_S
+                    bus.last_stop_s = bus.s
+                else:
+                    bus.state = "queued"
+                return
+
+    def lateness(self, bus, t):
+        """Seconds behind the schedule at the stop it is leaving (or passing)."""
+        i = max(0, bus.i - 1)
+        return t - self.gtfs_dep(bus, i)
+
+    def queue_ahead(self, bus):
+        sid = bus.pattern["stops"][bus.i]["stop"]
+        q = self.queues.get(sid, [])
+        return q.index(bus.vehicle_id) if bus.vehicle_id in q else 0
+
+    def pass_stop(self, bus, t):
+        stops = bus.pattern["stops"]
+        sid = stops[bus.i]["stop"]
+        if bus.skip_i != bus.i:
+            bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
+                                  "arr": round(t, 1), "dep": round(t, 1), "on": 0, "off": 0, "passed": True})
+        bus.skip_i = None
+        bus.i += 1
+        bus.cap = max(bus.cap * 0.6, self.envelopes[bus.pattern["id"]].cruise(
+            stops[bus.i - 1]["s"], stops[bus.i]["s"], self.run_time(bus, bus.i, self.lateness(bus, t))))
+
+    def decide_stop(self, bus, t):
+        """Within braking distance of the next stop: stop, or pass it."""
         stops = bus.pattern["stops"]
         sid = stops[bus.i]["stop"]
         last = bus.i == len(stops) - 1
         alight = [r for r in bus.onboard if r.dest == sid]
         waiting = [r for r in self.waiting.get(sid, []) if self.wants(r, bus)]
         need = last or alight or waiting
-        bus.arrived_at = t
-        if need and not last and self.errors.happens("missed_stop", bus.vehicle_id, bus.trip["trip_id"], sid, t):
+        if not need:
+            return
+        if not last and self.errors.happens("missed_stop", bus.vehicle_id, bus.trip["trip_id"], sid, t):
             self.missed_stop(bus, t, sid, alight, waiting)
             return
-        if not need:
-            bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
-                                  "arr": t, "dep": t, "on": 0, "off": 0, "passed": True})
-            self.next_stop(bus, t)
+        bus.committed = True
+        bus.berth_ok = self.reserve_berth(bus, t)
+
+    def reserve_berth(self, bus, t):
+        """Ask for a berth at the next stop; wait behind the buses ahead if none."""
+        sid = bus.pattern["stops"][bus.i]["stop"]
+        q = self.queues.setdefault(sid, [])
+        if bus.vehicle_id not in q:
+            q.append(bus.vehicle_id)
+        held = self.berths.setdefault(sid, [])
+        free = 0 if self.blocked(sid, t) else self.capacity(sid) - len(held)
+        if free > 0 and q[0] == bus.vehicle_id:
+            q.pop(0)
+            held.append(bus.vehicle_id)
+            if bus.waited_for is not None:
+                d, t0 = bus.waited_for
+                d["outcome"] = f"berth at {clock(t)} after {t - t0:.0f} s"
+                bus.waited_for = None
+            return True
+        if bus.waited_for is None:
+            ahead = held + q[:q.index(bus.vehicle_id)]
+            why = ("the berths are blocked (scenario)" if self.blocked(sid, t)
+                   else f"held by {', '.join(held)}" + (f"; {', '.join(q[:q.index(bus.vehicle_id)])} ahead in the queue"
+                                                        if q.index(bus.vehicle_id) else ""))
+            d = self.decide(t, "vehicle", bus, f"Berth at {self.stops[sid]['name']} ({sid})",
+                            [{"option": "pull into a berth", "feasible": False, "reason": why, "estimate_s": None},
+                             {"option": "serve riders from the traffic lane", "feasible": False,
+                              "reason": "not a boarding position (simulation rule)", "estimate_s": None},
+                             {"option": "wait for a berth", "feasible": True, "reason": "", "estimate_s": None}],
+                            "wait for a berth", saw=f"{self.capacity(sid)} berth(s) (modelled): {why}",
+                            blockers=ahead)
+            bus.waited_for = (d, t)
+        return False
+
+    def berth_check(self, bus, t):
+        """Stopped short of a taken berth: when it is free, creep forward into it."""
+        if self.reserve_berth(bus, t):
+            bus.berth_ok = True
+            bus.state = "run"
+
+    def merge_step(self, bus, t):
+        """Ready to pull out of a curbside stop or a terminal bay into shared
+        traffic: the UW Station gap rule (road_traffic.Lane.merge_blockers)."""
+        z = bus.zone_wait
+        lane = z["lane_model"]
+        blockers = lane.merge_blockers(ld.BUS_L, t, rear=z["merge_rear_m"], exclude=bus.vehicle_id)
+        where = (f"the curbside stop at {z['stop_name']}" if z["kind"] == "curbside"
+                 else f"the bay exit at {z['stop_name']} onto {z['road']}")
+        if blockers:
+            bus.reacting = 0
+            seen = [f"{v.id} {abs(z['merge_rear_m'] - v.front):.0f} m {'behind' if v.front <= z['merge_rear_m'] else 'ahead'} "
+                    f"at {v.speed * 3.6:.0f} km/h" for v in blockers]
+            if bus.merge_episode is None:
+                d = self.decide(t, "vehicle", bus, f"Pulling out of {where}",
+                                [{"option": "pull out now", "feasible": False,
+                                  "reason": f"no gap for {ld.BUS_L} m plus 3 s behind: {'; '.join(seen)}", "estimate_s": None},
+                                 {"option": "wait for a gap", "feasible": True, "reason": "", "estimate_s": None}],
+                                "wait for a gap", saw=f"{lane.name} traffic: " + "; ".join(seen),
+                                control="the UW Station lane rule: room for the whole bus ahead, and 2.4 m plus 3 s "
+                                        "at the approaching car's speed behind")
+                d["blockers"] = []
+                bus.merge_episode = (d, t)
+            d = bus.merge_episode[0]
+            for v in blockers:
+                if v.id not in d["blockers"]:
+                    d["blockers"].append(v.id)
             return
-        bus.state = "queue"
-        self.try_berth(bus, t)
+        if bus.reacting < bus.driver.reaction:
+            bus.reacting += 1
+            return
+        if bus.merge_episode is not None:
+            d, t0 = bus.merge_episode
+            d["outcome"] = f"pulled out at {clock(t)} after waiting {t - t0:.0f} s; blocked by {', '.join(d['blockers'])}"
+            d["effect"] = f"{t - t0:.0f} s later away from {z['stop_name']}"
+            bus.merge_episode = None
+        if z["kind"] == "bay":
+            rv = lane.enter(bus.vehicle_id, ld.BUS_L, 0.0, t, bus.driver, front=z["merge_rear_m"], external=True)
+            bus.hold_passed = True
+        else:
+            rv = lane.enter(bus.vehicle_id, ld.BUS_L, 0.0, t, bus.driver, front=bus.s - z["offset_m"], entry=None,
+                            external=True)
+        bus.lane = (z, rv)
+        bus.zone_wait = None
+        bus.state = "run"
+
+    def record(self, bus, t):
+        """The bus's motion this second, for the map: [t, metres along its route
+        variant, speed]. (The map moves it to the curb at the stops it served.)"""
+        if bus.pattern is None or bus.state in ("off", "done", "deadhead"):
+            return
+        if bus.trace and bus.trace[-1][0] >= t + 1.0 - 1e-6:
+            return                                         # driven this second: sampled already
+        bus.trace.append([round(t + 1.0, 2), round(bus.s, 2), round(bus.v, 2)])
 
     def wants(self, r, bus):
         if r.route != bus.trip["route"] or r.direction != bus.pattern["direction"]:
@@ -424,7 +720,7 @@ class LineService:
                            f"{self.stops[nxt]['name'] if nxt else 'the terminal'}")
         bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
                               "arr": t, "dep": t, "on": 0, "off": 0, "passed": True, "missed": True})
-        self.next_stop(bus, t)
+        bus.skip_i = bus.i                               # it drives past, and on from where it is
 
     def blocked(self, sid, t):
         return any(b["stop"] == sid and b["from_s"] <= t < b["to_s"] for b in self.blocks)
@@ -552,8 +848,8 @@ class LineService:
             held.remove(bus.vehicle_id)
         bus.segments.append([bus.dwell_from, t, bus.pattern["id"], bus.s, bus.s, "dwell"])
         bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, i),
-                              "arr": bus.arrived_at, "dep": t, "on": bus.boarded_here, "off": bus.alighted_here,
-                              "passed": False})
+                              "arr": bus.arrived_at, "doors": bus.dwell_from, "dep": t, "on": bus.boarded_here,
+                              "off": bus.alighted_here, "passed": False})
         bus.served += 1
         passed = getattr(bus, "passed_here", [])
         if passed:
@@ -577,8 +873,13 @@ class LineService:
             self.next_stop(bus, t)
 
     def next_stop(self, bus, t):
+        sid = bus.pattern["stops"][bus.i]["stop"]
         bus.i += 1
         self.start_run(bus, t)
+        bus.v = 0.0
+        z = self.zone_at(bus, sid=sid, kind="curbside")
+        if z is not None:                               # pull out of a curbside stop into traffic
+            bus.state, bus.zone_wait, bus.reacting = "merge_wait", z, 0
 
     def serve(self, bus, i, t):
         """At the first stop of a trip: open the doors, board, then go."""
@@ -592,6 +893,10 @@ class LineService:
         sched = trip["gtfs"][-1][0] - HOUR0
         self.arrivals.append((trip["trip_id"], bus.pattern["stops"][-1]["stop"], sched, t))
         self.metrics["trips_completed"] += 1
+        self.close_trip(bus, t)
+        if bus.lane is not None:
+            bus.lane[0]["lane_model"].leave(bus.vehicle_id)
+            bus.lane = None
         for r in list(bus.onboard):         # everyone gets off at the terminal
             bus.onboard.remove(r)
             self.alight(bus, r, bus.pattern["stops"][-1]["stop"], t)
@@ -613,7 +918,8 @@ class LineService:
     # --- dispatcher orders ---------------------------------------------------------------
     def active_bus(self, block=None, vehicle=None):
         for b in self.buses:
-            if b.broken or b.trip is None or b.state not in ("run", "dwell", "queue", "layover"):
+            if b.broken or b.trip is None or b.state not in ("run", "dwell", "queue", "layover", "stopped", "queued",
+                                                             "merge_wait"):
                 continue
             if (block is None or b.block == block) and (vehicle is None or b.vehicle_id == vehicle) \
                     and not getattr(b, "release", None) and not getattr(b, "handover", None):
@@ -651,10 +957,12 @@ class LineService:
         bus.stops_log.append({"trip": bus.trip["trip_id"], "stop": sid, "sched": self.gtfs_dep(bus, bus.i),
                               "arr": bus.arrived_at, "dep": t, "on": bus.boarded_here, "off": bus.alighted_here,
                               "passed": False, "handover": spare.vehicle_id})
+        self.close_trip(bus, t)
         bus.state, bus.trip = "done", None
         if self.fleet is not None:
             self.fleet.vehicles[bus.vehicle_id].set(t, "returning", f"relieved by {spare.vehicle_id} at {sid}")
         spare.relieves = None
+        self.open_trip(spare, t)
         spare.state = "dwell"
         spare.arrived_at = spare.dwell_from = t
         spare.berth_stop = sid
@@ -688,6 +996,7 @@ class LineService:
                               "passed": False, "released": True})
         self.metrics["stranded"] = self.metrics.get("stranded", 0) + put_off
         cb = bus.release["cb"]
+        self.close_trip(bus, t)
         bus.state, bus.trip, bus.release = "done", None, None
         cb(bus.vehicle_id, sid, t, put_off)
 
@@ -697,7 +1006,7 @@ class LineService:
         from fleet import DEADHEADS
         stops = bus.pattern["stops"]
         # Laying over at the terminal: the relief happens there, before the trip.
-        start = bus.i if bus.state in ("run", "layover") else bus.i + 1
+        start = bus.i + 1 if bus.state == "dwell" else bus.i
         for k in range(start, len(stops)):
             if stops[k]["stop"] in DEADHEADS["points"]:
                 return k
@@ -706,7 +1015,8 @@ class LineService:
     def breakdown(self, t, vehicle=None):
         """A bus on a line breaks down and is withdrawn; dispatch sends a spare to
         take over its block at the next relief point."""
-        cand = [b for b in self.buses if b.trip is not None and not b.broken and b.state in ("run", "dwell", "queue")]
+        cand = [b for b in self.buses if b.trip is not None and not b.broken
+                and b.state in ("run", "dwell", "queue", "stopped", "queued", "merge_wait")]
         if vehicle:
             cand = [b for b in cand if b.vehicle_id == vehicle]
         if not cand:
@@ -714,7 +1024,7 @@ class LineService:
         bus = cand[0]
         bus.broken = True
         stops = bus.pattern["stops"]
-        nxt = bus.i if bus.state == "run" else min(bus.i + 1, len(stops) - 1)
+        nxt = min(bus.i + 1, len(stops) - 1) if bus.state == "dwell" else bus.i
         sid = stops[nxt]["stop"]
         walk_m = max(0.0, stops[nxt]["s"] - bus.s)
         walk_s = walk_m / WALK_MPS
@@ -737,6 +1047,9 @@ class LineService:
             if bus.vehicle_id in q:
                 q.remove(bus.vehicle_id)
         bus.segments.append([t, self.duration_s, bus.pattern["id"], round(bus.s, 1), round(bus.s, 1), "broken"])
+        if bus.lane is not None:                          # it pulls over out of the traffic lane
+            bus.lane[0]["lane_model"].leave(bus.vehicle_id)
+            bus.lane = None
         self.metrics["breakdowns"] = self.metrics.get("breakdowns", 0) + 1
         self.metrics["stranded"] = self.metrics.get("stranded", 0) + stranded
         k = self.relief_index(bus)
@@ -792,11 +1105,22 @@ class LineService:
     def plans(self):
         return [{"vehicle_id": b.vehicle_id, "block": b.block, "driver": b.driver.describe(),
                  "operator": b.driver.vehicle_id,
-                 "segments": [[round(a, 1), round(c, 1), p, s0, s1, k] for a, c, p, s0, s1, k in b.segments],
+                 # the motion the simulator drove: [t, s, v, lateral], simplified (line_driver.simplify)
+                 "trace": ld.simplify(b.trace), "trips": b.trips_log,
                  "stops": b.stops_log, "unmodelled": b.unmodelled,
                  "deadhead": getattr(b, "deadhead", None), "replaces": getattr(b, "replaces", None) or
                  getattr(b, "relieved", None), "broken": b.broken}
                 for b in self.buses]
+
+    def zone_cars(self):
+        """Each shared-traffic zone's lane and its cars: [t, metres along the lane]."""
+        from uw_station import simplify as simplify_trace
+        return [{"id": z["id"], "kind": z["kind"], "stop": z["stop"], "stop_name": z["stop_name"], "road": z["road"],
+                 "lane": z["lane"], "merge_rear_m": z["merge_rear_m"], "demand": self.cars, "pattern": z["pattern"],
+                 "hold_s": z.get("hold_s"), "pull_in_s": z.get("pull_in_s"), "offset_m": z["offset_m"],
+                 "cars": [{"id": v.id, "trace": simplify_trace(v.trace, dims=(1,))}
+                          for v in z["lane_model"].vehicles if v.kind == "car" and v.trace]}
+                for z in self.zones]
 
     def network(self):
         return {"routes": {r: {"name": self.data["routes"][r]["name"],

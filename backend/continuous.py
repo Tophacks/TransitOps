@@ -93,6 +93,8 @@ class ContinuousRun:
         if getattr(sim, "lines", None) is not None:
             for bus in sim.lines.buses:
                 bus.segments[:] = [seg for seg in bus.segments if seg[1] >= cut]
+                bus.trace[:] = [x for x in bus.trace if x[0] >= cut]
+                bus.trips_log[:] = [x for x in bus.trips_log if x[1] is None or x[1] >= cut]
                 bus.stops_log[:] = [x for x in bus.stops_log if x["dep"] >= cut]
 
         # Keep a service-cycle margin behind replay for trip lookup and
