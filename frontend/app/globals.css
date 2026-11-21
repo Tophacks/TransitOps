@@ -1686,39 +1686,6 @@ footer {
 .ionTicks i { position:absolute; width:2px; height:5px; margin-left:-1px; border-radius:1px; background:#5fa8e6; opacity:.8; }
 .ionTicks i.wave { width:4px; height:7px; margin-left:-2px; background:#ffd36b; opacity:1; }
 
-/* Fairway terminal replay (modelled ION turnback and bus layover). */
-.fairwayDemo { position:absolute; z-index:4; inset:0; pointer-events:none; }
-.fairwayCard, .fairwayBar { pointer-events:auto; background:#0c1a24f0; border:1px solid #4b6470; border-radius:9px; color:#e3eff4; box-shadow:0 6px 24px #0007; }
-.fairwayCard { position:absolute; bottom:152px; right:14px; display:grid; gap:4px; width:290px; padding:10px 12px; font-size:.74rem; line-height:1.4; }
-.fairwayCard strong { font-size:.8rem; }
-.fairwayCard small { color:#9db4bf; font-size:.64rem; }
-.fairwayState { justify-self:start; padding:2px 8px; border-radius:999px; background:#ffb21e22; border:1px solid #ffb21e88; color:#ffd27a; font-weight:700; }
-.fairwayCardTabs, .fairwaySpeeds { display:flex; gap:4px; }
-.fairwayBar { position:absolute; left:14px; right:14px; bottom:30px; display:grid; gap:6px; padding:10px 12px; }
-.fairwayBadge { display:grid; gap:2px; }
-.fairwayBadge strong { display:flex; align-items:center; gap:7px; font-size:.78rem; color:#ffd27a; }
-.fairwayBadge strong i, .fairwayModeBadge strong i { width:8px; height:8px; border-radius:50%; background:#ffb21e; box-shadow:0 0 0 2px #ffb21e40; }
-.fairwayBadge span { font-size:.66rem; color:#a9bfc9; }
-.fairwayCaption { margin:0; min-height:1.3em; font-size:.8rem; font-weight:700; color:#f3f8fa; }
-.fairwayControls { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
-.fairwayControls input[type="range"] { flex:1 1 160px; min-width:120px; accent-color:#ffb21e; }
-.fairwayTime { font-variant-numeric:tabular-nums; font-size:.7rem; color:#a9bfc9; }
-.fairwayDemo button { border:1px solid #4b6470; border-radius:6px; background:#162a35; color:#e3eff4; cursor:pointer; padding:6px 9px; font-size:.72rem; font-weight:700; }
-.fairwayDemo button[aria-pressed="true"] { background:#5a4413; border-color:#ffb21e; }
-.fairwayDemo button.fairwayExit { margin-left:auto; background:#3b1d1d; border-color:#c76a5f; }
-@media (max-width:560px) {
-  /* More map for the replay on a phone: the panels sit over its lower part. */
-  .geoMapShell.fairwayActive { height:clamp(560px,84svh,760px); }
-  .fairwayCard { bottom:162px; left:8px; right:8px; width:auto; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:7px 9px; font-size:.68rem; }
-  .fairwayCard strong, .fairwayCard small, .fairwayCard span.fairwayExtra, .fairwayBadge { display:none; }
-  .fairwayBar { left:8px; right:8px; bottom:24px; padding:8px 9px; gap:5px; }
-  .fairwayCaption { font-size:.72rem; }
-  .fairwayDemo button { padding:5px 7px; font-size:.66rem; }
-  .fairwayControls { gap:5px; }
-  .fairwayControls input[type="range"] { flex-basis:100%; order:-1; }
-  .fairwayDemo button.fairwayExit { margin-left:0; }
-}
-
 /* Decision Inspector: ION terminal decisions (vehicle, station control, dispatch). */
 .decisionInspector { position:absolute; z-index:3; top:112px; right:14px; width:min(330px, calc(100% - 28px)); max-height:calc(100% - 150px); overflow:auto;
   background:#0c1a24f2; border:1px solid #4b6470; border-radius:9px; color:#e3eff4; box-shadow:0 6px 24px #0007; font-size:.72rem; line-height:1.4; }
@@ -1809,3 +1776,20 @@ footer {
   .fleetMiddle, .fleetOrders { grid-column:1; }
   .fleetOrders { max-height:none; }
 }
+
+/* Seed, replay and the run report (natural incidents). */
+.seedBar { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:end; margin:10px 0; font-size:.78rem; color:var(--muted); }
+.seedBar label { display:grid; gap:4px; }
+.seedBar input[type="number"], .seedBar select { background:var(--surface-3); color:var(--text); border:1px solid var(--line-strong); border-radius:7px; padding:6px; font:inherit; width:auto; }
+.seedBar .seedFresh { display:flex; gap:6px; align-items:center; }
+.seedBar button { border:1px solid var(--accent); border-radius:7px; background:var(--accent-soft); color:var(--accent); padding:7px 12px; font:inherit; cursor:pointer; }
+.seedBar button:disabled { opacity:.5; cursor:default; }
+.runReport { margin-top:10px; border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface-3); font-size:.78rem; }
+.runReport h3 { margin:0 0 8px; font-size:.86rem; }
+.runReport table { border-collapse:collapse; width:100%; max-width:560px; }
+.runReport th, .runReport td { text-align:left; padding:3px 8px 3px 0; font-weight:400; }
+.runReport thead th { color:var(--muted); }
+.runReport tbody th { color:var(--muted); }
+.incidentList { margin:10px 0 0; padding-left:18px; display:grid; gap:3px; color:var(--muted); }
+.incidentList strong { color:var(--text); font-weight:600; }
+.incidentList li.notApplied { opacity:.6; }

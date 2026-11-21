@@ -7,9 +7,9 @@
 //     "viewport":[960,600],"mode":"simulation"}'
 //
 // mode "live" records the live fleet in real time instead (one frame per `step` seconds).
-// mode "fairway" records the Fairway terminal replay in its own framing
-// (from/to/step in replay seconds; `camera` optional; "next": "garage" for
-// the Not in Service variant).
+// "parts": [{from, to, step, follow, pick}] records several stretches of the same
+// run in one clip; `pick` selects a vehicle in the Fleet panel (the inspector
+// then shows its decisions), `follow` keeps any simulated vehicle in view.
 // Needs Playwright and ffmpeg.
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -29,6 +29,7 @@ const out = path.resolve(process.argv[2]);
 const options = JSON.parse(process.argv[3] ?? "{}");
 const base = new URL(process.env.BASE_URL ?? "http://localhost:3000");
 base.searchParams.set("e2e", "1");
+base.searchParams.set("fixed", "1");
 for (const [key, value] of Object.entries(options.query ?? {})) base.searchParams.set(key, value);
 const [width, height] = options.viewport ?? [960, 600];
 const frames = mkdtempSync(path.join(tmpdir(), "transitops-frames-"));
@@ -40,15 +41,12 @@ const page = await browser.newPage({ viewport: { width, height }, deviceScaleFac
 await page.goto(base.href);
 await page.waitForFunction(() => window.__transitops?.map?.isStyleLoaded(), null, { timeout: 90_000 });
 await page.waitForTimeout(2500);
-if (options.mode === "fairway") {
-  await page.getByRole("button", { name: "Fairway", exact: true }).click();
-  await page.waitForFunction(() => window.__transitops.fairway, null, { timeout: 20_000 });
-  if (options.next === "garage") await page.getByRole("button", { name: "Garage", exact: true }).click();
-  await page.getByRole("button", { name: "Pause", exact: true }).click();
-} else if (options.mode !== "live") {
-  if (options.preset) await page.getByRole("button", { name: options.preset }).click();
+if (options.mode !== "live") {
+  if (options.preset) await page.getByRole("button", { name: new RegExp(`^${options.preset}`) }).click();
+  const response = page.waitForResponse((r) => r.url().includes("/api/simulate"), { timeout: 180_000 });
   await page.getByRole("button", { name: /Start simulation|Apply & restart/ }).click();
-  await page.waitForFunction(() => window.__transitops.scene().buses.length > 0, null, { timeout: 30_000 });
+  await response;
+  await page.waitForFunction(() => window.__transitops.scene().buses.length > 0, null, { timeout: 60_000 });
   await page.getByRole("button", { name: /Pause/ }).click();
 }
 // Let the mode switch's camera ease finish before placing our camera.
@@ -93,15 +91,19 @@ if (options.mode === "live") {
     await page.waitForTimeout((options.step ?? 1) * 1000);
     await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
   }
-} else if (options.mode === "fairway") {
-  for (let t = options.from ?? 0; t <= (options.to ?? 111); t += options.step ?? 1) {
-    await page.evaluate((value) => window.__transitops.fairway.clock.seek(value), t);
-    await settle();
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
-  }
 } else {
-  for (let t = options.from ?? 0; t <= (options.to ?? 60); t += options.step ?? 1) {
+  for (const part of options.parts ?? [options]) {
+  if (part.pick) {
+    await page.evaluate((id) => {
+      const select = document.querySelector('select[aria-label="Vehicle"]');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, id);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      window.scrollTo(0, 0);
+    }, part.pick);
+    await page.waitForTimeout(300);
+  }
+  if (part.camera) await page.evaluate((camera) => window.__transitops.map.jumpTo(camera), part.camera);
+  for (let t = part.from ?? 0; t <= (part.to ?? 60); t += part.step ?? 1) {
     await page.evaluate((value) => {
       const input = document.querySelector('input[aria-label="Simulation timeline"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, String(Math.round(value * 10) / 10));
@@ -111,17 +113,19 @@ if (options.mode === "live") {
     if (!Number.isInteger(t)) {
       await page.evaluate((value) => window.__transitops.seek?.(value), t);
     }
-    if (options.follow) {
-      await page.evaluate((id) => {
-        const { map, scene } = window.__transitops;
+    if (part.follow) {
+      await page.evaluate(([id, at]) => {
+        const { map, scene, lines, spares } = window.__transitops;
         const { buses, trains } = scene();
-        const target = buses.find((b) => b.id === id)?.centre ?? trains.find((tr) => tr.id === id)?.sections[2].centre;
+        const target = buses.find((b) => b.id === id)?.centre ?? trains.find((tr) => tr.id === id)?.sections[2].centre
+          ?? lines?.(at).find((b) => b.id === id)?.centre ?? spares?.(at).find((b) => b.id === id)?.centre;
         if (target) map.jumpTo({ center: target });
-      }, options.follow);
+      }, [part.follow, t]);
     }
     await settle();
     await page.evaluate(() => window.scrollTo(0, 0));
     await map.screenshot({ path: path.join(frames, `f${String(index++).padStart(4, "0")}.png`) });
+  }
   }
 }
 await browser.close();
