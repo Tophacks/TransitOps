@@ -259,7 +259,9 @@ class IonPlan:
         if trip.station_times.get(station, math.inf) <= now:
             return trip.station_times[station], "confirmed"
         line = self.lines[trip.direction]
-        seen = [(t, name) for name, t in trip.station_times.items() if t <= now]
+        known = {name for name, _ in line.stops}
+        # Only stations on the timetabled line: a diverted train also records others.
+        seen = [(t, name) for name, t in trip.station_times.items() if t <= now and name in known]
         if seen:
             t_last, last = max(seen)
             return t_last + line.arrival_offset(station) - line.arrival_offset(last), "predicted"
