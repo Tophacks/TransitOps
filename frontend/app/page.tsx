@@ -52,6 +52,7 @@ const DEFAULTS: Controls = {
   uw_block_from_minute: 10,
   uw_block_to_minute: 58,
   uw_cars: "moderate",
+  line_cars: "moderate",
   driver_error: null,
   driver_error_rate: 0.2,
   error_seed: 17,
@@ -96,6 +97,7 @@ const PRESETS: { id: string; title: string; description: string; controls: Contr
   { id: "bus-wrong-turn", title: "Bus takes the wrong turn", description: "B101 turns left onto Phillip St; Control re-routes it to Waterloo Public Square", controls: { ...BASE, driver_error: "wrong_turn" } },
   { id: "train-overshoot", title: "Train overshoot, reverse granted", description: "An ION train overshoots Research and Technology by 12 m and reverses", controls: { ...BASE, rail_overshoot_station: "Research and Technology Station" } },
   { id: "train-overshoot-street", title: "Train overshoot on the street", description: "An ION train overshoots Waterloo Public Square (street-running): no reverse, it continues", controls: { ...BASE, rail_overshoot_station: "Waterloo Public Square Station" } },
+  { id: "route-7-traffic", title: "Route 7: traffic at a curb and a bay", description: "Heavy traffic on King St at King / KCI and on Fairway Rd S at the Fairway bay exit: buses brake, creep in, stop, then wait for a gap to pull out", controls: { ...BASE, duration_min: 120, line_cars: "heavy" } },
   { id: "route-7", title: "Route 7 end to end", description: "Every Route 7 King bus, Conestoga ↔ Fairway, for two hours: stops, layovers and the next trip", controls: { ...BASE, duration_min: 120 } },
   { id: "route-7-station-delay", title: "Route 7: Central blocked", description: "Central Station's berths are blocked 07:50–08:10: the delay reaches later stops, connections and the next trip", controls: { ...BASE, duration_min: 120, line_block_stop: "1901", line_block_from_minute: 20, line_block_to_minute: 40 } },
   { id: "route-7-missed-stop", title: "Route 7: driver misses a stop", description: "The first bus due at Grand River Hospital after 07:40 misses the lane change and passes it", controls: { ...BASE, duration_min: 120, driver_error: "missed_stop" } },
@@ -550,6 +552,7 @@ export default function Home() {
             uwCars={data?.smart.uw?.cars ?? []}
             garageVehicles={data?.smart.garages?.vehicles ?? []}
             lineVehicles={data?.smart.lines?.vehicles ?? []}
+            lineZones={data?.smart.lines?.zones ?? []}
             fleetVehicles={data?.smart.fleet?.vehicles ?? []}
             seed={data?.scenario.seed ?? null}
             onRequestRun={() => void runSimulation()}
@@ -918,6 +921,13 @@ export default function Home() {
             <div className="labelRow"><span>Phillip St car traffic (UW exit)</span><strong>{controls.uw_cars}</strong></div>
             <select aria-label="Phillip Street car traffic" value={controls.uw_cars}
               onChange={(event) => update("uw_cars", event.target.value as "light" | "moderate" | "heavy")}>
+              <option value="light">Light (250 cars/h)</option><option value="moderate">Moderate (500 cars/h)</option><option value="heavy">Heavy (900 cars/h)</option>
+            </select>
+          </label>
+          <label>
+            <div className="labelRow"><span>Route 7 shared traffic (King / KCI, Fairway bay)</span><strong>{controls.line_cars}</strong></div>
+            <select aria-label="Route 7 shared traffic" value={controls.line_cars}
+              onChange={(event) => update("line_cars", event.target.value as "light" | "moderate" | "heavy")}>
               <option value="light">Light (250 cars/h)</option><option value="moderate">Moderate (500 cars/h)</option><option value="heavy">Heavy (900 cars/h)</option>
             </select>
           </label>

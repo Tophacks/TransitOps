@@ -1,8 +1,9 @@
 // Scheduled GRT lines and the regional fleet: replays what the Python simulator
-// decided (backend/lines.py, backend/fleet.py). Each line bus moves along its
-// GTFS route variant from the simulator's segments [t0, t1, pattern, s0, s1,
-// kind]; a spare moves along its out-of-service road route by the times the
-// simulator gave each point. The browser only interpolates.
+// drove (backend/lines.py, backend/line_driver.py, backend/fleet.py). Each line
+// bus moves along its GTFS route variant from the simulator's trace [t, s, v]
+// (constant acceleration between samples, exactly as the backend simplified it);
+// it moves to the curb at the stops it served. A spare moves along its
+// out-of-service road route by the times the simulator gave each point.
 
 import lineData from "../geo/lines.json";
 import { bearing, lerpPath, type LonLat } from "./path.ts";
@@ -32,11 +33,24 @@ export type LineStopLog = {
   missed?: boolean; handover?: string; released?: boolean;
 };
 export type LineVehicle = {
-  vehicle_id: string; block: string; driver: string; operator: string; segments: LineSegment[]; stops: LineStopLog[];
+  vehicle_id: string; block: string; driver: string; operator: string; segments?: LineSegment[]; stops: LineStopLog[];
+  /** the motion the simulator drove: [t, metres along the route variant, speed m/s] */
+  trace: [number, number, number][];
+  /** [t0, t1 (null: still running), trip, pattern, headsign, route] */
+  trips: [number, number | null, string, string, string, string][];
   unmodelled: { trip_id: string; route: string; start_s: number; late_s: number }[];
   deadhead: Deadhead | null; replaces: string | null; broken: boolean;
 };
-export type LinePose = { id: string; centre: LonLat; heading: number; state: string; route: string; pattern: string };
+export type LinePose = {
+  id: string; centre: LonLat; heading: number; state: string; route: string; pattern: string;
+  speed: number; s: number; headsign: string; label: string;
+};
+export type ZoneCar = { id: string; trace: [number, number][] };
+export type LineZone = {
+  id: string; kind: "curbside" | "bay"; stop: string; stop_name: string; road: string; lane: PathPoint[];
+  merge_rear_m: number; demand: string; pattern: string; hold_s: number | null; pull_in_s: number | null; offset_m: number;
+  cars: ZoneCar[];
+};
 
 export type FleetVehicle = {
   id: string; kind: "conventional" | "mobilityplus" | "ion" | "scenario"; garage: string | null; role: string | null;
@@ -59,9 +73,35 @@ export type LinesResult = {
   vehicles: LineVehicle[];
   metrics: LineMetrics;
   block: { stop: string; from_s: number; to_s: number } | null;
+  zones?: LineZone[];
 };
 
-const ease = (f: number) => f * f * (3 - 2 * f);
+// As backend/line_driver.py: in lane, easing to the curb over CURB_BLEND_M at a stop.
+const LANE_OFFSET_M = 1.9;
+const CURB_OFFSET_M = 3.4;
+const CURB_BLEND_M = 25;
+const ease = (x: number) => { const k = Math.min(1, Math.max(0, x)); return k * k * (3 - 2 * k); };
+
+/** Position and speed at t between two samples: constant acceleration landing on b. */
+export function between(a: [number, number, number], b: [number, number, number], t: number) {
+  const dt = b[0] - a[0];
+  if (dt <= 0) return { s: b[1], v: b[2] };
+  const tau = t - a[0];
+  const acc = (2 * (b[1] - a[1] - a[2] * dt)) / (dt * dt);
+  // Position lands exactly on b; speed changes linearly between the recorded speeds, as the
+  // simulator's does between kept samples (line_driver.simplify keeps every change of rate).
+  return { s: a[1] + a[2] * tau + 0.5 * acc * tau * tau, v: Math.max(0, a[2] + ((b[2] - a[2]) * tau) / dt) };
+}
+
+function offsetPose(path: PathPoint[], s: number, metres: number): { centre: LonLat; heading: number } {
+  const { centre, heading } = poseOn(path, s);
+  const h = (heading * Math.PI) / 180;
+  const kLon = 111320 * Math.cos((centre[1] * Math.PI) / 180);
+  // right of the direction of travel (heading clockwise from north)
+  const east = Math.cos(h) * metres, north = -Math.sin(h) * metres;
+  return { centre: [centre[0] + east / kLon, centre[1] + north / 111200], heading };
+}
+
 
 function poseOn(path: PathPoint[], s: number): { centre: LonLat; heading: number } {
   const end = path[path.length - 1][2];
@@ -85,25 +125,77 @@ export function deadheadPose(d: Deadhead, t: number): { centre: LonLat; heading:
   return poseOn(path, s);
 }
 
-/** Every line bus on the modelled network at t; off-network periods are not drawn. */
-export function linePoses(vehicles: readonly LineVehicle[], t: number): LinePose[] {
+/** Where the trace has the bus at t: null off the modelled network (a gap in the trace). */
+export function traceAt(trace: readonly [number, number, number][], t: number) {
+  if (!trace.length || t < trace[0][0] - 0.5 || t > trace[trace.length - 1][0] + 0.5) return null;
+  let lo = 0, hi = trace.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (trace[mid][0] <= t) lo = mid; else hi = mid;
+  }
+  const a = trace[lo], b = trace[hi];
+  if (t <= a[0]) return { s: a[1], v: a[2] };
+  if (t >= b[0]) return { s: b[1], v: b[2] };
+  if (b[0] - a[0] > 1.5 && a[2] === 0 && b[2] === 0) return { s: a[1], v: 0 };      // standing
+  if (b[0] - a[0] > 1.5 && (a[2] > 0 || b[2] > 0) && b[0] - a[0] > 40) return null; // off the network
+  return between(a, b, t);
+}
+
+/** Every line bus on the modelled network at t, as the simulator drove it. */
+export function linePoses(vehicles: readonly LineVehicle[], t: number, zones: readonly LineZone[] = []): LinePose[] {
   const out: LinePose[] = [];
   for (const v of vehicles) {
     if (v.deadhead) {
       const p = deadheadPose(v.deadhead, t);
       if (p) {
-        out.push({ id: v.vehicle_id, ...p, state: "deadhead", route: "", pattern: "" });
+        out.push({ id: v.vehicle_id, ...p, state: "deadhead", route: "", pattern: "", speed: 0, s: 0,
+          headsign: "Not in service", label: "Not in service" });
         continue;
       }
     }
-    const seg = v.segments.find((x) => t >= x[0] - 0.5 && t <= x[1] + 1.5 && x[5] !== "deadhead");
-    if (!seg) continue;
-    const [t0, t1, pid, s0, s1, kind] = seg;
-    const pattern = PATTERNS[pid];
+    const trip = v.trips?.find((x) => t >= x[0] - 0.5 && (x[1] === null || t <= x[1] + 1.5));
+    if (!trip || !v.trace?.length) continue;
+    const pattern = PATTERNS[trip[3]];
     if (!pattern) continue;
-    const f = t1 > t0 ? Math.max(0, Math.min(1, (t - t0) / (t1 - t0))) : 1;
-    const s = kind === "run" ? s0 + (s1 - s0) * ease(f) : s1;
-    out.push({ id: v.vehicle_id, ...poseOn(pattern.path, s), state: kind, route: pattern.route, pattern: pid });
+    const at = traceAt(v.trace, t);
+    if (!at) continue;
+    // To the curb at the stops it served on this trip; the bay roadway is its own lane.
+    let lat = LANE_OFFSET_M;
+    const bay = zones.find((z) => z.kind === "bay" && z.pattern === pattern.id);
+    if (!(bay && bay.hold_s !== null && at.s < bay.hold_s + 1)) {
+      for (const x of v.stops) {
+        if (x.trip !== trip[2] || x.passed) continue;
+        const st = pattern.stops.find((y) => y.stop === x.stop);
+        if (!st) continue;
+        const d = Math.abs(at.s - st.s);
+        if (d < CURB_BLEND_M && t >= x.arr - 40 && t <= x.dep + 40) {
+          lat = Math.max(lat, LANE_OFFSET_M + (CURB_OFFSET_M - LANE_OFFSET_M) * ease(1 - d / CURB_BLEND_M));
+        }
+      }
+    }
+    const pose = offsetPose(pattern.path, at.s, lat);
+    const state = at.v > 0.05 ? "moving" : "stopped";
+    out.push({ id: v.vehicle_id, ...pose, state, route: trip[5], pattern: pattern.id, speed: at.v, s: at.s,
+      headsign: trip[4], label: `${trip[5]} ${trip[4]}` });
+  }
+  return out;
+}
+
+/** Cars in the shared-traffic lanes on the lines, as the simulator moved them. */
+export function zoneCarPoses(zones: readonly LineZone[], t: number) {
+  const out: { id: string; centre: LonLat; heading: number; speed: number }[] = [];
+  for (const z of zones) {
+    for (const car of z.cars) {
+      const tr = car.trace;
+      if (!tr.length || t < tr[0][0] || t > tr[tr.length - 1][0]) continue;
+      let i = 0;
+      while (i + 1 < tr.length && tr[i + 1][0] < t) i += 1;
+      const a = tr[i], b = tr[Math.min(tr.length - 1, i + 1)];
+      const f = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
+      const s = a[1] + (b[1] - a[1]) * f;
+      const pose = offsetPose(z.lane, s - 2.3, LANE_OFFSET_M);
+      out.push({ id: car.id, ...pose, speed: b[0] > a[0] ? (b[1] - a[1]) / (b[0] - a[0]) : 0 });
+    }
   }
   return out;
 }

@@ -37,6 +37,8 @@ export type Controls = {
   uw_block_to_minute?: number;
   /** private cars on Phillip Street southbound at the UW exit */
   uw_cars?: "light" | "moderate" | "heavy";
+  /** cars in the shared-traffic lanes on Route 7 (King / KCI curbside stop, Fairway bay exit) */
+  line_cars?: "light" | "moderate" | "heavy";
   /** opt-in driver errors (a demo on B101's first UW visit, or seeded) */
   driver_error?: "overshoot" | "overshoot_blocked" | "missed_berth" | "wrong_turn" | "missed_stop" | "seeded" | null;
   driver_error_rate?: number;
