@@ -132,6 +132,7 @@ class TransitSimulation:
         driver_errors=None,
         lines=("7",),
         line_block=None,
+        line_cars="moderate",
         fleet_inventory=300,
         breakdown_kind="hold",
         breakdown_target="corridor",
@@ -222,7 +223,7 @@ class TransitSimulation:
             from lines import LineService
             self.lines = LineService(tuple(lines), seed=seed, duration_s=horizon_s, fleet=self.fleet,
                                      traffic=self.traffic_multiplier, ion_plan=ion_plan, demand=self.demand_multiplier,
-                                     station_block=line_block,
+                                     station_block=line_block, cars=line_cars,
                                      errors=self.uw.errors if self.uw is not None else Errors(driver_errors, seed))
             self.lines.decisions = self.decisions      # one decision log, as the run goes (continuous runs too)
 

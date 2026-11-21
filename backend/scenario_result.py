@@ -79,7 +79,9 @@ def line_result(sim):
     if lines is None:
         return None
     lines.finish(sim.time * 60.0)          # metrics up to this run's end or checkpoint
-    return {"network": lines.network(), "vehicles": lines.plans(), "metrics": lines.metrics, "block": lines.block}
+    return {"network": lines.network(), "vehicles": lines.plans(), "metrics": lines.metrics, "block": lines.block,
+            # shared-traffic lanes on the line and their cars (road_traffic.Lane, the UW Station rules)
+            "zones": lines.zone_cars()}
 
 
 def simulation_result(scenario, network, baseline, smart, incidents):
