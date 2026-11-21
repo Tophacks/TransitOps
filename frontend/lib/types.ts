@@ -64,6 +64,19 @@ export type Controls = {
   breakdown_vehicle?: string | null;
   /** dispatcher orders from the Fleet panel, applied at their minute */
   commands?: Command[];
+  /** incidents during an ordinary run, drawn from the seed (backend/incidents.py) */
+  incidents?: "off" | "natural";
+  incident_rates?: Record<string, number> | null;
+  /** regional spares the adaptive dispatcher may send when a station asks for capacity and the yard is empty */
+  capacity_spares?: number;
+};
+
+export type Incident = { id: string; minute: number; kind: string; applied?: boolean; note?: string; [key: string]: unknown };
+export type RunReport = {
+  trips_covered: number; trips_scheduled: number; corridor_riders_delivered: number;
+  departure_delay_avg_s: number; departure_delay_max_s: number; missed_stops: number;
+  transfers_boarded: number; connections_missed: number; riders_still_waiting: number;
+  incidents_applied: number; breakdowns: number;
 };
 
 export type Command = { minute: number; action: "dispatch_spare" | "reassign" | "breakdown"; vehicle: string; target: string };
@@ -211,6 +224,10 @@ export type CaseResult = {
   /** GRT garage pull-outs and returns and each garage's inventory (backend/garage_ops.py) */
   garages?: { vehicles: import("./motion/garages.ts").GarageVehicle[];
     inventory: Record<string, { t: number; count: number; present: string[]; event: string }[]> };
+  /** incidents drawn from the seed, and whether each applied in this run */
+  incidents?: Incident[];
+  /** the run report (acceptance 5) */
+  report?: RunReport;
   /** scheduled GRT lines end to end (backend/lines.py) */
   lines?: import("./motion/lines.ts").LinesResult | null;
   /** the regional fleet: inventory, garages, every vehicle's states, spares sent (backend/fleet.py) */
@@ -225,6 +242,8 @@ export type CaseResult = {
 
 export type SimulationResponse = {
   scenario: Controls;
+  /** drawn once from the seed before either policy acts; both runs get this list */
+  incidents?: { mode: string; seed: number; list: Incident[] };
   network: Network;
   ion: IonSchedule;
   baseline: CaseResult;

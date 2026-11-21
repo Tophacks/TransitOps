@@ -67,7 +67,7 @@ def clock(t):
 
 class Rider:
     __slots__ = ("id", "stop", "route", "direction", "dest", "ready_s", "source", "boarded_s", "to_ion", "bus",
-                 "planned_alight_s", "stranded")
+                 "planned_alight_s", "stranded", "passed_by")
 
     def __init__(self, rid, stop, route, direction, dest, ready_s, source="walk-up", to_ion=False):
         self.id, self.stop, self.route, self.direction, self.dest = rid, stop, route, direction, dest
@@ -76,6 +76,7 @@ class Rider:
         self.bus = None
         self.planned_alight_s = None
         self.stranded = False       # put off a broken-down bus; boards again without counting twice
+        self.passed_by = None       # (vehicle, t) of a bus that passed this rider's stop by mistake
 
 
 class LineBus:
@@ -120,6 +121,7 @@ class LineService:
         self.patterns = {p["id"]: p for r in self.routes for p in self.data["routes"][r]["patterns"]}
         self.trips = {t["trip_id"]: dict(t, route=r) for r in self.routes for t in self.data["routes"][r]["trips"]}
         self.block = station_block           # {"stop", "from_s", "to_s"}: berths unavailable (scenario)
+        self.blocks = [station_block] if station_block else []
         self.errors = errors if isinstance(errors, Errors) else Errors(errors, seed)
         self.decisions = []
         self.seq = 0
@@ -401,6 +403,8 @@ class LineService:
     def missed_stop(self, bus, t, sid, alight, waiting):
         """A driver error: missed the lane change and passed the stop."""
         self.errors.record(t, bus.vehicle_id, "missed_stop", f"passed {sid} on trip {bus.trip['trip_id']}")
+        for r in waiting:
+            r.passed_by = (bus.vehicle_id, t)
         self.metrics["missed_stops"] += 1
         nxt = bus.pattern["stops"][bus.i + 1]["stop"] if bus.i + 1 < len(bus.pattern["stops"]) else None
         for r in alight:
@@ -423,8 +427,11 @@ class LineService:
         self.next_stop(bus, t)
 
     def blocked(self, sid, t):
-        b = self.block
-        return b is not None and b["stop"] == sid and b["from_s"] <= t < b["to_s"]
+        return any(b["stop"] == sid and b["from_s"] <= t < b["to_s"] for b in self.blocks)
+
+    def add_block(self, block):
+        """A station delay during the run (an incident): the stop's berths are unavailable."""
+        self.blocks.append(block)
 
     def try_berth(self, bus, t):
         sid = bus.pattern["stops"][bus.i]["stop"]
@@ -504,6 +511,9 @@ class LineService:
             r.planned_alight_s = bus.trip["gtfs"][k][0] - HOUR0
             bus.onboard.append(r)
             bus.boarded_here += 1
+            if r.passed_by is not None:
+                bus.passed_here = getattr(bus, "passed_here", []) + [r.passed_by]
+                r.passed_by = None
             if r.stranded:
                 r.stranded = False
                 self.metrics["reboarded"] = self.metrics.get("reboarded", 0) + 1
@@ -545,6 +555,20 @@ class LineService:
                               "arr": bus.arrived_at, "dep": t, "on": bus.boarded_here, "off": bus.alighted_here,
                               "passed": False})
         bus.served += 1
+        passed = getattr(bus, "passed_here", [])
+        if passed:
+            bus.passed_here = []
+            by = sorted({v for v, _ in passed})
+            when = min(t0 for _, t0 in passed)
+            self.decide(t, "vehicle", bus, f"Boarding at {self.stops[sid]['name']} ({sid}): riders left behind earlier",
+                        [{"option": "board everyone waiting", "feasible": True,
+                          "reason": f"{len(passed)} of them were passed by {', '.join(by)} at {clock(when)} (missed lane change)",
+                          "estimate_s": None}],
+                        "board everyone waiting",
+                        outcome=f"{bus.boarded_here} boarded, {len(passed)} of them left by {', '.join(by)}",
+                        saw=f"{bus.boarded_here} riders boarding, {len(passed)} waiting since {', '.join(by)} passed the stop",
+                        effect=f"{len(passed) * BOARD_S:.0f} s more dwell here; those riders waited "
+                               f"{(t - when) / 60:.0f} min longer")
         if i == 0:
             self.departures.append((bus.trip["trip_id"], sid, self.gtfs_dep(bus, 0), t))
         if last:

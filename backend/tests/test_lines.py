@@ -168,6 +168,11 @@ class MissedStopTests(unittest.TestCase):
         self.assertEqual(x["stop"], "2540")
         nxt = [y for y in v["stops"] if y["trip"] == x["trip"] and y["arr"] > x["arr"]]
         self.assertTrue(nxt)                     # the trip continues from where the bus is
+        # The next bus at that stop picks up the riders it left, and says so.
+        later = next(d for d in r["decisions"] if "left behind" in d["trigger"] and "(2540)" in d["trigger"])
+        self.assertNotEqual(later["vehicle_id"], d["vehicle_id"])
+        self.assertIn(d["vehicle_id"], later["outcome"])
+        self.assertGreater(later["t"], d["t"])
 
 
 class NextRouteTests(unittest.TestCase):

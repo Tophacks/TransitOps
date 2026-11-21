@@ -110,6 +110,7 @@ class TransitSimulation:
     STAGING_RESERVE = 1           # buses that must stay in the yard
     STAGING_MAX_GAP = 15          # minutes from a pulled-forward release to the scheduled one after it
     STAGING_ON_REQUEST = True     # pre-stage only when a station the bus can reach in time asks for capacity
+    CAPACITY_SPARE_GAP_MIN = 20   # between regional spares sent for capacity (modelled)
     def __init__(
         self,
         buses,
@@ -137,6 +138,8 @@ class TransitSimulation:
         breakdown_vehicle=None,
         commands=(),
         horizon_min=None,
+        incidents=(),
+        capacity_spares=0,
     ):
         self.buses = buses
         # Connection holds at UW and Central: on with the adaptive controller.
@@ -168,6 +171,14 @@ class TransitSimulation:
         # Dispatcher orders (the Fleet panel), applied at their minute: part of the
         # run's inputs, so a seed and its commands replay exactly.
         self.commands = sorted((dict(c) for c in commands), key=lambda c: c["minute"])
+        # Incidents drawn from the seed before the run (incidents.py): the same list
+        # for both policies. Each records whether it applied in this run, and why not.
+        self.incidents = [dict(i) for i in incidents]
+        self.incident_log = []
+        # Regional spares the adaptive dispatcher may send when a station asks for
+        # capacity and the corridor has no bus left in its yard (0: never).
+        self.capacity_spares = int(capacity_spares)
+        self.capacity_spares_sent = []
         self.metrics = SimulationMetrics()
         self.events = []
         self.timeline = []
@@ -311,6 +322,8 @@ class TransitSimulation:
                 self.metrics.ion_transfers += riders
 
     def _scenario_events(self):
+        for inc in [i for i in self.incidents if i["minute"] == self.time]:
+            self._incident(inc)
         for c in [c for c in self.commands if c["minute"] == self.time]:
             self._command(c)
         if self.surge_minute is not None and self.time == self.surge_minute:
@@ -341,6 +354,45 @@ class TransitSimulation:
                 )
             else:
                 self.log("Emergency dispatch requested, but no bus is available", "emergency")
+
+    def _incident(self, inc):
+        t = self.time * 60.0
+        kind = inc["kind"]
+        applied, note = True, ""
+        if kind == "bus_breakdown" and inc.get("target") == "corridor":
+            bus = next((b for b in self.buses if b.bus_id == inc["vehicle"]), None)
+            ok = (bus is not None and bus.state != BusState.YARD and not getattr(bus, "at_station", False)
+                  and not getattr(bus, "out_of_service", False) and not getattr(bus, "deadhead", None))
+            if ok:
+                self.breakdown_vehicle = inc["vehicle"]
+                self._withdraw()
+                note = f"{inc['vehicle']} withdrawn on the corridor"
+            else:
+                applied = False
+                note = (f"{inc['vehicle']} was not on the road in this run at {self.time} min "
+                        f"({'not in this run' if bus is None else 'in the yard, at UW Station or already withdrawn'})")
+        elif kind == "bus_breakdown":
+            bus = self.lines.active_bus(block=inc["block"]) if self.lines else None
+            if bus is not None and bus.state != "layover":
+                self.lines.breakdown(t, bus.vehicle_id)
+                note = f"{bus.vehicle_id} (block {inc['block']}) withdrawn on route {bus.trip['route'] if bus.trip else '7'}"
+            else:
+                applied = False
+                note = f"block {inc['block']} had no bus on the road at {self.time} min in this run"
+        elif kind == "passenger_surge":
+            self._spawn_passengers(inc["stop"], inc["riders"])
+            note = f"{inc['riders']} riders arrive at once at {self.stops[inc['stop']].name}"
+        elif kind == "station_delay":
+            if self.lines is not None:
+                self.lines.add_block({"stop": inc["stop"], "from_s": t, "to_s": t + inc["minutes"] * 60.0})
+                note = f"berths at {self.lines.stops[inc['stop']]['name']} unavailable for {inc['minutes']} min"
+            else:
+                applied, note = False, "no scheduled line in this run"
+        elif kind == "train_fault":
+            note = f"an ION train arriving at {inc['terminal'].title()} from this minute is withdrawn (rail_ops.py)"
+        self.incident_log.append({**inc, "applied": applied, "note": note})
+        self.log(f"Incident {inc['id']}: {kind.replace('_', ' ')} · {note}", "disruption" if applied else "info",
+                 reason="Drawn from the run's seed before the run (incidents.py).")
 
     def _add_corridor_spare(self, plan, from_label):
         spare = Bus(plan["vehicle"])
@@ -650,6 +702,26 @@ class TransitSimulation:
                 )
                 if self.STAGING_PULLS_FORWARD and self.time % 10:
                     self.pulled_forward_slot = (self.time // 10 + 1) * 10
+
+        if self.intelligent and not yard and self.capacity_spares:
+            asked = [r for r in self.reports.values() if r["recommendation"] == "request extra capacity"]
+            if asked and any(self.last_recommendation.get(r["stop"]) == r["recommendation"] for r in asked):
+                self._regional_capacity(asked)
+
+    def _regional_capacity(self, asked):
+        """The corridor's yard is empty and a station asks for capacity: dispatch may
+        bring a ready spare from a garage (at most `capacity_spares` a run, one every
+        CAPACITY_SPARE_GAP_MIN minutes; modelled)."""
+        last = self.capacity_spares_sent[-1] if self.capacity_spares_sent else None
+        if len(self.capacity_spares_sent) >= self.capacity_spares or (last is not None and self.time - last < self.CAPACITY_SPARE_GAP_MIN):
+            return
+        r = sorted(asked, key=lambda x: x["stop"] != "UW")[0]
+        self.capacity_spares_sent.append(self.time)
+        plan = self.fleet.request_spare(self.time * 60.0, "1901", f"{self.stops[r['stop']].name} asks for extra capacity "
+                                        f"({r['reason']}) and the corridor's yard is empty", "the corridor run (extra capacity)",
+                                        decide=self.decisions.append)
+        if plan is not None:
+            self._add_corridor_spare(plan, f"the {self.fleet.garages[plan['garage']]['name']}")
 
     def _answer_capacity(self, asked, yard, spaced, spare, since, demand, threshold):
         """Dispatch's answer to a station's request for extra capacity: release a

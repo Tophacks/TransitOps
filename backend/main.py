@@ -46,6 +46,13 @@ class SimulationRequest(BaseModel):
     breakdown_vehicle: str | None = None
     # Dispatcher orders from the Fleet panel, applied at their minute.
     commands: list[Command] = Field(default_factory=list)
+    # Incidents during an ordinary run, drawn from `seed` before the run (incidents.py):
+    # the same list for both policies. Rates per hour may be overridden.
+    incidents: Literal["off", "natural"] = "off"
+    # Regional spares the adaptive dispatcher may send when a station asks for capacity
+    # and the corridor's yard is empty (0: never, the original behaviour).
+    capacity_spares: int = Field(default=0, ge=0, le=3)
+    incident_rates: dict[str, float] | None = None
     # Run length from 07:30. Scheduled lines need more than an hour for a round trip.
     duration_min: int = Field(default=60, ge=30, le=180)
     # Scheduled GRT lines run end to end (lines.json; build_lines.py).
@@ -175,9 +182,20 @@ def closures(payload: SimulationRequest):
     }]
 
 
+def incident_list(payload: SimulationRequest):
+    if payload.incidents != "natural":
+        return []
+    from incidents import RATES, generate
+    unknown = set(payload.incident_rates or {}) - set(RATES)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"unknown incident kinds: {', '.join(sorted(unknown))}")
+    return generate(payload.seed, payload.duration_min, payload.incident_rates, payload.fleet_size, tuple(payload.lines))
+
+
 def fault(payload: SimulationRequest):
     if payload.fault_terminal is None:
-        return None
+        drawn = next((i for i in incident_list(payload) if i["kind"] == "train_fault"), None)
+        return {"terminal": drawn["terminal"], "minute": drawn["minute"]} if drawn else None
     return {"terminal": payload.fault_terminal, "minute": payload.fault_minute}
 
 
@@ -192,6 +210,9 @@ def driver_errors(payload: SimulationRequest):
     """Driver errors: off, seeded (reproducible from error_seed), or a demo on B101's first UW visit."""
     e = payload.driver_error
     if e is None:
+        if payload.incidents == "natural":
+            from incidents import DRIVER_ERROR_RATE
+            return {"mode": "seeded", "rate": DRIVER_ERROR_RATE, "seed": payload.seed}
         return None
     if e == "seeded":
         return {"mode": "seeded", "rate": payload.driver_error_rate, "seed": payload.error_seed}
@@ -291,6 +312,8 @@ def bus_settings(payload, horizon_min=None):
         breakdown_vehicle=payload.breakdown_vehicle,
         commands=[c.model_dump() for c in payload.commands],
         horizon_min=horizon,
+        incidents=incident_list(payload),
+        capacity_spares=payload.capacity_spares,
     )
 
 
@@ -316,9 +339,10 @@ def simulate(payload: SimulationRequest):
     baseline = run_case(payload, intelligent=False)
     smart = run_case(payload, intelligent=True)
 
-    return simulation_result(payload.model_dump(), network_definition(), baseline, smart)
+    return simulation_result(payload.model_dump(), network_definition(), baseline, smart, incident_settings(payload))
 
-# Continuous runs: scheduled lines (and their riders) are prepared this far ahead of 07:30.
+
+# Scheduled lines and their riders are prepared this far ahead of 07:30.
 CONTINUOUS_HORIZON_MIN = 300
 
 # The browser worker runs the same standard-library-only engine. Serve an
@@ -327,7 +351,7 @@ WORKER_MODULES = ("continuous.py", "scenario_result.py", "simulation_engine.py",
                   "rail_ops.py", "yard_ops.py", "corridor.py", "uw_station.py", "road_traffic.py",
                   "drivers.py", "models.py", "garage_ops.py", "waterloo_corridor.json",
                   "ion_terminals.json", "ion_network.json", "ion_platforms.json", "uw_station.json",
-                  "uw_roads.json", "bus_garages.json", "lines.py", "fleet.py", "lines.json", "deadheads.json")
+                  "uw_roads.json", "bus_garages.json", "lines.py", "fleet.py", "lines.json", "deadheads.json", "incidents.py")
 
 
 @lru_cache(maxsize=1)
@@ -336,10 +360,16 @@ def worker_sources():
     return {name: (root / name).read_text(encoding="utf-8") for name in WORKER_MODULES}
 
 
+def incident_settings(payload):
+    return {"mode": payload.incidents, "seed": payload.seed, "list": incident_list(payload)}
+
+
 @app.post("/api/simulate/continuous")
 def continuous_settings(payload: SimulationRequest):
     return {
         "scenario": payload.model_dump(),
+        # Drawn once from the seed, before either policy acts: both runs get this list.
+        "incidents": incident_settings(payload),
         "network": network_definition(),
         "rail": rail_settings(payload),
         "bus": bus_settings(payload, CONTINUOUS_HORIZON_MIN),

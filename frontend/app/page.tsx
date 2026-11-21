@@ -13,6 +13,7 @@ import { IonTimetable, type TrainPose } from "../lib/motion/ion.ts";
 import { UW } from "../lib/motion/uwStation.ts";
 import { NETWORK, TERMINALS } from "../lib/motion/railScene.ts";
 import type {
+  RunReport as RunReportT,
   Controls,
   Network,
   Selection,
@@ -70,32 +71,37 @@ const DEFAULTS: Controls = {
   breakdown_target: "corridor",
   breakdown_vehicle: null,
   commands: [],
+  incidents: "natural",
+  capacity_spares: 1,
 };
 
+// Presets are fixed test scenarios: their own seed, no random incidents.
+const BASE: Controls = { ...DEFAULTS, incidents: "off", capacity_spares: 0 };
+
 const PRESETS: { id: string; title: string; description: string; controls: Controls }[] = [
-  { id: "normal", title: "Weekday baseline", description: "Regular corridor demand and traffic", controls: DEFAULTS },
-  { id: "rush", title: "Rush-hour pressure", description: "Heavy traffic and 1.8× walk-up demand", controls: { ...DEFAULTS, traffic_multiplier: 2.1, demand_multiplier: 1.8, fleet_size: 5 } },
-  { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...DEFAULTS, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
-  { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...DEFAULTS, breakdown_minute: 20, fleet_size: 4 } },
-  { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...DEFAULTS, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
-  { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...DEFAULTS, closure_track: "south" } },
-  { id: "train-fault", title: "ION train fault", description: "A train arriving at Conestoga from minute 15 is withdrawn to Dutton yard; dispatch can send a spare", controls: { ...DEFAULTS, fault_terminal: "conestoga" } },
-  { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...DEFAULTS, fault_terminal: "conestoga", yard_block_lead: "north" } },
-  { id: "uw-berth-blocked", title: "UW berth blocked", description: "An out-of-service bus holds platform 6's front berth (stop 1078) 10:00–58:00", controls: { ...DEFAULTS, uw_block: "berth" } },
-  { id: "uw-exit-blocked", title: "UW exit blocked", description: "The Phillip Street exit from UW Station is blocked 10:00–58:00", controls: { ...DEFAULTS, uw_block: "exit" } },
-  { id: "uw-heavy-cars", title: "UW exit, heavy traffic", description: "Heavy car traffic on Phillip St: buses wait for a real gap at the UW exit", controls: { ...DEFAULTS, uw_cars: "heavy" } },
-  { id: "bus-overshoot", title: "Bus overshoot, reverse granted", description: "B101 overshoots its platform 6 berth by 6 m; the path behind is clear, so Control lets it reverse", controls: { ...DEFAULTS, driver_error: "overshoot" } },
-  { id: "bus-overshoot-blocked", title: "Bus overshoot, reverse denied", description: "The same overshoot with a route 9 bus close behind: Control denies the reverse", controls: { ...DEFAULTS, driver_error: "overshoot_blocked" } },
-  { id: "bus-missed-berth", title: "Bus misses a berth", description: "B101 misses the turn into platform 4 and sets down at platform 6", controls: { ...DEFAULTS, driver_error: "missed_berth" } },
-  { id: "bus-wrong-turn", title: "Bus takes the wrong turn", description: "B101 turns left onto Phillip St; Control re-routes it to Waterloo Public Square", controls: { ...DEFAULTS, driver_error: "wrong_turn" } },
-  { id: "train-overshoot", title: "Train overshoot, reverse granted", description: "An ION train overshoots Research and Technology by 12 m and reverses", controls: { ...DEFAULTS, rail_overshoot_station: "Research and Technology Station" } },
-  { id: "train-overshoot-street", title: "Train overshoot on the street", description: "An ION train overshoots Waterloo Public Square (street-running): no reverse, it continues", controls: { ...DEFAULTS, rail_overshoot_station: "Waterloo Public Square Station" } },
-  { id: "route-7", title: "Route 7 end to end", description: "Every Route 7 King bus, Conestoga ↔ Fairway, for two hours: stops, layovers and the next trip", controls: { ...DEFAULTS, duration_min: 120 } },
-  { id: "route-7-station-delay", title: "Route 7: Central blocked", description: "Central Station's berths are blocked 07:50–08:10: the delay reaches later stops, connections and the next trip", controls: { ...DEFAULTS, duration_min: 120, line_block_stop: "1901", line_block_from_minute: 20, line_block_to_minute: 40 } },
-  { id: "route-7-missed-stop", title: "Route 7: driver misses a stop", description: "The first bus due at Grand River Hospital after 07:40 misses the lane change and passes it", controls: { ...DEFAULTS, duration_min: 120, driver_error: "missed_stop" } },
-  { id: "spare-corridor", title: "Breakdown, spare from a garage", description: "Three corridor buses; one breaks down for good at minute 15 and dispatch sends a ready spare from a garage", controls: { ...DEFAULTS, fleet_size: 3, breakdown_minute: 15, breakdown_kind: "out_of_service" } },
-  { id: "spare-route-7", title: "Route 7 breakdown, spare", description: "A Route 7 bus breaks down at minute 20; a spare takes over its block at the next station", controls: { ...DEFAULTS, duration_min: 120, breakdown_minute: 20, breakdown_kind: "out_of_service", breakdown_target: "line" } },
-  { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...DEFAULTS, platform_hold_terminal: "fairway" } },
+  { id: "normal", title: "Weekday baseline", description: "Regular corridor demand and traffic", controls: BASE },
+  { id: "rush", title: "Rush-hour pressure", description: "Heavy traffic and 1.8× walk-up demand", controls: { ...BASE, traffic_multiplier: 2.1, demand_multiplier: 1.8, fleet_size: 5 } },
+  { id: "event", title: "Campus event surge", description: "An extra 180 passengers arrive at UW at minute 20", controls: { ...BASE, surge_minute: 20, surge_passengers: 180, passenger_demand: 160, fleet_size: 5 } },
+  { id: "breakdown", title: "Bus breakdown", description: "The first active bus is held roadside at minute 20", controls: { ...BASE, breakdown_minute: 20, fleet_size: 4 } },
+  { id: "emergency", title: "Emergency dispatch", description: "A reserve bus is requested at minute 15", controls: { ...BASE, emergency_dispatch_minute: 15, passenger_demand: 185, fleet_size: 6 } },
+  { id: "track-closure", title: "ION track closure", description: "Southbound track closed Grand River Hospital – Central, 15:00–45:00", controls: { ...BASE, closure_track: "south" } },
+  { id: "train-fault", title: "ION train fault", description: "A train arriving at Conestoga from minute 15 is withdrawn to Dutton yard; dispatch can send a spare", controls: { ...BASE, fault_terminal: "conestoga" } },
+  { id: "yard-lead-blocked", title: "Train fault, yard lead blocked", description: "The same fault with the Dutton north lead blocked 10:00–50:00 (track work)", controls: { ...BASE, fault_terminal: "conestoga", yard_block_lead: "north" } },
+  { id: "uw-berth-blocked", title: "UW berth blocked", description: "An out-of-service bus holds platform 6's front berth (stop 1078) 10:00–58:00", controls: { ...BASE, uw_block: "berth" } },
+  { id: "uw-exit-blocked", title: "UW exit blocked", description: "The Phillip Street exit from UW Station is blocked 10:00–58:00", controls: { ...BASE, uw_block: "exit" } },
+  { id: "uw-heavy-cars", title: "UW exit, heavy traffic", description: "Heavy car traffic on Phillip St: buses wait for a real gap at the UW exit", controls: { ...BASE, uw_cars: "heavy" } },
+  { id: "bus-overshoot", title: "Bus overshoot, reverse granted", description: "B101 overshoots its platform 6 berth by 6 m; the path behind is clear, so Control lets it reverse", controls: { ...BASE, driver_error: "overshoot" } },
+  { id: "bus-overshoot-blocked", title: "Bus overshoot, reverse denied", description: "The same overshoot with a route 9 bus close behind: Control denies the reverse", controls: { ...BASE, driver_error: "overshoot_blocked" } },
+  { id: "bus-missed-berth", title: "Bus misses a berth", description: "B101 misses the turn into platform 4 and sets down at platform 6", controls: { ...BASE, driver_error: "missed_berth" } },
+  { id: "bus-wrong-turn", title: "Bus takes the wrong turn", description: "B101 turns left onto Phillip St; Control re-routes it to Waterloo Public Square", controls: { ...BASE, driver_error: "wrong_turn" } },
+  { id: "train-overshoot", title: "Train overshoot, reverse granted", description: "An ION train overshoots Research and Technology by 12 m and reverses", controls: { ...BASE, rail_overshoot_station: "Research and Technology Station" } },
+  { id: "train-overshoot-street", title: "Train overshoot on the street", description: "An ION train overshoots Waterloo Public Square (street-running): no reverse, it continues", controls: { ...BASE, rail_overshoot_station: "Waterloo Public Square Station" } },
+  { id: "route-7", title: "Route 7 end to end", description: "Every Route 7 King bus, Conestoga ↔ Fairway, for two hours: stops, layovers and the next trip", controls: { ...BASE, duration_min: 120 } },
+  { id: "route-7-station-delay", title: "Route 7: Central blocked", description: "Central Station's berths are blocked 07:50–08:10: the delay reaches later stops, connections and the next trip", controls: { ...BASE, duration_min: 120, line_block_stop: "1901", line_block_from_minute: 20, line_block_to_minute: 40 } },
+  { id: "route-7-missed-stop", title: "Route 7: driver misses a stop", description: "The first bus due at Grand River Hospital after 07:40 misses the lane change and passes it", controls: { ...BASE, duration_min: 120, driver_error: "missed_stop" } },
+  { id: "spare-corridor", title: "Breakdown, spare from a garage", description: "Three corridor buses; one breaks down for good at minute 15 and dispatch sends a ready spare from a garage", controls: { ...BASE, fleet_size: 3, breakdown_minute: 15, breakdown_kind: "out_of_service" } },
+  { id: "spare-route-7", title: "Route 7 breakdown, spare", description: "A Route 7 bus breaks down at minute 20; a spare takes over its block at the next station", controls: { ...BASE, duration_min: 120, breakdown_minute: 20, breakdown_kind: "out_of_service", breakdown_target: "line" } },
+  { id: "platform-hold", title: "ION platform hold", description: "A train is held 12 min at Fairway platform 2 from minute 20", controls: { ...BASE, platform_hold_terminal: "fairway" } },
 ];
 
 const STOP_NAMES: Record<string, string> = {
@@ -283,6 +289,15 @@ export default function Home() {
   const [selected, setSelected] = useState<Selection>(null);
   // The fleet vehicle picked in the Fleet panel or tapped on the map.
   const [fleetPick, setFleetPick] = useState<string | null>(null);
+  // An ordinary run draws a fresh seed; a preset or a replay keeps its seed.
+  const [freshSeed, setFreshSeed] = useState(true);
+  // ?fixed=1: the original fixed scenario (seed 17, no random incidents), for checks that compare runs.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("fixed") === "1") {
+      setFreshSeed(false);
+      setControls((c) => ({ ...c, incidents: "off", capacity_spares: 0 }));
+    }
+  }, []);
   const [mapView, setMapView] = useState<"geographic" | "schematic">("geographic");
   const [liveMap, setLiveMap] = useState(true);
   const sumo = useSumoStream();
@@ -339,10 +354,17 @@ export default function Home() {
     setControls((current) => ({ ...current, [key]: value }));
   }
 
+  function scenarioForRun(override?: Controls) {
+    if (override || !freshSeed) return override ?? controls;
+    const body = { ...controls, seed: 1 + Math.floor(Math.random() * 999_999), commands: [] };
+    setControls(body);
+    return body;
+  }
+
   async function runSimulation(event?: FormEvent, override?: Controls, resumeAt?: number) {
     event?.preventDefault();
     stopContinuous();
-    const body = override ?? controls;
+    const body = scenarioForRun(override);
     setLoading(true);
     setError("");
     playback.pause();
@@ -387,7 +409,7 @@ export default function Home() {
     playback.pause();
   }
 
-  function startContinuous() {
+  function startContinuous(override?: Controls) {
     stopContinuous();
     setLoading(true);
     setError("");
@@ -431,7 +453,7 @@ export default function Home() {
         setData(result);
         if (keepPlaying.current && !playback.clock.playing) playback.play();
       };
-      active.postMessage({ type: "start", controls });
+      active.postMessage({ type: "start", controls: scenarioForRun(override) });
     } catch {
       fail("Could not start the continuous simulation worker.");
     }
@@ -529,6 +551,8 @@ export default function Home() {
             garageVehicles={data?.smart.garages?.vehicles ?? []}
             lineVehicles={data?.smart.lines?.vehicles ?? []}
             fleetVehicles={data?.smart.fleet?.vehicles ?? []}
+            seed={data?.scenario.seed ?? null}
+            onRequestRun={() => void runSimulation()}
             focusVehicle={fleetPick}
             onFocusVehicle={setFleetPick}
             seconds={seconds}
@@ -630,9 +654,27 @@ export default function Home() {
       <section className="scenarioPlayground" aria-label="Simulation playground">
         <div className="panelHeading"><div><p className="eyebrow">EXPERIMENT LAB</p><h2>Scenario playground</h2>
           <p>Use the same seed for a fair baseline-versus-adaptive comparison. These outcomes come from the Python corridor model, not real GRT telemetry.</p>
-        </div><span>{continuous ? "Continuous run · last 60 minutes replayable" : "60 simulated minutes"}</span></div>
+        </div><span>{continuous ? "Continuous run · last 60 minutes replayable" : `${controls.duration_min ?? 60} simulated minutes`}</span></div>
+        <div className="seedBar" role="group" aria-label="Seed">
+          <label><span>Seed</span>
+            <input aria-label="Seed" type="number" min="0" max="1000000" value={controls.seed}
+              onChange={(event) => { update("seed", Number(event.target.value)); setFreshSeed(false); }} /></label>
+          <label className="seedFresh"><input type="checkbox" checked={freshSeed} onChange={(event) => setFreshSeed(event.target.checked)} />
+            <span>New seed for each run</span></label>
+          <label><span>Incidents</span>
+            <select aria-label="Incidents" value={controls.incidents ?? "off"} onChange={(event) => update("incidents", event.target.value as "off" | "natural")}>
+              <option value="natural">Happen naturally (from the seed)</option><option value="off">Off (scenario only)</option>
+            </select></label>
+          <button type="button" disabled={loading || !data} onClick={() => {
+            if (!data) return;
+            if (continuous) startContinuous(data.scenario);
+            else void runSimulation(undefined, { ...controls, seed: data.scenario.seed });
+          }}>
+            Replay seed {data?.scenario.seed ?? controls.seed}{(controls.commands?.length ?? 0) > 0 ? ` with ${controls.commands!.length} order${controls.commands!.length > 1 ? "s" : ""}` : ""}
+          </button>
+        </div>
         <div className="scenarioPresets">{PRESETS.map((preset) => (
-          <button type="button" key={preset.id} onClick={() => setControls({ ...preset.controls })}>
+          <button type="button" key={preset.id} onClick={() => { setControls({ ...preset.controls }); setFreshSeed(false); }}>
             <strong>{preset.title}</strong><small>{preset.description}</small>
           </button>
         ))}</div>
@@ -642,6 +684,31 @@ export default function Home() {
           <div><span>Completed trips (baseline → adaptive)</span><strong>{baseline?.completed_trips ?? "—"} → {smart?.completed_trips ?? "—"}</strong></div>
           <div><span>Average boarding wait change</span><strong>{data.impact.average_wait_reduction.toFixed(1)} min</strong></div>
           <div><span>ION transfer wait (baseline → adaptive)</span><strong>{baseline?.average_transfer_wait.toFixed(1)} → {smart?.average_transfer_wait.toFixed(1)} min</strong></div>
+        </div>}
+        {data?.smart.report && <div className="runReport" aria-label="Run report">
+          <h3>Run report · seed {data.scenario.seed}{data.incidents?.mode === "natural" ? " · natural incidents" : ""}</h3>
+          <table>
+            <thead><tr><th></th><th>Holds only</th><th>Adaptive</th></tr></thead>
+            <tbody>
+              {([
+                ["Route 7 trips covered", (r: RunReportT) => `${r.trips_covered}/${r.trips_scheduled}`],
+                ["Departure delay avg / max", (r: RunReportT) => `${Math.round(r.departure_delay_avg_s)} s / ${Math.round(r.departure_delay_max_s)} s`],
+                ["Missed stops", (r: RunReportT) => String(r.missed_stops)],
+                ["ION transfers boarded", (r: RunReportT) => String(r.transfers_boarded)],
+                ["Riders still waiting", (r: RunReportT) => String(r.riders_still_waiting)],
+                ["Breakdowns", (r: RunReportT) => String(r.breakdowns)],
+              ] as [string, (r: RunReportT) => string][]).map(([label, f]) => (
+                <tr key={label}><th>{label}</th><td>{data.baseline.report ? f(data.baseline.report) : "—"}</td><td>{f(data.smart.report!)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          {(data.smart.incidents ?? []).length > 0 && <ul className="incidentList">
+            {data.smart.incidents!.map((inc) => (
+              <li key={inc.id} className={inc.applied ? "" : "notApplied"}>
+                <strong>{inc.id} · {formatClock(inc.minute * 60)} · {inc.kind.replace("_", " ")}</strong> {inc.note}
+              </li>
+            ))}
+          </ul>}
         </div>}
         <div className="scenarioInstructions">Selecting a preset sets controls only. Press <strong>Apply &amp; restart</strong> to run both dispatch policies under matching conditions. Positive wait reduction means the adaptive controller improved the result.</div>
       </section>
@@ -889,7 +956,7 @@ export default function Home() {
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>
           <button type="button" className="runButton" disabled={loading}
-            onClick={continuousActive ? stopContinuous : startContinuous}>
+            onClick={continuousActive ? stopContinuous : () => startContinuous()}>
             {continuousActive ? "Stop continuous run" : "Run continuously"}
           </button>
           {continuous && <small>Runs in this tab. The bundled GRT station and garage timetable covers the first hour.</small>}

@@ -15,6 +15,7 @@ class ContinuousRun:
     def __init__(self, settings):
         self.scenario = settings["scenario"]
         self.network = settings["network"]
+        self.incidents = settings["incidents"]
         self.demand = settings["rail"]["transfer_demand"]
         self.cases = [
             TransitSimulation(
@@ -72,7 +73,7 @@ class ContinuousRun:
             results.append(case_result(sim, sim.metrics_at(end * 60), self.scenario["uw_cars"],
                                        garages, [d for d in garages.decisions if d["t"] >= start * 60]))
         self.minute = end
-        return simulation_result(self.scenario, self.network, *results)
+        return simulation_result(self.scenario, self.network, *results, incidents=self.incidents)
 
     @staticmethod
     def prune(sim, start):

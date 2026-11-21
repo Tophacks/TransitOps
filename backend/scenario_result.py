@@ -27,6 +27,7 @@ def metrics_to_dict(metrics):
 def case_result(sim, metrics, car_demand, garages, garage_decisions=()):
     plan = sim.ion
     start = sim.timeline[0]["minute"] * 60.0 if plan.continuous else None
+    lines = line_result(sim)
     return {
         "metrics": metrics_to_dict(metrics),
         "events": sim.events,
@@ -45,7 +46,27 @@ def case_result(sim, metrics, car_demand, garages, garage_decisions=()):
         "fleet": ({"summary": sim.fleet.summary(), "vehicles": sim.fleet.vehicles_out(ion_vehicle_ids(plan)),
                    "events": sim.fleet.events} if getattr(sim, "fleet", None) else None),
         # Scheduled GRT lines end to end: each bus's trajectory, stops served and metrics (lines.py)
-        "lines": line_result(sim),
+        "lines": lines,
+        "incidents": sim.incident_log,
+        "report": run_report(sim, metrics),
+    }
+
+
+def run_report(sim, metrics):
+    """Trips covered, departure delays, missed stops, transfers boarded and riders still
+    waiting, over the corridor and the scheduled lines."""
+    lm = sim.lines.metrics if sim.lines else {}
+    return {
+        "trips_covered": lm.get("trips_covered", 0), "trips_scheduled": lm.get("trips_scheduled", 0),
+        "corridor_riders_delivered": metrics.completed_trips,
+        "departure_delay_avg_s": lm.get("departure_delay_avg_s", 0.0),
+        "departure_delay_max_s": lm.get("departure_delay_max_s", 0.0),
+        "missed_stops": lm.get("missed_stops", 0) + getattr(metrics, "missed_stops", 0),
+        "transfers_boarded": metrics.ion_transfers_boarded + lm.get("ion_transfers_boarded", 0),
+        "connections_missed": lm.get("connections_missed", 0),
+        "riders_still_waiting": metrics.passengers_left_waiting + lm.get("riders_waiting", 0),
+        "incidents_applied": sum(1 for i in sim.incident_log if i["applied"]),
+        "breakdowns": getattr(metrics, "breakdowns", 0) + lm.get("breakdowns", 0),
     }
 
 
@@ -61,7 +82,7 @@ def line_result(sim):
     return {"network": lines.network(), "vehicles": lines.plans(), "metrics": lines.metrics, "block": lines.block}
 
 
-def simulation_result(scenario, network, baseline, smart):
+def simulation_result(scenario, network, baseline, smart, incidents):
     impact = {
         "average_wait_reduction": round(
             baseline["metrics"]["average_wait"] - smart["metrics"]["average_wait"], 2
@@ -80,6 +101,7 @@ def simulation_result(scenario, network, baseline, smart):
 
     return {
         "scenario": scenario,
+        "incidents": incidents,
         "network": network,
         # The map plays the adaptive run; each case also carries its own ION run.
         "ion": smart["ion"],

@@ -21,7 +21,6 @@ import { LiveTracker, type LivePing, type LivePose } from "../../lib/motion/live
 import { encodePath, offsetLonLat, type PathPoint } from "../../lib/motion/path.ts";
 import { corridor } from "../../lib/motion/scene.ts";
 import { runningRails } from "../../lib/motion/railGeometry.ts";
-import FairwayDemo from "./FairwayDemo";
 import DecisionInspector from "./DecisionInspector";
 import { NETWORK, TERMINALS } from "../../lib/motion/railScene.ts";
 import { lerpPath as lerpAlong, type LonLat } from "../../lib/motion/path.ts";
@@ -62,6 +61,10 @@ type Props = {
   /** a fleet vehicle picked in the Fleet panel or tapped on the map */
   focusVehicle?: string | null;
   onFocusVehicle?: (id: string | null) => void;
+  /** start a simulation run when the map asks for one (the Fairway button with nothing running) */
+  onRequestRun?: () => void;
+  /** the run's seed, shown on the simulation badge */
+  seed?: number | null;
 };
 
 type Camera = { center: [number, number]; zoom: number; pitch: number; bearing: number };
@@ -776,6 +779,8 @@ export default function GeospatialMap({
   fleetVehicles = [],
   focusVehicle = null,
   onFocusVehicle,
+  onRequestRun,
+  seed = null,
 }: Props) {
   const lineRef = useRef<LineVehicle[]>([]);
   lineRef.current = lineVehicles;
@@ -833,10 +838,8 @@ export default function GeospatialMap({
     if (focusVehicle) setSelectedTrain(focusVehicle);
   }, [focusVehicle]);
   const [follow, setFollow] = useState(false);
+  const cameraAfterMode = useRef<((width: number) => Camera) | null>(null);
   const [depotSelected, setDepotSelected] = useState(false);
-  // Fairway terminal replay (modelled), shown instead of live or simulated vehicles.
-  const [demo, setDemo] = useState(false);
-  const exitDemo = useCallback(() => setDemo(false), []);
   const fleet = useGrtFleet(live);
   const trackerRef = useRef(new LiveTracker());
   const shapeCache = useRef(new Map<string, PathPoint[]>());
@@ -1037,7 +1040,10 @@ export default function GeospatialMap({
       if (map.getLayer(layer)) map.setLayoutProperty(layer, "visibility", live ? "visible" : "none");
     }
     map.resize();
-    if (!live) map.easeTo({ ...campusCamera(map.getContainer().clientWidth), padding: NO_PAD, duration: 1600 });
+    // Entering the simulation: the campus, unless a button asked for somewhere else (Fairway).
+    const target = cameraAfterMode.current ?? campusCamera;
+    cameraAfterMode.current = null;
+    if (!live) map.easeTo({ ...target(map.getContainer().clientWidth), padding: NO_PAD, duration: 1600 });
     else if (map.getZoom() > 16) map.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA, padding: NO_PAD, duration: 1200 });
   }, [live, ready]);
 
@@ -1082,7 +1088,7 @@ export default function GeospatialMap({
   // Animation loop: every frame derives the scene from the playback clock.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !ready || live || sumoSnapshot || demo) return;
+    if (!map || !ready || live || sumoSnapshot) return;
     let frame = 0;
     let lastKey = "";
     let lastBerthSecond = -1;
@@ -1189,7 +1195,7 @@ export default function GeospatialMap({
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [clock, demo, live, ready, sumoSnapshot, timeline]);
+  }, [clock, live, ready, sumoSnapshot, timeline]);
 
   // Each poll of the live feed: fetch any route shapes we lack, then hand the
   // pings to the tracker, which glides vehicles along those shapes.
@@ -1312,16 +1318,15 @@ export default function GeospatialMap({
 
   // Night: darker buildings, and lit windows, headlights and tail-lights on
   // every vehicle body (lighting.night is read when bodies are built).
-  // The Fairway replay is set at dusk: mid-tone buildings, lights on.
   useEffect(() => {
     lighting.night = night;
     const map = mapRef.current;
     if (!map || !ready || !map.getLayer("corridor-buildings")) return;
-    map.setPaintProperty("corridor-buildings", "fill-extrusion-color", demo ? "#3a4352" : night ? "#252f3b" : "#445363");
+    map.setPaintProperty("corridor-buildings", "fill-extrusion-color", night ? "#252f3b" : "#445363");
     if (map.getLayer("background")) {
-      map.setPaintProperty("background", "background-color", demo ? "#121722" : night ? "#05080c" : "rgb(12,12,12)");
+      map.setPaintProperty("background", "background-color", night ? "#05080c" : "rgb(12,12,12)");
     }
-  }, [demo, night, ready]);
+  }, [night, ready]);
 
   // The run's closures: the closed stretch and the diversion path.
   useEffect(() => {
@@ -1330,10 +1335,21 @@ export default function GeospatialMap({
     setData(map, "ion-closure", closureFeatures(ionSchedule));
   }, [ionSchedule, ready]);
 
-  function startDemo() {
+  /** Fairway: the running simulation at Fairway Station (ION terminal, Route 7 terminus).
+   * With nothing running yet, it starts a run. */
+  function openFairway() {
     clearDetails();
-    popupRef.current?.remove();
-    setDemo(true);
+    const t = TERMINALS.terminals.fairway;
+    const route = t.routes[`arrive:${t.preference[0]}`];
+    const [lon, lat] = lerpAlong(route.path, route.switch_m + 45);
+    const camera = (width: number): Camera => ({ center: [lon, lat], zoom: width < 640 ? 16.4 : 17.1, pitch: 50, bearing: -13 });
+    if (!callbacks.current.timeline.length) onRequestRun?.();
+    if (live) {
+      cameraAfterMode.current = camera;      // the mode switch frames Fairway
+      onModeChange(false);
+    } else {
+      goTo(camera);
+    }
   }
 
   function toggleTilt() {
@@ -1415,7 +1431,7 @@ export default function GeospatialMap({
   const showPopup = Boolean(depotSelected || focus || simPose || trainPose);
 
   return (
-    <section className={demo ? "geoMapShell fairwayActive" : "geoMapShell"} aria-label="Waterloo corridor geographic basemap">
+    <section className="geoMapShell" aria-label="Waterloo corridor geographic basemap">
       <div ref={host} className="geoMapHost" role="region" aria-label="Interactive Waterloo corridor map" />
       <div className="geoMapOverlay">
         <div className="geoMapControls" role="group" aria-label="Map layers">
@@ -1432,26 +1448,18 @@ export default function GeospatialMap({
             selectDepot();
           }}>ION depot</button>
           <button type="button" disabled={!ready} onClick={() => mapRef.current?.easeTo({ ...REGION_CAMERA, ...STREET_CAMERA, padding: NO_PAD })}>Region</button>
-          <button type="button" aria-pressed={demo} disabled={!ready} onClick={() => (demo ? exitDemo() : startDemo())}>Fairway</button>
-          <button type="button" aria-pressed={live && !demo} onClick={() => {
+          <button type="button" disabled={!ready} onClick={openFairway}>Fairway</button>
+          <button type="button" aria-pressed={live} onClick={() => {
             clearDetails();
-            setDemo(false);
             onModeChange(true);
-          }}>Live fleet</button>
-          <button type="button" aria-pressed={!live && !demo} onClick={() => {
+          }}>Live GPS</button>
+          <button type="button" aria-pressed={!live} onClick={() => {
             clearDetails();
-            setDemo(false);
             onModeChange(false);
           }}>Simulation</button>
         </div>
         {failed ? <span role="status">Basemap unavailable. Switch to Schematic to view the simulation.</span>
           : !ready ? <span role="status">Loading Waterloo map…</span>
-          : demo ? (
-            <div className="simBadge fairwayModeBadge" role="status">
-              <strong><i aria-hidden="true" />Fairway replay · modeled · not live</strong>
-              <span>ION turnback and route 7 layover on the real Fairway trackwork and bus lane</span>
-            </div>
-          )
           : live ? (
             <div className="geoFeedStatus" role="status">
               <span>Live GPS · GRT public feed, gliding along GTFS route shapes between pings</span>
@@ -1470,7 +1478,7 @@ export default function GeospatialMap({
             </>
           ) : (
             <div className="simBadge" role="status">
-              <strong><i aria-hidden="true" />Simulated · not live vehicles</strong>
+              <strong><i aria-hidden="true" />Simulated{seed !== null ? ` · seed ${seed}` : ""} · not live GPS</strong>
               <span>Python simulated bus positions, moving along GRT street paths</span>
               <span>ION trains from the same Python simulator, on the real track</span>
               <span>Background cars and ION crossing gates are simulated too{night ? " · night lighting is illustrative" : ""}</span>
@@ -1478,8 +1486,7 @@ export default function GeospatialMap({
             </div>
           )}
       </div>
-      {demo && ready && mapRef.current && <FairwayDemo map={mapRef.current} onExit={exitDemo} />}
-      {!demo && simulating && ionSchedule?.decisions && (
+      {simulating && ionSchedule?.decisions && (
         <DecisionInspector
           decisions={allDecisions}
           now={seconds}
@@ -1489,7 +1496,7 @@ export default function GeospatialMap({
           metrics={ionBaselineMetrics ? { adaptive: ionSchedule.metrics, baseline: ionBaselineMetrics } : null}
         />
       )}
-      {popupContent && showPopup && !demo && createPortal(
+      {popupContent && showPopup && createPortal(
         <aside className="geoVehicleCard" aria-label={depotSelected ? "ION depot details" : "Selected vehicle details"}>
           <button type="button" aria-label={depotSelected ? "Close depot details" : "Close vehicle details"} onClick={clearDetails}>×</button>
           {depotSelected ? (

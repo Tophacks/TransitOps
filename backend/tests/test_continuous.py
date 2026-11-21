@@ -2,17 +2,14 @@ import json
 import unittest
 
 from continuous import ContinuousRun, REPLAY_MINUTES
-from main import SimulationRequest, continuous_settings, network_definition, rail_settings, bus_settings
+from main import SimulationRequest, continuous_settings
 
 
 class ContinuousRunTests(unittest.TestCase):
     def test_run_advances_across_the_hour_without_restarting(self):
         payload = SimulationRequest(fleet_size=3, train_delay=4, passenger_demand=110, surge_minute=20,
                                     surge_passengers=30)
-        run = ContinuousRun({
-            "scenario": payload.model_dump(), "network": network_definition(),
-            "rail": rail_settings(payload), "bus": bus_settings(payload),
-        })
+        run = ContinuousRun(continuous_settings(payload))
         while run.minute < 60:
             result = json.loads(run.next_json())["smart"]
 
@@ -50,6 +47,21 @@ class ContinuousRunTests(unittest.TestCase):
         cut = (run.minute - REPLAY_MINUTES) * 60
         self.assertTrue(all(seg[1] >= cut for v in lines["vehicles"] for seg in v["segments"]))
         self.assertIsNotNone(result["fleet"])
+
+    def test_natural_incidents_reach_both_continuous_policies(self):
+        payload = SimulationRequest(seed=11, duration_min=120, incidents="natural")
+        settings = continuous_settings(payload)
+        run = ContinuousRun(settings)
+        self.assertTrue(settings["incidents"]["list"])
+        self.assertEqual(run.cases[0].incidents, run.cases[1].incidents)
+        self.assertEqual(run.cases[0].incidents, settings["incidents"]["list"])
+
+        while run.minute < 25:
+            output = json.loads(run.next_json())
+        self.assertEqual(output["incidents"], settings["incidents"])
+        for case in ("baseline", "smart"):
+            self.assertTrue(output[case]["incidents"])
+            self.assertIn("incidents_applied", output[case]["report"])
 
     def test_worker_bundle_contains_the_engine_and_geometry(self):
         settings = continuous_settings(SimulationRequest())

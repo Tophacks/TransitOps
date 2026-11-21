@@ -130,36 +130,6 @@ Current output: 67 checks pass. It also compares the snapshot with the
 Region's current static feeds (`--official-zip`, `--official-ion-zip`); they
 match.
 
-## Fairway terminal (`build_fairway.py`)
-
-`build_fairway.py` produces `frontend/lib/geo/fairway.json` for the Fairway
-replay on the map (a modelled ION turnback and GRT bus layover):
-
-```bash
-python3 -I tools/waterloo_geometry/build_fairway.py /tmp/gtfs          # rebuild
-python3 -I tools/waterloo_geometry/build_fairway.py /tmp/gtfs --check  # CI
-```
-
-| Data | Source | Used for |
-| --- | --- | --- |
-| `sources/fairway-osm.json`: ways and nodes of the terminal, fetched from the OpenStreetMap API on 2026-11-19 | © OpenStreetMap contributors, ODbL 1.0 | Running tracks, scissors crossover (ways 754590785 and 754590786), switches, diamond, platform tracks and buffer stops; the one-way bus lane and its service-road exit |
-| GRT GTFS (same snapshot as above) | Region of Waterloo Open Data | Route 7's bay (3490), its arrival and next-trip headsigns, layover lengths and blocks that end at Fairway |
-| GRT Fairway Station map (May 2026) | grt.ca station maps | Cross-check of bay assignments (route 7 at 3490) |
-| CartoMetro Kitchener-Waterloo track diagram v1.1 | cartometro.com (reproduction prohibited, nothing shipped) | Cross-check that the crossover is a scissors west of two stub platforms |
-
-The builder joins the track ways into edges that meet at the OSM switch and
-buffer-stop nodes and fails if a switch does not have three legs, if the two
-crossover ways do not cross at the mapped diamond, if a move uses two edges
-that do not share a node, or if the bus lane is driven against its mapped
-one-way direction. The renderer draws exactly these edges, and the train moves
-along chains of them.
-
-Modelled, not observed: which platform a train uses and whether it crosses on
-arrival or departure (the replay arrives straight into platform 1 and leaves
-through crossover 754590785, consistent with the GTFS shapes but not verified
-against operations), dwell and cab-change times, and the layover length (the
-GTFS median is 10 minutes; the replay shortens it).
-
 ## ION terminals (`build_terminals.py`)
 
 `build_terminals.py` produces `backend/ion_terminals.json` and an identical
