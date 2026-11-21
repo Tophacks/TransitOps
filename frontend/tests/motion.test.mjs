@@ -216,6 +216,8 @@ test("a dispatched spare follows its road move, waits, then owns the handover in
   assert.ok(metres(at(15).at(-1).centre, at(20).at(-1).centre) > 100);
   assert.deepEqual(at(20).at(-1).centre, at(29.5).at(-1).centre);
   assert.deepEqual(at(29.99).at(-1).centre, at(30)[0].centre);
+  const legacy = { ...spare, trace: [[21, 0, 0], [48, 0, 0]] };
+  assert.deepEqual(linePoses([legacy], 30), at(30));
   assert.deepEqual(at(30).map((b) => [b.id, b.pattern]), [["spare", pattern.id]]);
   assert.deepEqual(sparePoses([{ id: "spare", deadhead }], 15, new Set(["spare"])), []);
 });

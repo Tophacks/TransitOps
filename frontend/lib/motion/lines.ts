@@ -139,7 +139,16 @@ function afterTime(trace: LineVehicle["trace"], t: number) {
 
 export function traceAt(trace: LineVehicle["trace"], t: number, start = -Infinity, end = Infinity) {
   const first = afterTime(trace, start), last = afterTime(trace, end) - 1;
-  if (last < first || t < trace[first][0] - 1 || t > trace[last][0] + 0.5) return null;
+  if (last < first || t > trace[last][0] + 0.5) return null;
+  if (t < trace[first][0] - 1) {
+    // Older encoders could compress a stationary relief across its handover.
+    // Only hold the incoming sample when both sides confirm the same standstill.
+    const prior = trace[first - 1], incoming = trace[first];
+    if (t >= start && prior && prior[2] === 0 && incoming[2] === 0 && prior[1] === incoming[1]) {
+      return { s: incoming[1], v: 0 };
+    }
+    return null;
+  }
   const hi = Math.min(last, Math.max(first, afterTime(trace, t)));
   const lo = Math.max(first, hi - 1);
   const a = trace[lo], b = trace[hi];
