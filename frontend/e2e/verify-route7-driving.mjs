@@ -100,8 +100,11 @@ async function prove(page, name, label, body, decision, stopId, camera) {
   // Doors only after a full stop.
   if (visit) {
     const atDoors = drawn.filter((x) => x.t >= visit.doors - 1 && x.t <= visit.doors + 0.5);
-    check(`${name} ${label}: stationary before the doors open (${(visit.doors - visit.arr).toFixed(1)} s after stopping)`,
-      atDoors.length > 0 && atDoors.every((x) => x.bus.speed < 0.01), `${atDoors.length} frames`);
+    // How long it had been stationary when the doors opened (a trip's first stop: since its layover).
+    const lastMoving = drawn.filter((x) => x.t < visit.doors && x.bus.speed >= 0.01).at(-1);
+    const still = lastMoving ? `${(visit.doors - lastMoving.t).toFixed(1)} s` : `since before ${drawn[0].t.toFixed(0)} s (layover)`;
+    check(`${name} ${label}: stationary before the doors open`,
+      atDoors.length > 0 && atDoors.every((x) => x.bus.speed < 0.01), `stationary for ${still}; ${atDoors.length} frames around the doors`);
   }
   // The wait: stationary while cars pass close by; then it rolls out.
   const during = drawn.filter((x) => x.t > decision.t + 1 && x.t < decision.t + wait - 1);
