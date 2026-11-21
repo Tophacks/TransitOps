@@ -177,3 +177,45 @@ test("ION rails stay centred at standard gauge through a bend", () => {
     assert.ok(Math.abs((a[1] + b[1]) / 2 - lat) < 1e-10);
   }
 });
+
+import { linePoses, PATTERNS, sparePoses } from "../lib/motion/lines.ts";
+
+for (const [incoming, outgoing, boundary] of [["7-1-2", "7-0-2", 643], ["7-0-2", "7-1-2", 2217]]) {
+  test(`Route 7 stays at the terminal when changing from ${outgoing} to ${incoming}`, () => {
+    const end = PATTERNS[outgoing].path.at(-1), start = PATTERNS[incoming].path[0];
+    const bus = { vehicle_id: "vehicle", stops: [], trips: [
+      [0, boundary, "old", outgoing, "arrival", "7"], [boundary, null, "new", incoming, "departure", "7"],
+    ], trace: [[boundary - 10, end[2], 0], [boundary, end[2], 0], [boundary + 1, 0, 0],
+      [boundary + 20, 0, 0], [boundary + 21, 0.4, 0.8]] };
+    for (const t of [boundary + 20, boundary, boundary - 0.01, boundary + 0.01, boundary + 0.5]) {
+      const poses = linePoses([bus], t);
+      assert.equal(poses.length, 1);
+      assert.equal(poses[0].pattern, t < boundary ? outgoing : incoming);
+      assert.equal(poses[0].speed, 0);
+      assert.ok(metres(poses[0].centre, start) < 0.01);
+    }
+    const pose = linePoses([bus], boundary)[0];
+    for (const trace of [bus.trace.slice(0, 2), bus.trace.slice(1)]) {
+      assert.deepEqual(linePoses([{ ...bus, trace }], boundary), [pose], "checkpoint at the turn");
+    }
+    const departed = linePoses([bus], boundary + 20.5)[0];
+    assert.ok(departed.speed > 0 && metres(departed.centre, start) < 1);
+    const delayed = { ...bus, trips: [bus.trips[0], [boundary + 12, ...bus.trips[1].slice(1)]] };
+    assert.ok(metres(linePoses([delayed], boundary + 6)[0].centre, start) < 0.01);
+  });
+}
+
+test("a dispatched spare follows its road move, waits, then owns the handover instant", () => {
+  const pattern = PATTERNS["7-1-2"];
+  const deadhead = { key: "garage:northfield|stop:1130", t0: 10, t1: 20, path: [[-80.53, 43.49, 0, 0], [...pattern.path[0].slice(0, 2), 900, 10]] };
+  const spare = { vehicle_id: "spare", deadhead, trace: [[21, 0, 0], [29, 0, 0], [31, 0, 0]],
+    trips: [[30, null, "relief", pattern.id, pattern.headsign, "7"]], stops: [] };
+  const old = { vehicle_id: "relieved", trips: [[0, 30, "relief", pattern.id, pattern.headsign, "7"]],
+    trace: [[1, 0, 0], [30, 0, 0]], stops: [] };
+  const at = (t) => linePoses([old, spare], t);
+  assert.ok(metres(at(15).at(-1).centre, at(20).at(-1).centre) > 100);
+  assert.deepEqual(at(20).at(-1).centre, at(29.5).at(-1).centre);
+  assert.deepEqual(at(29.99).at(-1).centre, at(30)[0].centre);
+  assert.deepEqual(at(30).map((b) => [b.id, b.pattern]), [["spare", pattern.id]]);
+  assert.deepEqual(sparePoses([{ id: "spare", deadhead }], 15, new Set(["spare"])), []);
+});

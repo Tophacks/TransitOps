@@ -354,7 +354,7 @@ WORKER_MODULES = ("continuous.py", "scenario_result.py", "simulation_engine.py",
                   "rail_ops.py", "yard_ops.py", "corridor.py", "uw_station.py", "road_traffic.py",
                   "drivers.py", "models.py", "garage_ops.py", "waterloo_corridor.json",
                   "ion_terminals.json", "ion_network.json", "ion_platforms.json", "uw_station.json",
-                  "uw_roads.json", "bus_garages.json", "lines.py", "fleet.py", "lines.json", "deadheads.json", "incidents.py")
+                  "uw_roads.json", "bus_garages.json", "lines.py", "line_driver.py", "fleet.py", "lines.json", "deadheads.json", "incidents.py")
 
 
 @lru_cache(maxsize=1)

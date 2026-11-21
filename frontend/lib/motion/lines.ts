@@ -5,7 +5,7 @@
 // it moves to the curb at the stops it served. A spare moves along its
 // out-of-service road route by the times the simulator gave each point.
 
-import lineData from "../geo/lines.json";
+import lineData from "../geo/lines.json" with { type: "json" };
 import { bearing, lerpPath, type LonLat } from "./path.ts";
 
 type PathPoint = [number, number, number];
@@ -125,14 +125,23 @@ export function deadheadPose(d: Deadhead, t: number): { centre: LonLat; heading:
   return poseOn(path, s);
 }
 
-/** Where the trace has the bus at t: null off the modelled network (a gap in the trace). */
-export function traceAt(trace: readonly [number, number, number][], t: number) {
-  if (!trace.length || t < trace[0][0] - 0.5 || t > trace[trace.length - 1][0] + 0.5) return null;
-  let lo = 0, hi = trace.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (trace[mid][0] <= t) lo = mid; else hi = mid;
+// Samples describe the end of a simulation step. A sample stamped at a
+// shared boundary therefore belongs to the outgoing trip, while the incoming
+// trip owns the playback instant itself.
+function afterTime(trace: LineVehicle["trace"], t: number) {
+  let lo = 0, hi = trace.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (trace[mid][0] <= t) lo = mid + 1; else hi = mid;
   }
+  return lo;
+}
+
+export function traceAt(trace: LineVehicle["trace"], t: number, start = -Infinity, end = Infinity) {
+  const first = afterTime(trace, start), last = afterTime(trace, end) - 1;
+  if (last < first || t < trace[first][0] - 1 || t > trace[last][0] + 0.5) return null;
+  const hi = Math.min(last, Math.max(first, afterTime(trace, t)));
+  const lo = Math.max(first, hi - 1);
   const a = trace[lo], b = trace[hi];
   if (t <= a[0]) return { s: a[1], v: a[2] };
   if (t >= b[0]) return { s: b[1], v: b[2] };
@@ -145,19 +154,34 @@ export function traceAt(trace: readonly [number, number, number][], t: number) {
 export function linePoses(vehicles: readonly LineVehicle[], t: number, zones: readonly LineZone[] = []): LinePose[] {
   const out: LinePose[] = [];
   for (const v of vehicles) {
-    if (v.deadhead) {
-      const p = deadheadPose(v.deadhead, t);
-      if (p) {
+    const index = v.trips?.findLastIndex((x) => x[0] <= t) ?? -1;
+    const trip = v.trips?.[index];
+    const next = v.trips?.[index + 1];
+    const inService = trip && (trip[1] === null || t < trip[1]);
+    if (v.deadhead && !inService && (!trip || v.deadhead.t0 >= (trip[1] ?? Infinity))) {
+      // The relief bus waits at the end of its road move until service begins.
+      const p = deadheadPose(v.deadhead, Math.min(t, v.deadhead.t1));
+      if (p && (next || t <= Math.max(v.deadhead.t1, v.trace?.at(-1)?.[0] ?? 0))) {
         out.push({ id: v.vehicle_id, ...p, state: "deadhead", route: "", pattern: "", speed: 0, s: 0,
           headsign: "Not in service", label: "Not in service" });
         continue;
       }
     }
-    const trip = v.trips?.find((x) => t >= x[0] - 0.5 && (x[1] === null || t <= x[1] + 1.5));
-    if (!trip || !v.trace?.length) continue;
+    if (!trip) continue;
     const pattern = PATTERNS[trip[3]];
     if (!pattern) continue;
-    const at = traceAt(v.trace, t);
+    const end = trip[1] ?? Infinity;
+    // Older responses may leave a gap before opening the next same-stop trip.
+    const waiting = t >= end && next && pattern.stops.at(-1)?.stop === PATTERNS[next[3]]?.stops[0].stop
+      && !v.unmodelled?.some((row) => row.start_s >= end && row.start_s < next[0]);
+    if (t >= end && !waiting) continue;
+    let at = waiting ? { s: pattern.stops.at(-1)!.s, v: 0 } : traceAt(v.trace ?? [], t, trip[0], end);
+    // A checkpoint can open the new trip before its first end-of-step sample.
+    const previous = v.trips[index - 1];
+    if (!at && t <= trip[0] + 1 && previous &&
+        PATTERNS[previous[3]]?.stops.at(-1)?.stop === pattern.stops[0].stop) {
+      at = { s: pattern.stops[0].s, v: 0 };
+    }
     if (!at) continue;
     // To the curb at the stops it served on this trip; the bay roadway is its own lane.
     let lat = LANE_OFFSET_M;
@@ -174,6 +198,29 @@ export function linePoses(vehicles: readonly LineVehicle[], t: number, zones: re
       }
     }
     const pose = offsetPose(pattern.path, at.s, lat);
+    // Opposite shapes share a terminal point but their headings and offsets
+    // differ. Ease the drawn centre onto that common point at either end.
+    const terminal = at.s < pattern.length_m / 2 ? pattern.stops[0] : pattern.stops.at(-1)!;
+    const weight = 1 - ease(Math.abs(at.s - terminal.s) / CURB_BLEND_M);
+    if (weight > 0) {
+      const anchor = lerpPath(pattern.path, terminal.s);
+      pose.centre = [pose.centre[0] + weight * (anchor[0] - pose.centre[0]),
+                     pose.centre[1] + weight * (anchor[1] - pose.centre[1])];
+    }
+    // Road routes end at a snapped road point. The spare remains there
+    // through handover, then joins its service shape as it drives away.
+    if (v.deadhead && index === 0 && trip[0] >= v.deadhead.t1) {
+      const stopId = v.deadhead.key?.split("|")[1]?.replace(/^stop:/, "");
+      const relief = pattern.stops.find((st) => st.stop === stopId);
+      if (relief && Math.abs(at.s - relief.s) < CURB_BLEND_M) {
+        const arrival = deadheadPose(v.deadhead, v.deadhead.t1);
+        if (arrival) {
+          const f = ease(Math.abs(at.s - relief.s) / CURB_BLEND_M);
+          pose.centre = [arrival.centre[0] + f * (pose.centre[0] - arrival.centre[0]),
+                         arrival.centre[1] + f * (pose.centre[1] - arrival.centre[1])];
+        }
+      }
+    }
     const state = at.v > 0.05 ? "moving" : "stopped";
     out.push({ id: v.vehicle_id, ...pose, state, route: trip[5], pattern: pattern.id, speed: at.v, s: at.s,
       headsign: trip[4], label: `${trip[5]} ${trip[4]}` });
