@@ -754,77 +754,128 @@ class Controller:
 
 
 # --- planning a driveable lane path ------------------------------------------------------------
-def ease_corners(points, max_curvature, keep=(), passes=600):
-    """Round every corner of a 1 m polyline tighter than `max_curvature` by
-    local smoothing (only where it is too tight), keeping indices in `keep`
-    fixed. Returns (points, corrections): each correction is the corner's
-    position, its radius before, and how far the path moved."""
-    pts = [list(p) for p in points]
-    n = len(pts)
-    fixed = set(keep) | {0, 1, n - 2, n - 1}
+def _dp(points, tol):
+    """Douglas-Peucker simplification (iterative)."""
+    n = len(points)
+    keep = [False] * n
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        (x1, y1), (x2, y2) = points[a], points[b]
+        dx, dy = x2 - x1, y2 - y1
+        l2 = dx * dx + dy * dy
+        best, idx = -1.0, None
+        for k in range(a + 1, b):
+            px, py = points[k]
+            if l2 == 0:
+                d = math.hypot(px - x1, py - y1)
+            else:
+                f = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l2))
+                d = math.hypot(px - x1 - f * dx, py - y1 - f * dy)
+            if d > best:
+                best, idx = d, k
+        if idx is not None and best > tol:
+            keep[idx] = True
+            stack += [(a, idx), (idx, b)]
+    return [points[k] for k in range(n) if keep[k]]
 
-    def curv(i):
-        (x0, y0), (x1, y1), (x2, y2) = pts[i - 1], pts[i], pts[i + 1]
-        a = math.hypot(x1 - x0, y1 - y0)
-        b = math.hypot(x2 - x1, y2 - y1)
-        c = math.hypot(x2 - x0, y2 - y0)
-        cross = (x1 - x0) * (y2 - y1) - (y1 - y0) * (x2 - x1)
-        den = a * b * c
-        return 0.0 if den < 1e-9 else 2 * cross / den
 
-    def tight_runs():
-        out, i = [], 1
-        while i < n - 1:
-            if abs(curv(i)) > max_curvature:
-                j = i
-                while j < n - 1 and abs(curv(j)) > max_curvature * 0.98:
-                    j += 1
-                out.append((i, j))
-                i = j
-            i += 1
-        return out
+def _intersect(p1, p2, p3, p4):
+    """Intersection of lines p1->p2 and p3->p4, with the parameters along each."""
+    d1 = (p2[0] - p1[0], p2[1] - p1[1])
+    d2 = (p4[0] - p3[0], p4[1] - p3[1])
+    den = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(den) < 1e-9:
+        return None
+    u = ((p3[0] - p1[0]) * d2[1] - (p3[1] - p1[1]) * d2[0]) / den
+    w = ((p3[0] - p1[0]) * d1[1] - (p3[1] - p1[1]) * d1[0]) / den
+    return (p1[0] + d1[0] * u, p1[1] + d1[1] * u), u, w
 
-    runs = tight_runs()
-    found = [(i, j, max(abs(curv(k)) for k in range(i, max(i + 1, j)))) for i, j in runs]
-    orig = [p[:] for p in pts]
-    for _ in range(passes):
-        if not runs:
+
+def fillet(points, radius, tol=0.6):
+    """A path a vehicle can steer: the polyline simplified to its corners, each
+    corner rounded with an arc of at least `radius`. Corners too close for
+    their arcs are merged into one turn at the intersection of the outer legs.
+    Returns (points every ~1 m, corrections, infeasible)."""
+    v = _dp([tuple(p) for p in points], tol)
+
+    def turn(i):
+        a, b, c = v[i - 1], v[i], v[i + 1]
+        h1 = math.atan2(b[1] - a[1], b[0] - a[0])
+        h2 = math.atan2(c[1] - b[1], c[0] - b[0])
+        return wrap(h2 - h1)
+
+    def tangent(i):
+        th = abs(turn(i))
+        return radius * math.tan(min(th, math.radians(179)) / 2)
+
+    corrections, infeasible = [], []
+    for _ in range(len(v) * 2):
+        worst, at = 1.0, None
+        for i in range(1, len(v) - 1):
+            seg_prev = math.dist(v[i - 1], v[i])
+            seg_next = math.dist(v[i], v[i + 1])
+            need_prev = tangent(i) + (tangent(i - 1) if i - 1 >= 1 else 0.0)
+            need_next = tangent(i) + (tangent(i + 1) if i + 1 <= len(v) - 2 else 0.0)
+            for need, seg, side in ((need_prev, seg_prev, -1), (need_next, seg_next, 1)):
+                if seg > 0 and need / seg > worst:
+                    worst, at = need / seg, (i, side)
+        if at is None:
             break
-        for i, j in runs:
-            w = 3 + (j - i)
-            lo, hi = max(1, i - w), min(n - 1, j + w)
-            for k in range(lo, hi):
-                if k in fixed:
-                    continue
-                pts[k][0] += 0.5 * ((pts[k - 1][0] + pts[k + 1][0]) / 2 - pts[k][0])
-                pts[k][1] += 0.5 * ((pts[k - 1][1] + pts[k + 1][1]) / 2 - pts[k][1])
-        runs = tight_runs()
-    corrections = []
-    for i, j, k in found:
-        lo, hi = max(0, i - 25), min(n, j + 25)
-        moved = max(math.hypot(pts[m][0] - orig[m][0], pts[m][1] - orig[m][1]) for m in range(lo, hi))
-        corrections.append({"index": i, "radius_before_m": round(1 / k, 1), "moved_m": round(moved, 2)})
-    left = [(i, j) for i, j in runs]
-    return [tuple(p) for p in pts], corrections, left
+        i, side = at
+        a, b = (i - 1, i) if side < 0 else (i, i + 1)
+        if a >= 1 and b <= len(v) - 2:
+            hit = _intersect(v[a - 1], v[a], v[b + 1], v[b])
+            if hit is not None and hit[1] > 0.5 and hit[2] > 0.5:
+                corrections.append({"at": [round(c, 1) for c in hit[0]], "merged": 2})
+                v[a:b + 1] = [hit[0]]
+                continue
+        # cannot merge (a reversal, or at the end of the path): the turn stays
+        # as tight as the room allows, and is reported
+        infeasible.append({"at": [round(c, 1) for c in v[i]], "turn_deg": round(math.degrees(abs(turn(i))), 0)})
+        break
+    out = [v[0]]
+    for i in range(1, len(v) - 1):
+        a, b, c = v[i - 1], v[i], v[i + 1]
+        th = turn(i)
+        la, lc = math.dist(a, b), math.dist(b, c)
+        t_len = min(tangent(i), la * (0.5 if i > 1 else 1.0), lc * (0.5 if i < len(v) - 2 else 1.0))
+        r = t_len / math.tan(abs(th) / 2) if abs(th) > 1e-4 else 0.0
+        if r < radius * 0.999 and abs(th) > math.radians(2):
+            infeasible.append({"at": [round(x, 1) for x in b], "radius_m": round(r, 1)})
+        if abs(th) < 1e-4 or t_len < 1e-3:
+            out.append(b)
+            continue
+        h1 = math.atan2(b[1] - a[1], b[0] - a[0])
+        p1 = (b[0] - math.cos(h1) * t_len, b[1] - math.sin(h1) * t_len)
+        side = 1 if th > 0 else -1
+        cx, cy = p1[0] - math.sin(h1) * r * side, p1[1] + math.cos(h1) * r * side
+        start = math.atan2(p1[1] - cy, p1[0] - cx)
+        steps = max(2, int(abs(th) * r / 1.0) + 1)
+        for k in range(steps + 1):
+            ang = start + th * k / steps
+            out.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+    out.append(v[-1])
+    return out, corrections, infeasible
 
 
-def lane_path(centre, offset, geometry, name="", margin=1.05, keep_s=()):
+def lane_path(centre, offset, geometry, name="", margin=1.05):
     """The path a driver of `geometry` follows: the reference line moved
     `offset` metres to the right (a number or a function of s), with every
-    corner the front axle cannot steer eased to the class's smallest
-    front-axle radius times `margin`. Returns (Path, report)."""
+    corner rounded to at least the class's smallest front-axle radius times
+    `margin` (fillet). Returns (Path, report): the corners corrected and any
+    the vehicle still cannot make."""
     shifted = centre.shifted(offset) if offset else centre
-    kmax = math.sin(geometry.max_steer) / geometry.wheelbase / margin
-    keep = [int(round(s / shifted.ds)) for s in keep_s] if shifted.ds else []
-    pts, corrections, left = ease_corners(list(zip(shifted.x, shifted.y)), kmax, keep)
+    radius = geometry.min_radius_front * margin
+    pts, merged, infeasible = fillet(list(zip(shifted.x, shifted.y)), radius)
     path = Path(pts, name)
-    for c in corrections:
-        s = c["index"] * (shifted.ds or 1.0)
-        c["s"] = round(s, 1)
-        c["lonlat"] = [round(v, 6) for v in to_lonlat(*pts[c["index"]][:2])]
-        del c["index"]
-    return path, {"class": geometry.key, "min_front_radius_m": round(1 / kmax, 2),
-                  "corners_eased": corrections, "still_infeasible": len(left)}
+    before = [k for k in shifted.k]
+    tight = sum(1 for i in range(1, len(before) - 1) if abs(before[i]) > 1 / radius and abs(before[i - 1]) <= 1 / radius)
+    for c in merged + infeasible:
+        c["lonlat"] = [round(x, 6) for x in to_lonlat(*c.pop("at"))]
+    return path, {"class": geometry.key, "min_front_radius_m": round(radius, 2), "tight_corners_in_source": tight,
+                  "corners_merged": merged, "infeasible": infeasible}
 
 
 # --- feasibility of a planned movement -------------------------------------------------------
