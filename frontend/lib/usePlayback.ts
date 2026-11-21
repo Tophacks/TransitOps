@@ -50,6 +50,11 @@ export function usePlayback(initialSpeed: number) {
     setPlaying(false);
   }, [clock]);
 
+  const extend = useCallback((start: number, end: number) => {
+    clock.setDuration(end, start);
+    setSeconds(clock.time());
+  }, [clock]);
+
   const play = useCallback(() => {
     clock.play();
     setSeconds(clock.time());
@@ -72,5 +77,5 @@ export function usePlayback(initialSpeed: number) {
     setSpeedState(rate);
   }, [clock]);
 
-  return { clock, seconds, playing, speed, load, play, pause, seek, setSpeed };
+  return { clock, seconds, playing, speed, load, extend, play, pause, seek, setSpeed };
 }

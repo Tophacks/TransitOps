@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import RegionalMap from "./components/RegionalMap";
 import GeospatialMap from "./components/GeospatialMap";
@@ -279,6 +279,13 @@ export default function Home() {
   const [error, setError] = useState("");
   const playback = usePlayback(30);
   const { seconds, playing, speed } = playback;
+  const worker = useRef<Worker | null>(null);
+  const pending = useRef(false);
+  const keepPlaying = useRef(false);
+  const [continuous, setContinuous] = useState(false);
+  const [continuousActive, setContinuousActive] = useState(false);
+
+  useEffect(() => () => worker.current?.terminate(), []);
   const [selected, setSelected] = useState<Selection>(null);
   // The fleet vehicle picked in the Fleet panel or tapped on the map.
   const [fleetPick, setFleetPick] = useState<string | null>(null);
@@ -296,7 +303,16 @@ export default function Home() {
   const sumo = useSumoStream();
 
   const timeline = useMemo(() => data?.smart.timeline ?? [], [data]);
-  const frame = Math.min(Math.floor(seconds / 60), Math.max(0, timeline.length - 1));
+  const firstMinute = timeline[0]?.minute ?? 0;
+  const lastMinute = timeline.at(-1)?.minute ?? 0;
+  const frame = Math.min(Math.max(0, Math.floor(seconds / 60) - firstMinute), Math.max(0, timeline.length - 1));
+
+  useEffect(() => {
+    if (worker.current && keepPlaying.current && !pending.current && lastMinute * 60 - seconds <= 120) {
+      pending.current = true;
+      worker.current.postMessage({ type: "extend" });
+    }
+  }, [lastMinute, seconds, playing]);
   const snapshot = timeline[frame] ?? null;
   const poses = useMemo(() => busPoses(corridor, timeline, seconds), [timeline, seconds]);
   const timetable = useMemo(() => (data?.ion ? new IonTimetable(corridor.data.ion, data.ion, TERMINALS) : null), [data]);
@@ -338,13 +354,17 @@ export default function Home() {
     setControls((current) => ({ ...current, [key]: value }));
   }
 
+  function scenarioForRun(override?: Controls) {
+    if (override || !freshSeed) return override ?? controls;
+    const body = { ...controls, seed: 1 + Math.floor(Math.random() * 999_999), commands: [] };
+    setControls(body);
+    return body;
+  }
+
   async function runSimulation(event?: FormEvent, override?: Controls, resumeAt?: number) {
     event?.preventDefault();
-    let body = override ?? controls;
-    if (!override && freshSeed) {
-      body = { ...body, seed: 1 + Math.floor(Math.random() * 999_999), commands: [] };
-      setControls(body);
-    }
+    stopContinuous();
+    const body = scenarioForRun(override);
     setLoading(true);
     setError("");
     playback.pause();
@@ -364,6 +384,7 @@ export default function Home() {
       }
 
       const result = (await response.json()) as SimulationResponse;
+      setContinuous(false);
       setData(result);
       playback.load(Math.max(0, result.smart.timeline.length - 1) * 60);
       if (resumeAt !== undefined) playback.seek(resumeAt);
@@ -377,6 +398,71 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function stopContinuous() {
+    worker.current?.terminate();
+    worker.current = null;
+    pending.current = false;
+    keepPlaying.current = false;
+    setContinuousActive(false);
+    playback.pause();
+  }
+
+  function startContinuous(override?: Controls) {
+    stopContinuous();
+    setLoading(true);
+    setError("");
+    setSelected(null);
+    setLiveMap(false);
+    sumo.stop();
+
+    const fail = (message: string) => {
+      stopContinuous();
+      setLoading(false);
+      setError(message);
+    };
+    try {
+      const active = new Worker("/continuous-worker.mjs", { type: "module" });
+      worker.current = active;
+      pending.current = true;
+      keepPlaying.current = true;
+      let first = true;
+      active.onerror = () => {
+        if (worker.current === active) fail("Could not load the continuous simulation runtime.");
+      };
+      active.onmessage = ({ data: message }: MessageEvent<{ result?: SimulationResponse; error?: string }>) => {
+        if (worker.current !== active) return;
+        if (!message.result) {
+          fail(message.error ?? "Continuous simulation failed.");
+          return;
+        }
+        const result = message.result;
+        const frames = result.smart.timeline;
+        const end = frames[frames.length - 1].minute * 60;
+        pending.current = false;
+        if (first) {
+          first = false;
+          setContinuous(true);
+          setContinuousActive(true);
+          setLoading(false);
+          playback.load(end);
+        } else {
+          playback.extend(frames[0].minute * 60, end);
+        }
+        setData(result);
+        if (keepPlaying.current && !playback.clock.playing) playback.play();
+      };
+      active.postMessage({ type: "start", controls: scenarioForRun(override) });
+    } catch {
+      fail("Could not start the continuous simulation worker.");
+    }
+  }
+
+  function seekPlayback(time: number) {
+    keepPlaying.current = false;
+    playback.pause();
+    playback.seek(time);
   }
 
   /** A dispatcher order: added to the run's inputs, then the run replays (same seed). */
@@ -394,8 +480,21 @@ export default function Home() {
 
   function togglePlayback() {
     if (!data) return;
-    if (playing) playback.pause();
-    else playback.play();
+    if (playing) {
+      keepPlaying.current = false;
+      playback.pause();
+    } else {
+      if (worker.current && seconds >= lastMinute * 60) {
+        keepPlaying.current = true;
+        if (!pending.current) {
+          pending.current = true;
+          worker.current.postMessage({ type: "extend" });
+        }
+      } else {
+        keepPlaying.current = Boolean(worker.current);
+        playback.play();
+      }
+    }
   }
 
   return (
@@ -457,7 +556,7 @@ export default function Home() {
             focusVehicle={fleetPick}
             onFocusVehicle={setFleetPick}
             seconds={seconds}
-            onSeek={(t) => { playback.pause(); playback.seek(Math.max(0, t)); }}
+            onSeek={seekPlayback}
           />
         ) : (
           <RegionalMap network={network} snapshot={snapshot} poses={poses} selected={selected} onSelect={setSelected} traffic={controls.traffic_multiplier} sumoSnapshot={sumoMapSnapshot}/>
@@ -469,6 +568,7 @@ export default function Home() {
               type="button"
               className={sumo.state === "running" ? "activeSpeed" : ""}
               onClick={sumo.state === "running" ? sumo.stop : () => {
+                if (worker.current) stopContinuous();
                 setLiveMap(false);
                 setSelected(null);
                 sumo.start();
@@ -527,14 +627,11 @@ export default function Home() {
             <input
               aria-label="Simulation timeline"
               type="range"
-              min="0"
+              min={firstMinute * 60}
               step="1"
-              max={Math.max(0, timeline.length - 1) * 60}
+              max={lastMinute * 60}
               value={Math.round(seconds)}
-              onChange={(event) => {
-                playback.pause();
-                playback.seek(Number(event.target.value));
-              }}
+              onChange={(event) => seekPlayback(Number(event.target.value))}
               disabled={!data}
             />
             {timeline.length > 1 && (
@@ -543,21 +640,21 @@ export default function Home() {
                   <i
                     key={`${mark.minute}-${index}`}
                     className={mark.riders >= 10 ? "wave" : ""}
-                    style={{ left: `${(mark.minute / (timeline.length - 1)) * 100}%` }}
+                    style={{ left: `${((mark.minute - firstMinute) / (lastMinute - firstMinute)) * 100}%` }}
                     title={`${String(mark.minute).padStart(2, "0")}:00 · ${mark.label}`}
                   />
                 ))}
               </div>
             )}
           </div>
-          <span>{formatClock(Math.max(0, timeline.length - 1) * 60)}</span>
+          <span>{continuousActive ? "Continuous" : formatClock(lastMinute * 60)}</span>
         </div>
       </section>
 
       <section className="scenarioPlayground" aria-label="Simulation playground">
         <div className="panelHeading"><div><p className="eyebrow">EXPERIMENT LAB</p><h2>Scenario playground</h2>
           <p>Use the same seed for a fair baseline-versus-adaptive comparison. These outcomes come from the Python corridor model, not real GRT telemetry.</p>
-        </div><span>{controls.duration_min ?? 60} simulated minutes</span></div>
+        </div><span>{continuous ? "Continuous run · last 60 minutes replayable" : `${controls.duration_min ?? 60} simulated minutes`}</span></div>
         <div className="seedBar" role="group" aria-label="Seed">
           <label><span>Seed</span>
             <input aria-label="Seed" type="number" min="0" max="1000000" value={controls.seed}
@@ -568,7 +665,11 @@ export default function Home() {
             <select aria-label="Incidents" value={controls.incidents ?? "off"} onChange={(event) => update("incidents", event.target.value as "off" | "natural")}>
               <option value="natural">Happen naturally (from the seed)</option><option value="off">Off (scenario only)</option>
             </select></label>
-          <button type="button" disabled={loading || !data} onClick={() => void runSimulation(undefined, { ...controls, seed: data?.scenario.seed ?? controls.seed })}>
+          <button type="button" disabled={loading || !data} onClick={() => {
+            if (!data) return;
+            if (continuous) startContinuous(data.scenario);
+            else void runSimulation(undefined, { ...controls, seed: data.scenario.seed });
+          }}>
             Replay seed {data?.scenario.seed ?? controls.seed}{(controls.commands?.length ?? 0) > 0 ? ` with ${controls.commands!.length} order${controls.commands!.length > 1 ? "s" : ""}` : ""}
           </button>
         </div>
@@ -854,6 +955,11 @@ export default function Home() {
           <button className="runButton" disabled={loading}>
             {loading ? "Running Python simulation…" : data ? "Apply & restart" : "Start simulation"}
           </button>
+          <button type="button" className="runButton" disabled={loading}
+            onClick={continuousActive ? stopContinuous : () => startContinuous()}>
+            {continuousActive ? "Stop continuous run" : "Run continuously"}
+          </button>
+          {continuous && <small>Runs in this tab. The bundled GRT station and garage timetable covers the first hour.</small>}
 
           {error && <p className="error">{error}</p>}
           {sumo.error && <p className="error">{sumo.error}</p>}

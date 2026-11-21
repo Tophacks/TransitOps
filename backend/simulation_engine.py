@@ -3,6 +3,8 @@ import random
 
 import corridor
 import ion
+from copy import copy
+
 from models import Bus, BusState, Intersection, Passenger, SimulationMetrics, Stop
 
 
@@ -135,6 +137,7 @@ class TransitSimulation:
         breakdown_target="corridor",
         breakdown_vehicle=None,
         commands=(),
+        horizon_min=None,
         incidents=(),
         capacity_spares=0,
     ):
@@ -146,6 +149,7 @@ class TransitSimulation:
         # riders who transfer to the corridor bus (see ion.py).
         self.ion = ion_plan
         self.hub_arrivals = ion_plan.hub_arrivals()
+        self.decision_offset = 0
         self.intelligent = intelligent
         self.duration = duration
         self.traffic_multiplier = max(0.5, min(float(traffic_multiplier), 3.0))
@@ -203,8 +207,10 @@ class TransitSimulation:
         self.capacity_answered = set()
         # The regional fleet: every modelled vehicle, its garage, state and driver (fleet.py).
         from fleet import Fleet
+        # How far ahead lines and the fleet are prepared: the run, or a continuous run's horizon.
+        horizon_s = max(duration, horizon_min or 0) * 60.0
         self.fleet = Fleet(fleet_inventory, seed, corridor_buses=[b.bus_id for b in buses],
-                           duration_s=duration * 60.0, simulated_blocks=self._simulated_blocks(lines, uw_station))
+                           duration_s=horizon_s, simulated_blocks=self._simulated_blocks(lines, uw_station))
         self.uw = None
         if uw_station:
             from uw_station import UwStation
@@ -214,10 +220,11 @@ class TransitSimulation:
         if lines:
             from drivers import Errors
             from lines import LineService
-            self.lines = LineService(tuple(lines), seed=seed, duration_s=duration * 60.0, fleet=self.fleet,
+            self.lines = LineService(tuple(lines), seed=seed, duration_s=horizon_s, fleet=self.fleet,
                                      traffic=self.traffic_multiplier, ion_plan=ion_plan, demand=self.demand_multiplier,
                                      station_block=line_block,
                                      errors=self.uw.errors if self.uw is not None else Errors(driver_errors, seed))
+            self.lines.decisions = self.decisions      # one decision log, as the run goes (continuous runs too)
 
     @staticmethod
     def _simulated_blocks(lines, uw_station):
@@ -744,7 +751,7 @@ class TransitSimulation:
         if release_ok and demand <= threshold:
             options[0]["reason"] += f"; but demand {demand} is under the threshold {threshold}"
         self.decisions.append({
-            "id": f"C{len(self.decisions) + 1:03d}", "t": self.time * 60.0, "minute": self.time, "level": "dispatch",
+            "id": f"C{self.decision_offset + len(self.decisions) + 1:03d}", "t": self.time * 60.0, "minute": self.time, "level": "dispatch",
             "terminal": r["stop"].lower(), "vehicle_id": "dispatch", "trip_id": None,
             "trigger": f"{self.stops[r['stop']].name} asks for extra capacity: {r['reason']}",
             "options": options, "chosen": chosen, "outcome": "",
@@ -990,7 +997,7 @@ class TransitSimulation:
                     options.append({"option": "blocked berths", "feasible": False,
                                     "reason": "; ".join(r["blocked_berths"]), "estimate_s": None})
                 self.decisions.append({
-                    "id": f"S{len(self.decisions) + 1:03d}", "t": now, "minute": self.time, "level": "station",
+                    "id": f"S{self.decision_offset + len(self.decisions) + 1:03d}", "t": now, "minute": self.time, "level": "station",
                     "terminal": sid.lower(), "vehicle_id": self.stops[sid].name, "trip_id": None,
                     "trigger": f"Station report: {r['reason']}", "options": options,
                     "chosen": f"recommend: {r['recommendation']}", "outcome": "",
@@ -1045,7 +1052,7 @@ class TransitSimulation:
         others = [b for b in self.buses if b is not bus and b.bus_id != self.breakdown_bus_id]
         etas = [(eta, b.bus_id) for b in others if (eta := self._eta_minutes(b, stop_id)) is not None]
         next_eta, next_bus = min(etas) if etas else (None, None)
-        next_open_s = (self.time + next_eta) * 60.0 if next_eta is not None else (self.duration + 30) * 60.0
+        next_open_s = (self.time + next_eta) * 60.0 if next_eta is not None else ((self.time if self.ion.continuous else self.duration) + 30) * 60.0
         onboard = bus.occupancy
         # Riders waiting at the stops this bus serves next also get it later.
         nxt = (bus.target_stop_index + 1) % len(ROUTE)
@@ -1092,7 +1099,7 @@ class TransitSimulation:
                 best = (net, h, (len(gained), saved, cost_onboard, cost_down))
         chosen = f"hold {best[1]} min" if best[1] else "depart on time"
         decision = {
-            "id": f"B{len(self.decisions) + 1:03d}", "t": close_s, "minute": int(close_s // 60),
+            "id": f"B{self.decision_offset + len(self.decisions) + 1:03d}", "t": close_s, "minute": int(close_s // 60),
             "level": "dispatch", "terminal": stop_id.lower(), "vehicle_id": bus.bus_id,
             "trip_id": f"{stop_id}→{ROUTE[nxt]}",
             "trigger": (f"{len(riders_in)} transfer riders from "
@@ -1389,44 +1396,48 @@ class TransitSimulation:
         self.log("Waterloo Corridor Test Scenario started", "system")
 
         for minute in range(self.duration + 1):
-            self.time = minute
-            if minute > 0:
-                self._spawn_background_demand()
-            self._process_train_arrivals()
-            self._log_rail_decisions()
-            self._scenario_events()
-            self._station_reports()
-            self._dispatch_logic()
-            self._advance_buses()
-            if self.uw is not None:
-                self.uw.advance_to((minute + 1) * 60.0)
-            if self.lines is not None:
-                self.lines.advance_to((minute + 1) * 60.0)
-            # Buses a line released this minute join the corridor (reassignments).
-            for plan in self._pending_spares:
-                self._add_corridor_spare(plan, "its line")
-            self._pending_spares = []
-            self._capture_snapshot()
+            self.step_minute(minute)
 
-        self.metrics.passengers_left_waiting = sum(
-            len(stop.queue) for stop in self.stops.values()
-        )
-        # Riders still waiting when the run ends have waited too: count them up
-        # to the end, so policies that leave more people behind are not flattered.
-        end_s = self.duration * 60.0
-        for stop in self.stops.values():
-            for p in stop.queue:
-                if p.ready_s < end_s:
-                    still = (end_s - p.ready_s) / 60.0
-                    self.metrics.unserved_wait_minutes += still
-                    if p.source == "ion":
-                        self.metrics.unserved_transfer_wait_minutes += still
+        self.metrics = self.metrics_at(self.duration * 60.0)
         # GRT garages: pull-outs and returns on real roads (garage_ops.py).
         from garage_ops import Garages
         self.garages = Garages(self).run()
         if self.lines is not None:
-            self.lines.finish()
-            self.decisions.extend(self.lines.decisions)
+            self.lines.finish(self.duration * 60.0)
         self.decisions.sort(key=lambda d: d["t"])
         self.log("Corridor simulation complete", "system")
         return self.metrics
+
+
+    def step_minute(self, minute):
+        self.time = minute
+        if minute > 0:
+            self._spawn_background_demand()
+        self._process_train_arrivals()
+        self._log_rail_decisions()
+        self._scenario_events()
+        self._station_reports()
+        self._dispatch_logic()
+        self._advance_buses()
+        if self.uw is not None:
+            self.uw.advance_to((minute + 1) * 60.0)
+        if self.lines is not None:
+            self.lines.advance_to((minute + 1) * 60.0)
+        # Buses a line released this minute join the corridor (reassignments).
+        for plan in self._pending_spares:
+            self._add_corridor_spare(plan, "its line")
+        self._pending_spares = []
+        self._capture_snapshot()
+
+    def metrics_at(self, end_s):
+        # Reporting at a checkpoint must never charge accrued waiting twice.
+        metrics = copy(self.metrics)
+        metrics.passengers_left_waiting = sum(len(stop.queue) for stop in self.stops.values())
+        for stop in self.stops.values():
+            for p in stop.queue:
+                if p.ready_s < end_s:
+                    still = (end_s - p.ready_s) / 60.0
+                    metrics.unserved_wait_minutes += still
+                    if p.source == "ion":
+                        metrics.unserved_transfer_wait_minutes += still
+        return metrics

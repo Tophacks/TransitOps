@@ -770,8 +770,9 @@ class LineService:
         return plan
 
     # --- results -------------------------------------------------------------------------
-    def finish(self):
-        end = self.duration_s
+    def finish(self, end_s=None):
+        """Metrics up to `end_s` (the end of the run, or a continuous run's checkpoint)."""
+        end = self.duration_s if end_s is None else end_s
         left = [r for q in self.waiting.values() for r in q]
         self.metrics["riders_waiting"] = len(left)
         self.metrics["riders_waiting_ion"] = sum(1 for r in left if r.source == "ion")

@@ -168,7 +168,10 @@ class UwStation:
         self.decisions = engine.decisions
         self.block = block
         self.reports = []
-        self.gates = self._gates()
+        import corridor
+        self.crossing_m = next(c["at_m"] for c in corridor.DATA["ion_crossings"] if "Waterloo Station" in c["near"])
+        self.gates = [] if engine.ion.continuous else self._gates()
+        self.visits = {}
         # Phillip Street southbound: private cars and the buses leaving the station
         # share one lane on this clock (road_traffic.py).
         self.road = Phillip(cars, seed)
@@ -188,21 +191,9 @@ class UwStation:
         cached = getattr(self.engine.ion, "_uw_gates", None)
         if cached is not None and cached[0] == self.engine.duration:
             return cached[1]
-        import corridor
-        crossing = next(c for c in corridor.DATA["ion_crossings"] if "Waterloo Station" in c["near"])
         intervals = []
-        ops = self.engine.ion.ops
-        L_ion = ops.ion.ION_LENGTH
         for t in range(0, self.engine.duration * 60 + 600):
-            on = []
-            for pose in ops.poses(float(t)):
-                trip = pose["trip"]
-                if trip is None:
-                    continue
-                at = crossing["at_m"][trip.direction]
-                nose = pose["nose_line"]
-                if -260.0 <= nose - at <= L_ion + 50.0:
-                    on.append(pose["vehicle_id"])
+            on = self.crossing_trains(t)
             if on:
                 if intervals and intervals[-1][1] == t - 1:
                     intervals[-1][1] = t
@@ -213,7 +204,15 @@ class UwStation:
         self.engine.ion._uw_gates = (self.engine.duration, out)
         return out
 
+    def crossing_trains(self, t):
+        ops = self.engine.ion.ops
+        return sorted(pose["vehicle_id"] for pose in ops.poses(t)
+                      if pose["trip"] is not None and
+                      -260.0 <= pose["nose_line"] - self.crossing_m[pose["direction"]] <= ops.ion.ION_LENGTH + 50.0)
+
     def gate_at(self, t):
+        if self.engine.ion.continuous:
+            return self.crossing_trains(t) or None
         for a, b, trains in self.gates:
             if a <= t < b:
                 return trains
@@ -272,7 +271,8 @@ class UwStation:
 
     def arrive(self, bus, t):
         """A corridor bus reaches the Ring Road entrance: dispatch assigns its UW trip."""
-        n = sum(1 for a in self.agents if a.bus is bus) + 1
+        n = self.visits.get(bus.bus_id, 0) + 1
+        self.visits[bus.bus_id] = n
         agent = Agent(bus.bus_id, "corridor", "se", t, [
             {"stop": "1223", "platform": SET_DOWN, "purpose": "set-down", "depart_s": None},
             {"stop": LOAD_STOP, "platform": LOAD, "purpose": "load", "depart_s": None},
